@@ -21,3 +21,4 @@ htmlcov/
 
 # OS
 .DS_Store
+blueprint-dryrun*/
