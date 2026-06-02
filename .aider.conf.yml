@@ -1,0 +1,42 @@
+# .aider.conf.yml — Aider model routing configuration
+#
+# Architect/editor mode: the architect (model:) plans, the editor
+# (editor-model:) writes the diffs. See BLUEPRINT.md for the routing tree.
+#
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │ HARD RULE 1: Neither architect NOR editor may be a THINKING model.    │
+# │ Thinking models leave `content` empty and emit to `reasoning_content`,│
+# │ which breaks Aider's parsing. Use non-thinking local (qwen3-coder-next)│
+# │ or a frontier model only. Verify with Pre-Flight Step 0 before use.   │
+# └─────────────────────────────────────────────────────────────────────┘
+
+# ── DEFAULT: fully local (free) ──────────────────────────────────────────
+# Both architect and editor run on the local non-thinking coder model.
+model: openai/qwen/qwen3-coder-next
+editor-model: openai/qwen/qwen3-coder-next
+
+# ── HYBRID (uncomment to escalate architect to frontier) ─────────────────
+# Frontier plans (paid, planning-only ≈ 30–50% cheaper than full-frontier),
+# local model still writes the diffs (free).
+# model: claude-sonnet-4-5
+# editor-model: openai/qwen/qwen3-coder-next
+
+# ── Behavior ─────────────────────────────────────────────────────────────
+# Auto-accept the architect's plan (skip per-step prompt). Set to false if
+# you want to review every plan before the editor acts.
+auto-accept-architect: false
+
+# Auto-commit each edit (the LLM's undo button lives in git history).
+auto-commits: true
+
+# Always read these context files at startup.
+read:
+  - CLAUDE.md
+  - CONVENTIONS.md
+
+# ── Required environment variables (set before running) ──────────────────
+# Local (LM Studio):
+#   export OPENAI_API_BASE=http://localhost:1234/v1
+#   export OPENAI_API_KEY=lm-studio
+# Frontier (Anthropic), only when using the hybrid block above:
+#   export ANTHROPIC_API_KEY=sk-ant-...
