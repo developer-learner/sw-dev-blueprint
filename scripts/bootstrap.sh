@@ -37,7 +37,7 @@ find . -type f \( -name "*.md" -o -name "*.yml" -o -name "*.yaml" \) \
 
 # --- Python virtual environment ---
 echo "🐍 Creating virtual environment..."
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 
 # --- Base dependencies (DEFAULT STACK — edit for your project, Rule 3) ---
