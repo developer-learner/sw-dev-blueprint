@@ -1,6 +1,6 @@
 # CLAUDE.md — Master LLM Context File
 
-> This file is automatically read by Aider and Claude Code at session start.
+> This file is automatically read by OpenCode and Claude Code at session start.
 > Keep it current. Every correction you make to the LLM should be recorded here
 > so the mistake never happens again.
 
@@ -78,26 +78,18 @@ Testing:      pytest
 - **Do not commit secrets** — use `.env` and ensure `.gitignore` covers it
 
 **Operating guardrails (from hard-won failures — see BLUEPRINT.md):**
-- **Do not set a thinking model as Aider architect or editor.** Thinking
-  models leave `content` empty and put output in `reasoning_content`, which
-  breaks parsing. Architect/editor must be non-thinking local OR frontier.
-- **Do not retry the same failing fix more than twice.** Two strikes →
-  escalate the architect to frontier, or halt and leave a note.
-- **Do not trust your own "it works" — only passing tests confirm success.**
-  Run `pytest`. The tests are ground truth, not your assessment. Do not mark
-  a task done on self-judgment.
-- **Do not proceed past an unreachable LM Studio or a missing service** — halt
-  and report.
-- **Do not invent product or architecture decisions to fill an ambiguous
-  spec** — that is the human's job. Halt and ask.
-- **Do not run destructive commands** (`rm -rf`, `git push --force`, drop
-  tables, delete files outside the project) — halt and ask.
+- **Do not set a thinking model as the active model.** Thinking models leave `content` empty and put output in `reasoning_content`, which breaks parsing. The model must be non-thinking local OR frontier.
+- **Do not retry the same failing fix more than twice.** Two strikes → escalate to a frontier model, or halt and leave a note.
+- **Do not trust your own "it works" — only passing tests confirm success.** Run `pytest`. The tests are ground truth, not your assessment. Do not mark a task done on self-judgment.
+- **Do not proceed past an unreachable LM Studio or a missing service** — halt and report.
+- **Do not invent product or architecture decisions to fill an ambiguous spec** — that is the human's job. Halt and ask.
+- **Do not run destructive commands** (`rm -rf`, `git push --force`, drop tables, delete files outside the project) — halt and ask.
 
 ---
 
 ## Current Focus
 
-See `tasks/CURRENT.md` for the active task spec.
+See `tasks/CURRENT.md` for the active task spec (or just describe it in plain English to OpenCode).
 
 ---
 
