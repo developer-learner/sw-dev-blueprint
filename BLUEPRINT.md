@@ -292,15 +292,56 @@ chmod +x scripts/bootstrap.sh
 ./scripts/bootstrap.sh <project-name>
 ```
 
-**Step 5 — Fill in the blanks**
-Replace `[PLACEHOLDER]` values:
+**Step 4.5 — Strip template-only files (curated)**
 
-| File | Placeholders to fill |
-|------|---------------------|
-| `CLAUDE.md` | Project name, description, tech stack, team |
-| `docs/PRODUCT.md` | Problem statement, users, success metrics |
-| `docs/ARCHITECTURE.md` | Data models, API routes, infrastructure |
-| `.env` (copy from `.env.example`) | All secret values |
+These files served their one-time purpose. Remove them:
+
+```bash
+rm scripts/bootstrap.sh
+rm scripts/new-project.sh  # if present
+```
+
+**Do NOT remove:**
+- `BLUEPRINT.md` — the operating manual for any future LLM session on this project
+- `CLAUDE.md` / `AGENTS.md` — project identity and correction log
+- `CONVENTIONS.md` — code style rules
+- Any `docs/` file — architecture, decisions, product, testing are all living documents
+
+The rule: preserve the memory layer (docs + agent config). Delete the one-shot setup scripts.
+
+If you cloned the template rather than using "Use this template," the template's git history is inherited. Start fresh:
+
+```bash
+rm -rf .git && git init
+```
+
+**Step 5 — Fill in the blanks**
+
+Verify every template placeholder is replaced before first commit. This grep targets placeholder-shaped brackets `[UPPERCASE]`, `[UPPER_CASE]`, and `[Capitalized phrase]` while ignoring code like `["key"]` or `[-1, 1]`:
+
+```bash
+grep -rnE '\[[A-Z][A-Z_ ]+\]|\[[A-Z][a-z]+ [a-z]' . \
+  --include='*.md' --include='*.json' --include='*.sh' \
+  --include='*.plist' --include='*.yml' --include='*.yaml' \
+  | grep -v '.git/' | grep -v 'node_modules/' | grep -v '.build/'
+```
+
+This must return **zero project-specific placeholders** before commit.
+
+Carve-out: the `## Template` format block in `docs/DECISIONS.md` uses placeholder-shaped brackets intentionally — it is an evergreen format reference for future LLM entries. Either mark it with a comment the grep can exclude, or simply note that this block is exempt.
+
+Commonly missed files (not exhaustive — the grep is the source of truth):
+
+| File | What to check |
+|------|---------------|
+| `CLAUDE.md` | Project name, description, contacts (`[NAME]`) |
+| `docs/PRODUCT.md` | Problem, users, metrics |
+| `docs/ARCHITECTURE.md` | Infrastructure, data models |
+| `docs/DECISIONS.md` | Stale template rows (not the Template block) |
+| `docs/TESTING.md` | Framework-specific commands, fixtures |
+| `CONVENTIONS.md` | Language-specific examples |
+| `tasks/CURRENT.md` | `[TASK_NAME]` and spec body |
+| `tasks/BACKLOG.md` | Template task entries |
 
 **Step 6 — Start coding**
 ```bash
@@ -384,6 +425,29 @@ wrong model names. This is a known issue as of OpenCode 1.15.x.
 **The correction log rule** is the most important habit. It turns every LLM
 mistake into a permanent improvement. A project 6 months in should have a
 `CLAUDE.md` full of hard-won guards — that's a sign the system is working.
+
+---
+
+## Project Completion / Maintenance Transition
+
+When a project reaches feature-complete and enters maintenance mode:
+
+1. **Archive CURRENT.md** — move its content to BACKLOG.md Completed table,
+   then clear CURRENT.md to reflect no active task
+2. **Mark backlog** — review tasks/BACKLOG.md, close or defer remaining items
+   with notes
+3. **Final correction-log review** — ensure every LLM mistake from the
+   development cycle is logged in CLAUDE.md. Unlogged corrections expire
+   when sessions end
+4. **Update PRODUCT.md** — flip status from "in development" to "maintenance"
+   or "complete" in the Feature Flags table
+5. **README** — if the app is distributed as a binary, add an "End users"
+   section alongside the "Developers" build instructions
+6. **Run curated cleanup** — Step 4.5 (strip template-only files) if not done
+   already
+
+The project is not "dead" — it is transitioned. Future sessions should check
+BACKLOG.md first rather than CURRENT.md.
 
 ---
 
