@@ -265,91 +265,135 @@ Prioritized work. Done tasks move here; next becomes CURRENT.md.
 
 ---
 
-## Bootstrap Sequence
+## Bootstrap Sequence — Instantiate a New Project
 
-### For LLMs executing this for the first time on a new project:
+> Read this if you are an AI coding agent and a user has given you this
+> repo's URL plus a project name, and asked you to create a project.
+> You do everything. The user runs no terminal commands. You have a shell,
+> git, and `gh` authed as the repo owner.
 
-**Step 0 — Pre-Flight Check** (above). Do not skip.
+**Inputs you were given:** this repo URL, and a project name (call it NAME).
 
-**Step 1 — Fetch the template**
+**Do these in order. Do not skip the gate at the end.**
+
+### Step 0 — Pre-Flight Check
+
+Run the Pre-Flight Check section above. Do not skip. If any check fails,
+halt and report exactly which one.
+
+### Step 1 — Create the repo from this template
+
+Default is **private**. If the user explicitly asked for a public repo, use
+`--public` instead.
+
 ```bash
-gh repo create <project-name> \
-  --template developer-learner/sw-dev-blueprint \
-  --private
-cd <project-name>
+gh repo create NAME --template developer-learner/sw-dev-blueprint --private --clone
+cd NAME
 ```
 
-**Step 2 — Read all documents**
+Verify before continuing:
+
+```bash
+gh repo view NAME --json isTemplate,visibility
+```
+
+Expect `isTemplate: false`, visibility matching the flag you chose.
+If creation failed (name collision, auth, network), halt and tell the user.
+Do not improvise a name.
+
+### Step 2 — Read all documents (you)
+
 Read every file in the Document Map before writing a single line of code.
+This is not optional.
 
-**Step 3 — Adapt the stack (Rule 3)**
-Confirm the default stack (FastAPI + Postgres) matches this project.
-If not, edit `bootstrap.sh`, `ci.yml`, `CONVENTIONS.md`, `ARCHITECTURE.md` first.
+### Step 3 — Check if the user already gave a spec
 
-**Step 4 — Run bootstrap**
+Did the user give you more than a repo URL and a name? Examples of "more":
+"Build a CLI for parsing CSV files," "A FastAPI backend for tracking
+expenses," or any description of what the project does.
+
+- **If yes:** Use what they gave you. Identify gaps (stack, team contacts,
+  deployment target) and ask only about those — do not re-ask for what
+  you already know.
+- **If no:** Ask what they're building. You must not invent a description.
+
+From that conversation, write: description and status in CLAUDE.md and
+README; the real tech stack in CLAUDE.md (replace the default template
+stack); initial notes in docs/; the Key Contacts rows in CLAUDE.md (or
+ask for their names). You do not need a full architecture yet — that grows
+with the code.
+
+### Step 4 — Curated cleanup
+
+Template-only one-shot files are not needed in the new instance. Remove them:
+
 ```bash
-chmod +x scripts/bootstrap.sh
-./scripts/bootstrap.sh <project-name>
+rm -f scripts/bootstrap.sh scripts/new-project.sh
 ```
 
-**Step 4.5 — Strip template-only files (curated)**
-
-These files served their one-time purpose. Remove them:
-
-```bash
-rm scripts/bootstrap.sh
-rm scripts/new-project.sh  # if present
-```
-
-**Do NOT remove:**
-- `BLUEPRINT.md` — the operating manual for any future LLM session on this project
-- `CLAUDE.md` / `AGENTS.md` — project identity and correction log
-- `CONVENTIONS.md` — code style rules
-- Any `docs/` file — architecture, decisions, product, testing are all living documents
-
-The rule: preserve the memory layer (docs + agent config). Delete the one-shot setup scripts.
-
-If you cloned the template rather than using "Use this template," the template's git history is inherited. Start fresh:
+If you cloned manually instead of using `--template`, the template's git
+history is inherited. Start fresh:
 
 ```bash
 rm -rf .git && git init
 ```
 
-**Step 5 — Fill in the blanks**
+**Do NOT remove:**
+- `BLUEPRINT.md` — the operating manual for any future LLM session
+- `CLAUDE.md` / `AGENTS.md` — project identity and correction log
+- `CONVENTIONS.md` — code style rules
+- Any `docs/` file — all are living documents
 
-Verify every template placeholder is replaced before first commit. This grep targets placeholder-shaped brackets `[UPPERCASE]`, `[UPPER_CASE]`, and `[Capitalized phrase]` while ignoring code like `["key"]` or `[-1, 1]`:
+The rule: preserve the memory layer (docs + agent config). Delete the
+one-shot setup scripts. If unsure whether a file is memory-layer or
+scaffold, halt and ask (Rule 4).
+
+### Step 5 — Adapt the stack (Rule 3)
+
+The default template assumes FastAPI + PostgreSQL + pytest. If this
+project's stack differs — and it likely does — edit `ci.yml`,
+`CONVENTIONS.md`, `docs/ARCHITECTURE.md`, and any requirements/manifest
+files to match the actual stack before the first commit.
+
+### Step 6 — Fill every placeholder
+
+Replace all template placeholders: `[PROJECT_NAME]`, `[NAME]`, `[DATE]`,
+`[One paragraph...]`, bracketed stack examples in CLAUDE.md, template
+rows in tasks/ and docs/, etc.
+
+### Step 7 — GATE: verify with a check, not your own judgment
+
+This is Hard Rule 5 and the highest-value lesson in the correction log:
+you cannot trust "I filled everything in." Run:
 
 ```bash
 grep -rnE '\[[A-Z][A-Z_ ]+\]|\[[A-Z][a-z]+ [a-z]' . \
-  --include='*.md' --include='*.json' --include='*.sh' \
-  --include='*.plist' --include='*.yml' --include='*.yaml' \
-  | grep -v '.git/' | grep -v 'node_modules/' | grep -v '.build/'
+  --include='*.md' --exclude-dir=.git
 ```
 
-This must return **zero project-specific placeholders** before commit.
+If it returns ANY lines, a placeholder survived — go back to Step 6,
+fill, re-run, repeat until it returns nothing.
 
-Carve-out: the `## Template` format block in `docs/DECISIONS.md` uses placeholder-shaped brackets intentionally — it is an evergreen format reference for future LLM entries. Either mark it with a comment the grep can exclude, or simply note that this block is exempt.
+**Carve-out:** the `## Template` format block in `docs/DECISIONS.md` uses
+placeholder brackets intentionally as an evergreen format reference.
+Everything else must be clean.
 
-Commonly missed files (not exhaustive — the grep is the source of truth):
+### Step 8 — First commit and push
 
-| File | What to check |
-|------|---------------|
-| `CLAUDE.md` | Project name, description, contacts (`[NAME]`) |
-| `docs/PRODUCT.md` | Problem, users, metrics |
-| `docs/ARCHITECTURE.md` | Infrastructure, data models |
-| `docs/DECISIONS.md` | Stale template rows (not the Template block) |
-| `docs/TESTING.md` | Framework-specific commands, fixtures |
-| `CONVENTIONS.md` | Language-specific examples |
-| `tasks/CURRENT.md` | `[TASK_NAME]` and spec body |
-| `tasks/BACKLOG.md` | Template task entries |
+Only after the gate is clean and the stack matches:
 
-**Step 6 — Start coding**
 ```bash
-# Confirm LM Studio is running with qwen/qwen3-coder-next loaded, then:
-opencode
-# Inside OpenCode: /models → select "Qwen3 Coder Next (local)" under "lms"
-# Then just describe what you want to build in plain English
+git add -A && git commit -m "Instantiate NAME from sw-dev-blueprint"
+git push -u origin main
 ```
+
+**The contract:** the user gave you a URL and a name. Everything else —
+description, stack, structure, contents — you derive from talking to them
+and write yourself. The grep gate, not your self-report, confirms you
+finished.
+
+**After first commit:** the project is live. Future sessions start at
+`tasks/CURRENT.md` or plain English.
 
 ---
 
