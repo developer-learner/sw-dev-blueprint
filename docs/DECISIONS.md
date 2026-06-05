@@ -62,4 +62,28 @@
 
 ---
 
+## 2026-06-04 — Auto-load assumption corrected; CLAUDE.md / opencode.json fixes
+
+**Decision:** (a) Rewrite `CLAUDE.md`'s intro to accurately describe its load behavior — file is *fetchable via tools*, not pre-loaded; the LLM is *expected* to read it. (b) Mirror the "do not re-add dropped BLUEPRINT.md sections" guard into `CLAUDE.md`'s "What NOT To Do" → Operating guardrails, closing the asymmetry between auto-loaded (`CLAUDE.md`) and on-demand (`DECISIONS.md`) docs. (c) Fix the project's `opencode.json` schema (OpenCode 1.15.13 rejects the old `providers` / top-level `models` form with "Unrecognized keys").
+
+**Alternatives considered:** (a) Document the asymmetry but not fix it; (b) add a hook in BLUEPRINT.md to force the LLM to read CLAUDE.md first; (c) leave the broken `opencode.json` and tell users to delete it.
+
+**Reason:** The architectural premise that "guards in CLAUDE.md auto-fire every session" was unverified and partially false. Empirical test showed the model uses the `read` tool to fetch content (not pre-loaded) and can misparse which guard applies. The memory layer is best-effort, not enforced. For things that *must* hold, prefer mechanical gates (grep, `wc -l`, CI, git hooks) that fire without the LLM's cooperation. Doc guards are strong hints, not hard gates.
+
+**Do not suggest:** Reverting `CLAUDE.md`'s intro to the "automatically read" claim, reverting `opencode.json` to the old `providers` schema, or removing the mirror guard. All three are now verified-correct by empirical test.
+
+**Verified by:**
+- `opencode run --format json --dir /tmp/opencode-autoload-test "Read AGENTS.md..."` — event log showed `tool_use` with `read` tool; model fetched content but answered wrong
+- `opencode --version` → `1.15.13` (matches the schema fix)
+- `opencode run "What is 2+2?" --format default` from project dir → "Four." (schema fix loads cleanly under the installed version)
+
+**Cross-cutting lesson (worth applying to all template projects):** Treat doc guards as advisory. For must-hold rules, build mechanical checks into scripts or CI:
+- Placeholder completeness → grep (BLUEPRINT.md Step 7)
+- File size budgets → `wc -l` in a pre-commit hook
+- Schema validity → `opencode.json` parsed at session start
+- Tests as ground truth → pytest in CI (BLUEPRINT.md Rule 5)
+Doc guards catch the LLM's *intent*; mechanical gates catch the *result*. Both have a place. The test just proved the first is weaker than the design claimed.
+
+---
+
 > Add new decisions above this line, newest first.

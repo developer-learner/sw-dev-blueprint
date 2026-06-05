@@ -1,6 +1,9 @@
 # CLAUDE.md — Master LLM Context File
 
-> This file is automatically read by OpenCode and Claude Code at session start.
+> OpenCode and Claude Code can read this file via their file tools. You are
+> expected to read it at the start of every session, and to consult it again
+> before any action that touches the document layer (`BLUEPRINT.md`,
+> `CONVENTIONS.md`, `docs/DECISIONS.md`, this file's correction log).
 > Keep it current. Every correction you make to the LLM should be recorded here
 > so the mistake never happens again.
 
@@ -84,6 +87,7 @@ Testing:      pytest
 - **Do not proceed past an unreachable LM Studio or a missing service** — halt and report.
 - **Do not invent product or architecture decisions to fill an ambiguous spec** — that is the human's job. Halt and ask.
 - **Do not run destructive commands** (`rm -rf`, `git push --force`, drop tables, delete files outside the project) — halt and ask.
+- **Do not re-add sections dropped from BLUEPRINT.md in the 2026-06-04 prune** (Document Roles Explained, Quick Reference Card, verbose Bootstrap Step 5, etc.). Adding them back is a regression. Full rationale and dropped-list in `docs/DECISIONS.md` → "2026-06-04 — Pruned BLUEPRINT.md". The ≤450-line guard in the correction log is the backstop.
 
 ---
 
@@ -116,3 +120,4 @@ See `tasks/CURRENT.md` for the active task spec (or just describe it in plain En
 | 2026-06-04 | Bootstrap Sequence assumed the user runs new-project.sh/bootstrap.sh in a terminal and starts opencode manually; no agent-driven path from just a URL + name. | Rewrote Steps 0–8 in agent-first voice: agent does create-from-template, doc read, spec-or-ask branch, cleanup, stack adaptation, placeholder fill, grep-gate verification, and first commit — user runs nothing. Removed obsolete bootstrap-run and opencode-start steps; gate (Rule 5) is the completion check. |
 | 2026-06-04 | Commit `80c3e3f` (swap Aider→OpenCode) updated primary narrative (README, BLUEPRINT, scripts, opencode.json) but left 3 cosmetic Aider references behind (CONVENTIONS.md:3, .env.example:12, .gitignore Aider block) and never created the `AGENTS.md` symlink that README:17 and BLUEPRINT.md:54 already advertised. Template shipped in a broken-by-design state for OpenCode auto-load. | After any agent/CLI migration commit, run `grep -ril '<old-tool>' .` (excluding throwaway dirs) to catch residue, and verify every doc claim that names a file with `ls` / `git ls-files` before committing. Documented artifacts are contracts — treat doc-vs-reality drift as a release blocker. |
 | 2026-06-04 | BLUEPRINT.md grew to 557 lines through 4 feature additions (Hard Rules, Bootstrap Sequence, Project Completion, Maintenance Contract). Document Map + Document Roles Explained covered the same ground twice. Bootstrap Steps 4/5/7 re-stated Rules 3 & 5 verbatim. Slogans (`lms not lmstudio`, "tests are ground truth", "same error twice") repeated 3-5 times. Phantom "Step 4.5" reference at line 490 with no such step in the sequence. Quick Reference Card restated the diagram. The file was ~22% larger than it needed to be. | After any doc edit, count lines (`wc -l`); BLUEPRINT.md target ≤450. After any sequence-of-steps section, verify every referenced step number (`Step N` or `Step N.M`) is reachable from a `### Step X` heading. Redundancy is context-window cost and a chance for ambiguity to compound — pruning is a guardrail, not cosmetics. |
+| 2026-06-04 | Empirical test of the OpenCode auto-load claim: ran `opencode run --format json --dir /tmp/opencode-autoload-test "Read AGENTS.md..."` and inspected the event log. Three findings: (1) OpenCode did NOT pre-load AGENTS.md into context — the model invoked the `read` tool to fetch it. The CLAUDE.md intro claim "automatically read at session start" was false. (2) The tool-fetched content was correct. (3) The model got the answer wrong anyway — picked the first 2026-06-04 entry instead of the most recent. | The memory layer is *best-effort, not enforced*. Guards in CLAUDE.md are availability to a session, not a guarantee. When asserting any "auto-load" / "automatically read" claim, verify empirically (run the tool, ask a content-only question); a symlink existing is not proof. For anything that *must* hold, prefer mechanical gates (grep, `wc -l`, CI, git hooks) over doc guards — those fire without the LLM's cooperation. Doc guards are strong hints, not hard gates. |
