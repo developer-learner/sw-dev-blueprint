@@ -64,13 +64,13 @@
 
 ## 2026-06-04 — Auto-load assumption corrected; CLAUDE.md / opencode.json fixes
 
-**Decision:** (a) Rewrite `CLAUDE.md`'s intro to accurately describe its load behavior — file is *fetchable via tools*, not pre-loaded; the LLM is *expected* to read it. (b) Mirror the "do not re-add dropped BLUEPRINT.md sections" guard into `CLAUDE.md`'s "What NOT To Do" → Operating guardrails, closing the asymmetry between auto-loaded (`CLAUDE.md`) and on-demand (`DECISIONS.md`) docs. (c) Fix the project's `opencode.json` schema (OpenCode 1.15.13 rejects the old `providers` / top-level `models` form with "Unrecognized keys").
+**Decision:** (a) Rewrite `CLAUDE.md`'s intro to accurately describe its load behavior — file is *fetchable via tools*, not pre-loaded; the LLM is *expected* to read it. (b) Fix the project's `opencode.json` schema (OpenCode 1.15.13 rejects the old `providers` / top-level `models` form with "Unrecognized keys"). The original commit also added a "do not re-add dropped BLUEPRINT.md sections" mirror guard to `CLAUDE.md`; that mirror was later removed (see entry below) for template-hygiene reasons.
 
 **Alternatives considered:** (a) Document the asymmetry but not fix it; (b) add a hook in BLUEPRINT.md to force the LLM to read CLAUDE.md first; (c) leave the broken `opencode.json` and tell users to delete it.
 
 **Reason:** The architectural premise that "guards in CLAUDE.md auto-fire every session" was unverified and partially false. Empirical test showed the model uses the `read` tool to fetch content (not pre-loaded) and can misparse which guard applies. The memory layer is best-effort, not enforced. For things that *must* hold, prefer mechanical gates (grep, `wc -l`, CI, git hooks) that fire without the LLM's cooperation. Doc guards are strong hints, not hard gates.
 
-**Do not suggest:** Reverting `CLAUDE.md`'s intro to the "automatically read" claim, reverting `opencode.json` to the old `providers` schema, or removing the mirror guard. All three are now verified-correct by empirical test.
+**Do not suggest:** Reverting `CLAUDE.md`'s intro to the "automatically read" claim, or reverting `opencode.json` to the old `providers` schema. Both are now verified-correct by empirical test.
 
 **Verified by:**
 - `opencode run --format json --dir /tmp/opencode-autoload-test "Read AGENTS.md..."` — event log showed `tool_use` with `read` tool; model fetched content but answered wrong
@@ -83,6 +83,16 @@
 - Schema validity → `opencode.json` parsed at session start
 - Tests as ground truth → pytest in CI (BLUEPRINT.md Rule 5)
 Doc guards catch the LLM's *intent*; mechanical gates catch the *result*. Both have a place. The test just proved the first is weaker than the design claimed.
+
+---
+
+## 2026-06-04 — Removed CLAUDE.md mirror guard (decoupling template from project)
+
+**Decision:** Remove the one-line "Do not re-add sections dropped from BLUEPRINT.md in the 2026-06-04 prune" guard from `CLAUDE.md`'s "What NOT To Do" → Operating guardrails. The rule still lives in `DECISIONS.md` → "Pruned BLUEPRINT.md" entry.
+
+**Reason:** CLAUDE.md is a template — `[PROJECT_NAME]` is still a placeholder. Baking a project-specific date ("2026-06-04 prune") into a template file makes the rule meaningless for any future project created from this template. The visibility argument was real but the template-vs-project boundary was muddied. The principle (don't re-add dropped sections) stays binding via DECISIONS.md's "Do not suggest" line and the correction log capture.
+
+**Do not suggest:** Re-adding the mirror guard. Cross-reference, don't copy.
 
 ---
 
