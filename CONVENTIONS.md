@@ -1,6 +1,6 @@
 # CONVENTIONS.md — Code Style & Patterns
 
-> Aider reads this file. These rules apply to every code change in this project.
+> OpenCode reads this file. These rules apply to every code change in this project.
 
 ---
 
