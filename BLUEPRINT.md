@@ -218,51 +218,6 @@ Tests run: pytest   ← GROUND TRUTH
 
 ---
 
-## Document Roles Explained
-
-### `CLAUDE.md` / `AGENTS.md` — The Brain
-
-The single most important file. OpenCode reads `AGENTS.md` automatically at
-startup (which symlinks to `CLAUDE.md` — same content, one source of truth).
-Contains: what the project is, tech stack, code conventions, **what NOT to do**
-(guardrails), and the **LLM correction log** (every mistake logged here prevents
-recurrence).
-
-**Maintain it like this:** every time the LLM does something wrong and you
-correct it, add a row to the correction log. The file gets smarter over time.
-
-### `CONVENTIONS.md` — The Style Guide
-
-Code patterns with explicit good/bad examples. Read every session.
-
-### `docs/ARCHITECTURE.md` — The Map
-
-Data models, API routes, key flows. Prevents the LLM inventing schema.
-
-### `docs/DECISIONS.md` — The Memory
-
-Why non-obvious choices were made. "Do not suggest X" entries stop the LLM
-re-litigating solved problems every session.
-
-### `docs/PRODUCT.md` — The Why
-
-Evergreen product context: problem, users, non-goals.
-
-### `docs/TESTING.md` — The Test Contract
-
-Testing strategy, conventions, fixtures. Tests are ground truth (Rule 5).
-
-### `tasks/CURRENT.md` — The Session Spec (optional with OpenCode)
-
-With OpenCode you can just talk — it doesn't require a pre-written spec.
-Use this file when the task is complex enough to warrant writing it out,
-or when you want to capture acceptance criteria explicitly. Keep it simple:
-a few bullet points beats a bureaucratic template.
-
-### `tasks/BACKLOG.md` — The Queue
-
-Prioritized work. Done tasks move here; next becomes CURRENT.md.
-
 ---
 
 ## Bootstrap Sequence — Instantiate a New Project
@@ -325,35 +280,17 @@ with the code.
 
 ### Step 4 — Curated cleanup
 
-Template-only one-shot files are not needed in the new instance. Remove them:
+Delete the one-shot setup scripts; preserve the memory layer (`BLUEPRINT.md`, `CLAUDE.md` / `AGENTS.md`, `CONVENTIONS.md`, all of `docs/`):
 
 ```bash
 rm -f scripts/bootstrap.sh scripts/new-project.sh
 ```
 
-If you cloned manually instead of using `--template`, the template's git
-history is inherited. Start fresh:
+If unsure whether a file is memory-layer or scaffold, halt and ask (Rule 4).
 
-```bash
-rm -rf .git && git init
-```
+### Step 5 — Adapt the stack
 
-**Do NOT remove:**
-- `BLUEPRINT.md` — the operating manual for any future LLM session
-- `CLAUDE.md` / `AGENTS.md` — project identity and correction log
-- `CONVENTIONS.md` — code style rules
-- Any `docs/` file — all are living documents
-
-The rule: preserve the memory layer (docs + agent config). Delete the
-one-shot setup scripts. If unsure whether a file is memory-layer or
-scaffold, halt and ask (Rule 4).
-
-### Step 5 — Adapt the stack (Rule 3)
-
-The default template assumes FastAPI + PostgreSQL + pytest. If this
-project's stack differs — and it likely does — edit `ci.yml`,
-`CONVENTIONS.md`, `docs/ARCHITECTURE.md`, and any requirements/manifest
-files to match the actual stack before the first commit.
+Apply Rule 3.
 
 ### Step 6 — Fill every placeholder
 
@@ -363,8 +300,7 @@ rows in tasks/ and docs/, etc.
 
 ### Step 7 — GATE: verify with a check, not your own judgment
 
-This is Hard Rule 5 and the highest-value lesson in the correction log:
-you cannot trust "I filled everything in." Run:
+You cannot trust "I filled everything in." Run:
 
 ```bash
 grep -rnE '\[[A-Z][A-Z_ ]+\]|\[[A-Z][a-z]+ [a-z]' . \
@@ -426,32 +362,9 @@ Switch to frontier only when local demonstrably can't solve the problem.
 
 ## OpenCode Configuration
 
-OpenCode config is in `~/.config/opencode/opencode.json` (global) or
-`opencode.json` at the project root (project-level).
+See `opencode.json` at the project root for the working config.
 
-**Critical naming gotcha:** use provider key `lms`, NOT `lmstudio`.
-The name `lmstudio` collides with OpenCode's built-in catalog and loads
-wrong model names. This is a known issue as of OpenCode 1.15.x.
-
-```json
-{
-  "providers": {
-    "lms": {
-      "name": "LM Studio local",
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "http://127.0.0.1:1234/v1",
-        "apiKey": "lm-studio"
-      }
-    }
-  },
-  "models": {
-    "default": "lms::qwen/qwen3-coder-next"
-  }
-}
-```
-
-> See the `opencode.json` file in this repo for the full working config.
+**Naming gotcha:** use provider key `lms`, NOT `lmstudio` — the latter collides with OpenCode's built-in catalog and silently loads cloud model names instead of your local model. Known issue as of OpenCode 1.15.x.
 
 ---
 
@@ -459,9 +372,7 @@ wrong model names. This is a known issue as of OpenCode 1.15.x.
 
 | Trigger | Action | File |
 |---------|--------|------|
-| New dependency added | Document it | `ARCHITECTURE.md` |
 | Non-obvious decision made | Log it with reasoning | `DECISIONS.md` |
-| New code pattern established | Add example | `CONVENTIONS.md` |
 | LLM made a mistake you corrected | Add guard | `CLAUDE.md` correction log |
 | Task completed | Move to completed table | `BACKLOG.md` |
 | Schema changed | Update data models | `ARCHITECTURE.md` |
@@ -487,7 +398,7 @@ When a project reaches feature-complete and enters maintenance mode:
    or "complete" in the Feature Flags table
 5. **README** — if the app is distributed as a binary, add an "End users"
    section alongside the "Developers" build instructions
-6. **Run curated cleanup** — Step 4.5 (strip template-only files) if not done
+6. **Run curated cleanup** — Step 4 (strip template-only files) if not done
    already
 
 The project is not "dead" — it is transitioned. Future sessions should check
@@ -507,8 +418,7 @@ everything built on it is wrong. Update after every schema change.
 **Skipping DECISIONS.md** — Every unlogged decision gets re-litigated next
 session. The LLM has no memory; this is the only thing carrying context forward.
 
-**Using the wrong provider name** — `lmstudio` in opencode.json silently loads
-cloud model names instead of your local model. Always use `lms`.
+**Wrong provider name** — `lmstudio` collides with OpenCode's catalog. Always use `lms` (see OpenCode Configuration).
 
 **Loading a thinking model** — Silent failure. Always verify with Pre-Flight
 Step 0 before a session.
@@ -525,31 +435,13 @@ what to build, acceptance criteria, architecture decisions, final review.
 
 ---
 
-## Quick Reference Card
-
-```
-Start session:    Pre-Flight (Step 0) → opencode → /models → select lms model
-During session:   Just talk in plain English
-                  /models      switch model (local ↔ frontier)
-                  git diff     review changes
-                  git reset    roll back
-After session:    Run pytest → log decisions → update architecture
-Stuck on design:  Come to Claude.ai → spec it → tell OpenCode
-Test failing:     Paste full error into OpenCode
-Same error twice: STOP → /models → switch to frontier OR halt (Rule 2)
-Wrong model bug:  Re-run Pre-Flight Step 0 — check LM Studio
-Provider issues:  Verify opencode.json uses "lms" not "lmstudio"
-```
-
 ---
 
 ## Files the LLM Should Never Touch Without Explicit Instruction
 
-- `DECISIONS.md` — human-authored record of deliberate choices
-- `.env` — secrets
-- `CLAUDE.md` correction log — human-maintained
-- Database migration files after they've been run
-- `tasks/BACKLOG.md` completed section — historical record
+- `DECISIONS.md` — human-authored record of deliberate choices; do not edit without explicit instruction
+- `CLAUDE.md` correction log — human-maintained; rows added per the rule, not by the LLM
+- `tasks/BACKLOG.md` completed section — historical record; entries move here from `CURRENT.md`, not edited
 
 ---
 
