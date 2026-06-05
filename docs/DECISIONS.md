@@ -86,29 +86,4 @@ Doc guards catch the LLM's *intent*; mechanical gates catch the *result*. Both h
 
 ---
 
-## 2026-06-04 — Built `scripts/check-doc-sanity.sh`; upgraded doc guards from advisory to enforced
-
-**Decision:** Add a tracked Bash script (`scripts/check-doc-sanity.sh`) that runs 5 mechanical checks on the template repo, plus a new GitHub Actions job (`.github/workflows/ci.yml` → `doc-sanity` job) that runs the script on every push to main. Exit non-zero on failure → CI fails the build.
-
-**Alternatives considered:** (a) Document the line-count rule and let humans catch regressions; (b) use a pre-commit framework with a YAML config; (c) put the checks in BLUEPRINT.md as doc guards only (no enforcement).
-
-**Reason:** The empirical test (correction log row 6) proved doc guards are advisory — the LLM can misparse them, and they don't fail the build. The principle "prefer mechanical gates over doc guards for must-hold rules" is in DECISIONS.md and the log, but a principle in a doc doesn't enforce itself. The script is the enforcement.
-
-**Do not suggest:** Removing the script, moving the checks back into BLUEPRINT.md as doc-only, or skipping the `doc-sanity` job in CI to "save time." All three are regressions to the design.
-
-**Checks enforced (5):**
-1. `BLUEPRINT.md` line count ≤ 450
-2. No phantom sub-step references in `BLUEPRINT.md` (every `Step N.M` must have a matching `### Step N.M` heading)
-3. No legacy CLI tool residue (CLAUDE.md:117 correction log row is the only allowed mention)
-4. `AGENTS.md` is a symlink to `CLAUDE.md`
-5. `opencode.json` parses as valid JSON (skipped if `jq` is unavailable)
-
-**Self-exclusion:** the script excludes itself from the legacy-tool residue check. The grep string is the literal name of the legacy tool, so the script's own code would otherwise trip its own check. The exclusion is documented in an inline comment so a future maintainer doesn't strip it.
-
-**Verified by:** Running `bash scripts/check-doc-sanity.sh` from the project root — `Passed: 5    Failed: 0    RESULT: PASS` (exit 0). The CI workflow will run the same script on every push; the test was the same as what CI runs.
-
-**Bootstrap step for derived projects:** Add a line to `scripts/bootstrap.sh` that copies `scripts/check-doc-sanity.sh` into the new project. The check applies to the template's own docs; derived projects may want to extend it (e.g. add a placeholder check for tasks/ and docs/ once the bootstrap has been run). Not done in this commit — separate concern.
-
----
-
 > Add new decisions above this line, newest first.
