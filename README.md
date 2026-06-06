@@ -42,13 +42,14 @@ sw-dev-blueprint/
 
 ## Starting a new project
 
-**Option A: GitHub UI**
-1. Click "Use this template" on GitHub
-2. Name your new repo
-3. Clone it locally
-4. Run `./scripts/bootstrap.sh <your-project-name>`
+Give an agent this repo's URL and your project name — the agent does the rest.
+See **BLUEPRINT.md → Bootstrap Sequence** for the full agent-driven flow.
 
-**Option B: CLI**
+**If you prefer the one-time terminal path:**
+1. Create from template on GitHub UI ("Use this template")
+2. Clone locally
+3. Run `./scripts/bootstrap.sh <your-project-name>`
+
 ```bash
 gh repo create my-new-project --template developer-learner/sw-dev-blueprint --private
 cd my-new-project

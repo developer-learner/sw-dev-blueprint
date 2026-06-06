@@ -12,6 +12,9 @@ jobs:
     # Skip CI if this is the bare template (no requirements.txt)
     if: hashFiles('requirements.txt') != ''
     services:
+      # ⚠️ DEFAULT: Postgres 15. If this project uses SQLite or another DB,
+      # remove this entire `services` block and drop the DATABASE_URL env.
+      # See BLUEPRINT.md Rule 3 — adapt stack before first commit.
       postgres:
         image: postgres:15
         env:
