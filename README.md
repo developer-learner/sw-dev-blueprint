@@ -3,8 +3,9 @@
 > A GitHub template repository for LLM-assisted software development.
 > One-time setup. Every new project bootstraps from this.
 >
-> **Execution model:** Talk to OpenCode in plain English. It reads the guardrail
-> docs, writes code, runs tests, reports back. Git is the undo. Tests are the truth.
+> **Execution model:** Talk to the PM agent (`@pm`) in plain English. It writes a
+> PRD. You approve. The architect plans, build writes code, test validates from the
+> PRD. Git is the undo. Tests are the truth.
 
 ---
 
@@ -16,7 +17,7 @@ sw-dev-blueprint/
 ├── CLAUDE.md                  # 🧠 Master LLM context (auto-read by OpenCode + Claude Code)
 ├── AGENTS.md                  # Symlink → CLAUDE.md (OpenCode's preferred filename)
 ├── CONVENTIONS.md             # Code style rules
-├── opencode.json              # OpenCode model config (LM Studio local + frontier escalation)
+├── opencode.json              # OpenCode model + agent config (4-role pipeline)
 ├── .env.example               # Environment variable template
 ├── .gitignore                 # Python + OpenCode gitignore
 │
@@ -27,11 +28,14 @@ sw-dev-blueprint/
 │   └── TESTING.md             # Testing strategy + conventions
 │
 ├── tasks/
-│   ├── CURRENT.md             # Active task spec (update every session)
+│   ├── CURRENT.md             # PRD — acceptance criteria, frozen on approval
 │   └── BACKLOG.md             # Prioritized work queue
 │
+├── .opencode/
+│   └── prompts/               # Agent role definitions (pm/architect/build/test)
 ├── scripts/
-│   └── bootstrap.sh           # One-time project setup script
+│   ├── bootstrap.sh           # One-time project setup script
+│   └── phase-gate.sh          # INV-2 boundary enforcement
 │
 └── .github/
     └── workflows/
@@ -90,6 +94,25 @@ diagram under "The System in One Diagram".
 | New code convention | Add to CONVENTIONS.md |
 | LLM made a mistake you corrected | Add guard to CLAUDE.md correction log |
 | Task done | Move to BACKLOG.md completed table |
+
+---
+
+## Using the agents
+
+Start a session, then switch agents with `@name`:
+
+1. **`@pm`** — write a PRD from your casual instruction. The PM reads the
+   project's context (CLAUDE.md, CONVENTIONS.md, DECISIONS.md), drafts
+   acceptance criteria in `tasks/CURRENT.md`, and presents for your approval.
+   Only approve once the criteria look right — they freeze here.
+2. **`@architect`** — after the PRD is approved. The architect plans the
+   implementation in `docs/ARCHITECTURE.md`, then autonomously delegates
+   build → test subagents, runs `scripts/phase-gate.sh`, reads the JSON
+   report, and routes failures. Results come back to `tasks/CURRENT.md`.
+3. **`@pm`** (again) — review the results with the PM. Decide: next feature
+   (loop back to step 1), fix bugs (loop back to step 2), or done.
+
+You never talk to `@build` or `@test` directly — the architect calls them.
 
 ---
 

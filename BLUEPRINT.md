@@ -19,9 +19,13 @@ of starting from scratch.
 memory layer — a structured set of documents that tells any LLM everything it
 needs to know about a project, how to write code for it, and what not to do.
 
-**The execution model:** You talk to OpenCode in plain English. OpenCode reads
-the guardrail docs (CLAUDE.md / AGENTS.md, CONVENTIONS.md), plans, writes code
-to disk, and reports back. Git provides the undo. Tests provide the ground truth.
+**The execution model:** You talk to the **PM agent** (`@pm`) in plain English.
+The PM translates your instruction into a structured PRD (`tasks/CURRENT.md`).
+Once you approve, the **Architect** (`@architect`) plans and orchestrates:
+it delegates **Build** (`@build` subagent) to write `src/`, then **Test**
+(`@test` subagent) to write `tests/` from the PRD, runs the INV-2 gate
+(`scripts/phase-gate.sh`), reads the JSON test report, and routes failures
+per Rule 2/7. Results flow back to the PM for your review.
 
 ---
 

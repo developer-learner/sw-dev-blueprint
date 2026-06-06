@@ -43,10 +43,15 @@ Testing:      pytest
 │   ├── models/           # data models
 │   ├── services/         # business logic
 │   └── utils/            # shared utilities
-├── tests/                # mirrors src/ structure
+├── tests/                # mirrors src/ structure; derives from PRD (INV-1)
 ├── docs/                 # architecture, decisions, product
-├── tasks/                # current work + backlog
-├── scripts/              # dev utilities
+├── tasks/                # current work (PRD) + backlog
+│   └── CURRENT.md        # ⬅ PRD — acceptance criteria, frozen on approval
+├── scripts/
+│   ├── bootstrap.sh      # one-time setup
+│   └── phase-gate.sh     # INV-2 boundary enforcement (build↔test)
+├── .opencode/
+│   └── prompts/          # agent role definitions (pm/architect/build/test)
 ├── CLAUDE.md             # this file
 └── CONVENTIONS.md        # code style rules
 ```
@@ -80,6 +85,11 @@ Testing:      pytest
 - **Do not use `time.sleep()`** in production code — use proper async patterns
 - **Do not commit secrets** — use `.env` and ensure `.gitignore` covers it
 
+**Pipeline guardrails (Rules 6-7, see BLUEPRINT.md):**
+- **Do not derive tests from `src/` implementation** — tests come from the PRD acceptance criteria and API contract only (INV-1, Rule 6). A test that passes because the code is self-consistent is not evidence.
+- **Do not cross role boundaries** — Build writes `src/` only; Test writes `tests/` only. Enforced by `scripts/phase-gate.sh` (INV-2, Rule 7).
+- **Do not skip escalation** — test failure twice → re-plan; plan fails twice → escalate to PM; PM stuck → human decides.
+
 **Operating guardrails (from hard-won failures — see BLUEPRINT.md):**
 - **Do not set a thinking model as the active model.** Thinking models leave `content` empty and put output in `reasoning_content`, which breaks parsing. The model must be non-thinking local OR frontier.
 - **Do not retry the same failing fix more than twice.** Two strikes → escalate to a frontier model, or halt and leave a note.
@@ -92,7 +102,24 @@ Testing:      pytest
 
 ## Current Focus
 
-See `tasks/CURRENT.md` for the active task spec (or just describe it in plain English to OpenCode).
+See `tasks/CURRENT.md` for the active PRD. Start a session with `@pm` to write or update it.
+
+---
+
+## Four-Role Pipeline
+
+| Agent | Mode | Writes | Model |
+|-------|------|--------|-------|
+| `@pm` | Primary | `tasks/CURRENT.md` (PRD), `docs/PRODUCT.md` | Frontier |
+| `@architect` | Primary | `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` | Frontier |
+| `@build` | Subagent | `src/**` only | Local |
+| `@test` | Subagent | `tests/**` only (from PRD, never `src/`) | Local |
+
+**The loop:** start with `@pm` to write a PRD → human approves → switch to
+`@architect` → architect runs build→test subagents → results written to
+`tasks/CURRENT.md` → switch back to `@pm` to review with human.
+
+See BLUEPRINT.md Rules 6-7 for the full invariants.
 
 ---
 
