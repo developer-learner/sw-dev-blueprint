@@ -11,23 +11,21 @@ jobs:
     runs-on: ubuntu-latest
     # Skip CI if this is the bare template (no requirements.txt)
     if: hashFiles('requirements.txt') != ''
-    services:
-      # ⚠️ DEFAULT: Postgres 15. If this project uses SQLite or another DB,
-      # remove this entire `services` block and drop the DATABASE_URL env.
-      # See BLUEPRINT.md Rule 3 — adapt stack before first commit.
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: testuser
-          POSTGRES_PASSWORD: testpass
-          POSTGRES_DB: testdb
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+    # --- Postgres for projects that need it (uncomment both blocks below) ---
+    # services:
+    #   postgres:
+    #     image: postgres:15
+    #     env:
+    #       POSTGRES_USER: testuser
+    #       POSTGRES_PASSWORD: testpass
+    #       POSTGRES_DB: testdb
+    #     options: >-
+    #       --health-cmd pg_isready
+    #       --health-interval 10s
+    #       --health-timeout 5s
+    #       --health-retries 5
+    #     ports:
+    #       - 5432:5432
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -43,9 +41,12 @@ jobs:
         run: ruff check src/
       - name: Type check
         run: mypy src/
+      # If using Postgres, uncomment DATABASE_URL and the services block above:
+      # - name: Run tests
+      #   env:
+      #     DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+      #   run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80
       - name: Run tests
-        env:
-          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
         run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80
       - name: Upload coverage
         uses: codecov/codecov-action@v4

@@ -107,16 +107,18 @@ time and introducing technical debt. Cap it hard.
 
 ### Rule 3 — Adapt the template to the actual stack before first commit
 
-The template defaults to **FastAPI + PostgreSQL + pytest**. If THIS project's
-stack differs (e.g. SQLite, a different framework, no DB), you MUST adapt
-these files BEFORE bootstrapping:
+The template defaults to **FastAPI + SQLite + pytest**. CI does NOT run
+Postgres by default. If THIS project uses Postgres, you MUST adapt these
+files BEFORE bootstrapping:
 
-- `scripts/bootstrap.sh` — the dependencies installed
-- `.github/workflows/ci.yml` — the services block (remove Postgres for SQLite)
+- `scripts/bootstrap.sh` — add `asyncpg` to dependencies
+- `.github/workflows/ci.yml` — uncomment the Postgres service block and
+  its DATABASE_URL env in the test step
 - `CONVENTIONS.md` — framework-specific patterns
 - `docs/ARCHITECTURE.md` — the infrastructure section
 
-Do not run a Postgres CI service for a project that does not use Postgres.
+For non-Postgres stacks (SQLite, no DB, etc.): the defaults are already
+correct — just skip the CI Postgres blocks.
 
 ### Rule 4 — Halt-and-notify conditions (stop; do not guess)
 

@@ -66,7 +66,8 @@ echo "🐍 Creating virtual environment..."
 python3 -m venv .venv
 source .venv/bin/activate
 
-# --- Base dependencies (DEFAULT STACK — edit for your project per Rule 3) ---
+# --- Base dependencies (DEFAULT: FastAPI + SQLite. For Postgres, add
+# asyncpg + alembic. See BLUEPRINT.md Rule 3.) ---
 echo "📦 Installing base dependencies..."
 pip install --upgrade pip
 
@@ -78,8 +79,7 @@ pip install \
   loguru \
   python-dotenv \
   httpx \
-  asyncpg \
-  alembic
+  aiosqlite
 
 pip install \
   pytest \
@@ -121,5 +121,3 @@ echo "  6. Start LM Studio, load qwen/qwen3-coder-next (non-thinking)"
 echo "  7. Run: opencode"
 echo "  8. In OpenCode: /models → select 'Qwen3 Coder Next (local)' under 'lms'"
 echo "  9. Just tell it what you want to build"
-echo ""
-echo "Happy building 🛠"
