@@ -7,5 +7,29 @@
       "options": { "baseURL": "http://127.0.0.1:1234/v1" },
       "models": { "qwen/qwen3-coder-next": { "name": "Qwen3 Coder Next (local)" } }
     }
+  },
+  "agent": {
+    "pm": {
+      "mode": "primary",
+      "model": "<frontier>",
+      "prompt": "{file:./.opencode/prompts/pm.md}"
+    },
+    "architect": {
+      "mode": "primary",
+      "model": "<frontier>",
+      "prompt": "{file:./.opencode/prompts/architect.md}"
+    },
+    "build": {
+      "mode": "subagent",
+      "model": "lms/qwen/qwen3-coder-next",
+      "prompt": "{file:./.opencode/prompts/build.md}",
+      "permission": { "edit": { "tests/**": "deny", "**": "allow" } }
+    },
+    "test": {
+      "mode": "subagent",
+      "model": "lms/qwen/qwen3-coder-next",
+      "prompt": "{file:./.opencode/prompts/test.md}",
+      "permission": { "edit": { "src/**": "deny", "tests/**": "allow", "**": "deny" } }
+    }
   }
 }

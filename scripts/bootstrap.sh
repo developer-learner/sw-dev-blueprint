@@ -85,6 +85,7 @@ pip install \
   pytest \
   pytest-asyncio \
   pytest-cov \
+  pytest-json-report \
   ruff \
   mypy \
   respx

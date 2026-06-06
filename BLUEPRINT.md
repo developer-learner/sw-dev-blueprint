@@ -49,9 +49,11 @@ The full stack this system runs on. Know every object before operating it.
 | **OpenCode** | The coding agent. Reads CLAUDE.md/AGENTS.md + CONVENTIONS.md automatically, talks plain English, writes files to disk, runs commands. Install: `brew install sst/tap/opencode`. |
 | **Local LLM** | The model OpenCode uses. MUST be non-thinking (e.g. `qwen/qwen3-coder-next` via LM Studio). In OpenCode: `/models` → select under "lms" provider. |
 | **Frontier LLM** | Escalation model. Used when local hits a reasoning wall (Rule 2). Switch inside OpenCode with `/models`. |
-| **pytest / CI** | The test harness = **ground truth**. The agent does not decide if it succeeded — the tests do. |
+| **pytest / CI** | The test harness = **ground truth**, now machine-readable via `.cache/test-report.json`. |
 | **The docs** | The memory layer for stateless LLMs (this file + CLAUDE.md + CONVENTIONS.md + docs/ + tasks/). |
 | **AGENTS.md** | Symlink to CLAUDE.md. OpenCode's preferred filename; symlink keeps content in sync with no duplication. |
+| **Four agents** (pm/architect/build/test) | Role pipeline: PM writes PRD, Architect plans + orchestrates, Build writes `src/`, Test writes `tests/`. Defined in `opencode.json`. |
+| **phase-gate.sh** | Mechanical INV-2 enforcement — rejects cross-boundary edits before commit. |
 
 ---
 
@@ -64,13 +66,15 @@ Read these files from the repository in this exact order:
 | 1 | `README.md` | System overview + working loop | Always — first |
 | 2 | `CLAUDE.md` | Project identity, stack, guardrails | Always — every session |
 | 3 | `CONVENTIONS.md` | Code style and patterns | Always — every session |
-| 4 | `opencode.json` | OpenCode model configuration | Setup + model changes |
-| 5 | `docs/PRODUCT.md` | What we're building and why | New features |
-| 6 | `docs/ARCHITECTURE.md` | Data models, API, key flows | Any code change |
-| 7 | `docs/DECISIONS.md` | Why choices were made | Before suggesting alternatives |
-| 8 | `docs/TESTING.md` | How we test | Writing or running tests |
-| 9 | `tasks/CURRENT.md` | Active task spec | Every coding session |
-| 10 | `tasks/BACKLOG.md` | Upcoming work queue | Planning sessions |
+| 4 | `opencode.json` | OpenCode model + agent configuration | Setup + model/agent changes |
+| 5 | `.opencode/prompts/*.md` | Agent role prompts (pm/architect/build/test) | Agent setup |
+| 6 | `docs/PRODUCT.md` | What we're building and why | New features |
+| 7 | `docs/ARCHITECTURE.md` | Data models, API, key flows | Any code change |
+| 8 | `docs/DECISIONS.md` | Why choices were made | Before suggesting alternatives |
+| 9 | `docs/TESTING.md` | How we test + machine-readable report format | Writing or running tests |
+| 10 | `tasks/CURRENT.md` | **PRD** — acceptance criteria, flagged assumptions, frozen on approval | Every session — test oracle |
+| 11 | `tasks/BACKLOG.md` | Upcoming work queue | Planning sessions |
+| 12 | `scripts/phase-gate.sh` | Mechanical INV-2 gate (build↔test boundary) | After each phase |
 
 ---
 
@@ -104,6 +108,10 @@ time and introducing technical debt. Cap it hard.
 - Escalate: switch to a frontier model inside OpenCode (`/models` → Claude
   or GPT), OR halt and notify the human (Rule 4).
 - Never let the loop retry the same failing fix more than twice.
+- In the role pipeline, escalation goes UP one layer:
+  - Test failing twice → Build agent is not the fix (the approach is wrong) → re-assign Architect to re-plan.
+  - Architect plan producing failing tests twice → the PRD is contradictory or ambiguous → escalate to PM.
+  - PM cannot resolve → human must decide (Rule 4).
 
 ### Rule 3 — Adapt the template to the actual stack before first commit
 
@@ -140,6 +148,25 @@ The dangerous failure is acting confidently when wrong — not stopping.
 Never report a task complete based on your own judgment. Run `pytest`. A task
 is done only when its acceptance-criteria tests pass AND no existing tests
 broke. "It looks correct" is not evidence. The tests are.
+
+### Rule 6 — Tests derive from the PRD, not from the code
+
+The test agent's source of truth is `tasks/CURRENT.md` acceptance criteria
+plus the API contract in `docs/ARCHITECTURE.md`. It may read interface
+signatures and routes to know what to call; it must NOT infer "correct"
+behavior from `src/` implementation. A test written against the code only
+proves the code is self-consistent — a consistent bug passes. The frozen
+PRD is the sole oracle (INV-1).
+
+### Rule 7 — Role write-boundaries; escalate up, never sideways
+
+- Build edits `src/` only. Test edits `tests/` only. Neither edits the PRD
+  or the other's directory (INV-2).
+- Enforced by `scripts/phase-gate.sh` (mechanical), not agent permissions
+  alone — OpenCode agent permissions are non-transitive (a restricted agent
+  can bypass limits via the Task tool).
+- On a wall, halt and escalate UP one layer (see Rule 2 escalation paths).
+  No layer invents the decision of the layer above it.
 
 ---
 
@@ -191,34 +218,21 @@ If any check fails, STOP and report exactly which one. Do not proceed.
 ## The System in One Diagram
 
 ```
-Human intention
+Human casual instruction
+      │
+      ▼  (PM translates — lossy, the only human-checked step)
+PRD + acceptance criteria  [tasks/CURRENT.md, committed]
+      │  ← HUMAN APPROVAL GATE (Status: Approved). Criteria freeze here.
+      ▼
+Architect → eng plan (ARCHITECTURE.md / DECISIONS.md)
       │
       ▼
-Plain English to OpenCode   ← just talk; no need to pre-write a detailed spec
-      │
-      ▼
-Pre-Flight Check (Step 0)   ← verify LM Studio / model / git / gh
-      │
-      ▼
-OpenCode
-      │
-      ├── auto-reads: CLAUDE.md (or AGENTS.md symlink) + CONVENTIONS.md
-      ├── reads: ARCHITECTURE.md + DECISIONS.md (on demand / when relevant)
-      │
-      ├── Plans the change
-      ├── Writes code to disk
-      └── Reports back
-      │
-      ▼
-Tests run: pytest   ← GROUND TRUTH
-      │
-      ├── Pass → done, update docs, next task
-      └── Fail → paste error into OpenCode, loop
-                   │
-                   └── Same error twice? → STOP (Rule 2): escalate or halt
+Build (src/ only) ──► Test (tests/ only, derives from PRD) ──► pytest --json-report
+                                                                        │
+                                                pass → done   fail → route up (Rule 2/7)
+                                                                    ├ build bug → Build
+                                                                    └ spec wrong → Architect → PM → human
 ```
-
----
 
 ---
 
@@ -335,30 +349,14 @@ finished.
 
 ---
 
-## LLM Routing Decision Tree
+## Cost Model
 
-```
-What kind of task is this?
-│
-├── Boilerplate / CRUD / tests / known patterns
-│     └── Local model via OpenCode (free, fast)
-│           /models → qwen/qwen3-coder-next under "lms"
-│
-├── Multi-file refactor / moderate complexity
-│     └── Local model via OpenCode — it handles multi-file natively
-│
-├── Hitting a reasoning wall / Rule 2 escalation
-│     └── Switch model inside OpenCode
-│           /models → Claude or GPT (frontier)
-│
-└── Greenfield architecture / major product decision
-      └── Discuss in chat (Claude.ai) first
-            → Write outcome into DECISIONS.md
-            → Tell OpenCode what to build
-```
+| Role | Model tier | Why |
+|------|-----------|-----|
+| Build, Test | Local (`lms/qwen/qwen3-coder-next`) | Free, fast, handles 80% of tasks (routine code + tests) |
+| PM, Architect | Frontier (`<frontier>`) | Spec work and reasoning walls — local is not strong enough for ambiguous or architectural decisions |
 
-**Cost note:** Frontier models cost money. Local handles 80% of tasks free.
-Switch to frontier only when local demonstrably can't solve the problem.
+**Rule:** use frontier for build/test only when Rule 2 fires (same failure twice) and a re-plan doesn't fix it.
 
 ---
 
@@ -410,17 +408,11 @@ BACKLOG.md first rather than CURRENT.md.
 
 ## Anti-Patterns to Avoid
 
-**Over-speccing CURRENT.md** — OpenCode takes plain English. You don't need
-a detailed acceptance-criteria checklist for every task. Write it out only
-when the task is genuinely complex or you need explicit boundaries.
-
 **Stale ARCHITECTURE.md** — If the LLM's model of your schema is wrong,
 everything built on it is wrong. Update after every schema change.
 
 **Skipping DECISIONS.md** — Every unlogged decision gets re-litigated next
 session. The LLM has no memory; this is the only thing carrying context forward.
-
-**Wrong provider name** — `lmstudio` collides with OpenCode's catalog. Always use `lms` (see OpenCode Configuration).
 
 **Loading a thinking model** — Silent failure. Always verify with Pre-Flight
 Step 0 before a session.
@@ -428,12 +420,10 @@ Step 0 before a session.
 **Over-relying on frontier for everything** — 80% of tasks are routine.
 Local handles them free. Save frontier for actual reasoning walls.
 
-**Abdication** — The LLM fills any vacuum, including product decisions. You own:
-what to build, acceptance criteria, architecture decisions, final review.
-
 **Trusting self-reported success** — Only passing tests confirm success (Rule 5).
 
-**Letting the error loop run** — Two strikes, then escalate or halt (Rule 2).
+**Tests that confirm the code instead of the spec** — INV-1 violation. The
+test agent must derive expected behavior from the PRD, not from `src/`.
 
 ---
 

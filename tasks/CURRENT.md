@@ -61,6 +61,27 @@ Temporary context for this task only.]
 
 ---
 
+---
+
+## Flagged Assumptions
+
+> Where the casual instruction was ambiguous, the PM picked a reading. List each pick here.
+> This is the human's review surface — they scan only this + Acceptance Criteria.
+
+- [Ambiguity] → [Assumption taken]. e.g. "share reports" → assumed view-only links, not collab editing.
+
+---
+
+## Approval
+
+**Status:** Draft | Approved
+**Approved by:** [human reviewer]
+
+> Build does NOT start until Status: Approved. Once Approved, Acceptance Criteria are FROZEN —
+> no agent may edit them. Changes require a new Draft cycle and re-approval.
+
+---
+
 ## Definition of Done
 
 - [ ] Acceptance criteria all checked

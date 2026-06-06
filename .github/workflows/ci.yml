@@ -36,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov ruff mypy respx
+          pip install pytest pytest-asyncio pytest-cov pytest-json-report ruff mypy respx
       - name: Lint
         run: ruff check src/
       - name: Type check
@@ -47,7 +47,7 @@ jobs:
       #     DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
       #   run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80
       - name: Run tests
-        run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80
+        run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80 --json-report --json-report-file=.cache/test-report.json
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         if: always()

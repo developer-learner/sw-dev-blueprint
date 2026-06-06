@@ -58,34 +58,26 @@ cd my-new-project
 
 ---
 
-## The working loop
+## The working loop — four-role pipeline
 
 ```
-0. PRE-FLIGHT (BLUEPRINT.md Step 0): verify LM Studio running + correct
-   non-thinking model loaded + git + gh. Fail loudly if anything's off.
-1. Start LM Studio, confirm qwen/qwen3-coder-next loaded (non-thinking)
-2. Run: opencode
-3. In OpenCode: /models → select "Qwen3 Coder Next (local)" under "lms"
-   (NOT the default "Big Pickle/OpenCode Zen" cloud models)
-4. Describe what you want in plain English — no need to pre-write CURRENT.md spec
-5. OpenCode reads CLAUDE.md + CONVENTIONS.md, plans, writes code to disk
-6. Run tests: pytest        ← ground truth; confirms success, not the LLM
-7. If failing: paste error back into OpenCode
-8. Same error twice? STOP → escalate to frontier model OR halt (Rule 2)
-9. git diff to review, git reset to roll back if needed
-10. Repeat
+Human casual instruction  ──►  PM (PRD in tasks/CURRENT.md)
+                                   │  ← human approves (criteria freeze here)
+                                   ▼
+                              Architect → eng plan
+                                   │
+                                   ▼
+                              Build (src/ only) ──► Test (tests/ only, from PRD)
+                                                           │
+                                                    pass → done
+                                                    fail → route up (see BLUEPRINT.md Rule 2/7)
 ```
 
----
+**Your touch-points:** write the casual instruction, scan Flagged Assumptions + Acceptance
+Criteria, approve the PRD. The loop runs autonomously after that.
 
-## LLM routing guide
-
-| Task type | Use |
-|-----------|-----|
-| Routine features, boilerplate, tests | Local model via OpenCode (free) |
-| Complex / multi-file refactor | Local model via OpenCode |
-| Reasoning wall / escalation (Rule 2) | Switch OpenCode model to frontier (claude-sonnet or gpt) |
-| Greenfield design, big decisions | Discuss in Claude.ai first → DECISIONS.md → tell OpenCode |
+See **BLUEPRINT.md → Hard Rules** for the escalation and boundary rules, and the full
+diagram under "The System in One Diagram".
 
 ---
 

@@ -100,6 +100,15 @@ def auth_headers(test_user):
 
 ---
 
+## Machine-readable results
+
+Tests produce a JSON report at `.cache/test-report.json` (via `pytest-json-report`).
+The orchestrator agent reads this file to determine pass/fail and extract failing
+test IDs + assertion messages. This is the inter-agent contract for Rule 5 ground
+truth — agents parse the JSON, not the human terminal output.
+
+---
+
 ## Mocking Policy
 
 - Mock external HTTP calls (use `respx` for httpx)

@@ -15,8 +15,12 @@ htmlcov/
 .env.test
 .env.*.local
 
-# OpenCode
-/.opencode/
+# Test artifacts
+.cache/
+
+# OpenCode session data (keep prompt files tracked)
+/.opencode/*
+!/.opencode/prompts/
 
 # OS
 .DS_Store
