@@ -123,6 +123,8 @@ See `tasks/CURRENT.md` for the active PRD. Start a session with `@pm` to write o
 
 See BLUEPRINT.md Rules 6-7 for the full invariants.
 
+PM: see `docs/PM-ROLE.md` for the full job description and verify-at-source discipline.
+
 ---
 
 ## Reporting
