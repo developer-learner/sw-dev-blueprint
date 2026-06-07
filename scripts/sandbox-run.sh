@@ -20,6 +20,7 @@ podman run --rm --timeout "$TIMEOUT" \
   --network slirp4netns \
   --add-host "$SANDBOX_LLM_HOST:host-gateway" \
   --env OPENAI_API_BASE="http://$SANDBOX_LLM_HOST:1234/v1" \
+  --env PYTHONPATH=/work \
   --memory=4g --cpus=2 \
   --cap-drop=ALL --security-opt no-new-privileges \
   "$IMAGE" "$@"
