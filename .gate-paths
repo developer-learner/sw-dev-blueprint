@@ -1,0 +1,7 @@
+# .gate-paths — directory layout for INV-2 boundary enforcement
+# Used by scripts/phase-gate.sh. Change these if your project
+# uses a non-standard directory structure (e.g. app/ + spec/).
+# Format: <phase>=<directory>
+# Keys: build=  test=  (must match phase-gate.sh <build|test> argument)
+build=src/
+test=tests/

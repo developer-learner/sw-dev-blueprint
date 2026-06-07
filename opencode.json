@@ -11,12 +11,12 @@
   "agent": {
     "pm": {
       "mode": "primary",
-      "model": "<frontier>",
+      "model": "[FRONTIER_MODEL]",
       "prompt": "{file:./.opencode/prompts/pm.md}"
     },
     "architect": {
       "mode": "primary",
-      "model": "<frontier>",
+      "model": "[FRONTIER_MODEL]",
       "prompt": "{file:./.opencode/prompts/architect.md}"
     },
     "build": {

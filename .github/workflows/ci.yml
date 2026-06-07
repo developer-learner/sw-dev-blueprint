@@ -7,6 +7,19 @@ on:
     branches: [main]
 
 jobs:
+  template-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check BLUEPRINT.md line count (max 450)
+        run: |
+          LINES=$(wc -l < BLUEPRINT.md)
+          if [ "$LINES" -gt 450 ]; then
+            echo "FAIL: BLUEPRINT.md is $LINES lines (max 450)"
+            exit 1
+          fi
+          echo "OK: BLUEPRINT.md is $LINES lines"
+
   test:
     runs-on: ubuntu-latest
     # Skip CI if this is the bare template (no requirements.txt)
@@ -37,14 +50,6 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pytest pytest-asyncio pytest-cov pytest-json-report ruff mypy respx
-      - name: Check BLUEPRINT.md line count (max 450)
-        run: |
-          LINES=$(wc -l < BLUEPRINT.md)
-          if [ "$LINES" -gt 450 ]; then
-            echo "FAIL: BLUEPRINT.md is $LINES lines (max 450)"
-            exit 1
-          fi
-          echo "OK: BLUEPRINT.md is $LINES lines"
       - name: Lint
         run: ruff check src/
       - name: Type check

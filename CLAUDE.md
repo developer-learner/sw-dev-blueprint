@@ -52,6 +52,7 @@ Testing:      pytest
 │   └── phase-gate.sh     # INV-2 boundary enforcement (build↔test)
 ├── .opencode/
 │   └── prompts/          # agent role definitions (pm/architect/build/test)
+├── .gate-paths           # configurable directories for INV-2 enforcement
 ├── CLAUDE.md             # this file
 └── CONVENTIONS.md        # code style rules
 ```

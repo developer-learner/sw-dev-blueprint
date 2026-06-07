@@ -123,6 +123,7 @@ The template defaults to **FastAPI + SQLite + pytest**. CI does NOT run
 Postgres by default. If THIS project uses Postgres, you MUST adapt these
 files BEFORE bootstrapping:
 
+- `.gate-paths` — if your project uses directories other than `src/` and `tests/`
 - `scripts/bootstrap.sh` — add `asyncpg` to dependencies
 - `.github/workflows/ci.yml` — uncomment the Postgres service block and
   its DATABASE_URL env in the test step
@@ -324,14 +325,16 @@ You cannot trust "I filled everything in." Run:
 
 ```bash
 grep -rnE '\[[A-Z][A-Z_ ]+\]|\[[A-Z][a-z]+ [a-z]' . \
-  --include='*.md' --exclude-dir=.git
+  --include='*.md' --include='*.json' --exclude-dir=.git \
+  --exclude='DECISIONS.md' --exclude='BLUEPRINT.md'
 ```
 
 If it returns ANY lines, a placeholder survived — go back to Step 6,
 fill, re-run, repeat until it returns nothing.
 
-**Carve-out:** the `## Template` format block in `docs/DECISIONS.md` uses
-placeholder brackets intentionally as an evergreen format reference.
+`DECISIONS.md` and `BLUEPRINT.md` are excluded: the first uses intentional
+placeholder brackets in its `## Template` format block; the second lists
+`[PROJECT_NAME]` and `[NAME]` as fill examples in Step 6.
 Everything else must be clean.
 
 ### Step 8 — First commit and push
