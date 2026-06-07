@@ -155,7 +155,7 @@ broke. "It looks correct" is not evidence. The tests are.
 
 ### Rule 6 — Tests derive from the PRD, not from the code
 
-The test agent's source of truth is `tasks/CURRENT.md` acceptance criteria
+The test agent's source of truth is `tasks/CURRENT.md` acceptance criteria, written in EARS,
 plus the API contract in `docs/ARCHITECTURE.md`. It may read interface
 signatures and routes to know what to call; it must NOT infer "correct"
 behavior from `src/` implementation. A test written against the code only

@@ -2,6 +2,13 @@
 # phase-gate.sh <build|test> — fails if the phase touched the other role's directory.
 set -e
 PHASE="$1"
+
+# BLUEPRINT.md line-count gate (max 450)
+LINES=$(wc -l < BLUEPRINT.md)
+if [ "$LINES" -gt 450 ]; then
+  echo "GATE FAIL: BLUEPRINT.md is $LINES lines (max 450)"
+  exit 1
+fi
 CHANGED="$( { git diff --name-only HEAD; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u )"
 case "$PHASE" in
   build) echo "$CHANGED" | grep -q '^tests/' && { echo "GATE FAIL: build modified tests/ (INV-2)"; exit 1; } ;;

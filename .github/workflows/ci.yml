@@ -37,6 +37,14 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pytest pytest-asyncio pytest-cov pytest-json-report ruff mypy respx
+      - name: Check BLUEPRINT.md line count (max 450)
+        run: |
+          LINES=$(wc -l < BLUEPRINT.md)
+          if [ "$LINES" -gt 450 ]; then
+            echo "FAIL: BLUEPRINT.md is $LINES lines (max 450)"
+            exit 1
+          fi
+          echo "OK: BLUEPRINT.md is $LINES lines"
       - name: Lint
         run: ruff check src/
       - name: Type check

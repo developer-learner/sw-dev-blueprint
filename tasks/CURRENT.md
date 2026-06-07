@@ -22,12 +22,19 @@
 
 ## Acceptance Criteria
 
-> Written as checkboxes. Each one is testable.
+> Write each criterion in EARS form so it maps one-to-one to a test (sharpens INV-1).
+> <!-- EARS forms:
+>      THE SYSTEM SHALL <behavior>                      (always)
+>      WHEN <trigger>, THE SYSTEM SHALL <response>       (event)
+>      WHILE <state>, THE SYSTEM SHALL <behavior>        (during a state)
+>      IF <condition>, THEN THE SYSTEM SHALL <response>  (error/edge)
+>      WHERE <feature>, THE SYSTEM SHALL <behavior>      (optional feature)
+>      One clause = one test. Attach a concrete I/O example where useful. -->
 
-- [ ] [Specific, observable outcome 1]
-- [ ] [Specific, observable outcome 2]
-- [ ] [Tests pass for the above]
-- [ ] [No existing tests broken]
+- [ ] WHEN <trigger>, THE SYSTEM SHALL <observable response>
+- [ ] IF <invalid input>, THEN THE SYSTEM SHALL <error response>
+- [ ] THE SYSTEM SHALL <invariant that always holds>
+- [ ] Tests pass for the above; no existing tests broken
 
 ---
 
