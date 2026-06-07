@@ -21,11 +21,11 @@ needs to know about a project, how to write code for it, and what not to do.
 
 **The execution model:** You talk to the **PM agent** (`@pm`) in plain English.
 The PM translates your instruction into a structured PRD (`tasks/CURRENT.md`).
-Once you approve, the **Architect** (`@architect`) plans and orchestrates:
-it delegates **Build** (`@build` subagent) to write `src/`, then **Test**
-(`@test` subagent) to write `tests/` from the PRD, runs the INV-2 gate
-(`scripts/phase-gate.sh`), reads the JSON test report, and routes failures
-per Rule 2/7. Results flow back to the PM for your review.
+Once you approve, `scripts/orchestrate.sh` drives the build→test loop:
+it calls the **Architect** to plan, then **Build** to write `src/`, then
+**Test** to write `tests/` (from the PRD), runs `scripts/phase-gate.sh`
+after each phase, runs pytest, and routes failures per Rule 2/7. Results
+flow back to the PM for your review.
 
 ---
 

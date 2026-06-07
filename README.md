@@ -35,7 +35,8 @@ sw-dev-blueprint/
 │   └── prompts/               # Agent role definitions (pm/architect/build/test)
 ├── scripts/
 │   ├── bootstrap.sh           # One-time project setup script
-│   └── phase-gate.sh          # INV-2 boundary enforcement
+│   ├── phase-gate.sh          # INV-2 boundary enforcement
+│   └── orchestrate.sh         # Code-driven build→test loop conductor
 │
 └── .github/
     └── workflows/
@@ -68,13 +69,13 @@ cd my-new-project
 Human casual instruction  ──►  PM (PRD in tasks/CURRENT.md)
                                    │  ← human approves (criteria freeze here)
                                    ▼
-                              Architect → eng plan
-                                   │
-                                   ▼
-                              Build (src/ only) ──► Test (tests/ only, from PRD)
-                                                           │
-                                                    pass → done
-                                                    fail → route up (see BLUEPRINT.md Rule 2/7)
+                          scripts/orchestrate.sh ──► Architect → eng plan
+                                                       │
+                                                       ▼
+                                                  Build (src/ only) ──► Test (tests/ only, from PRD)
+                                                                               │
+                                                                        pass → done
+                                                                        fail → route up (see Rule 2/7)
 ```
 
 **Your touch-points:** write the casual instruction, scan Flagged Assumptions + Acceptance
@@ -105,14 +106,14 @@ Start a session, then switch agents with `@name`:
    project's context (CLAUDE.md, CONVENTIONS.md, DECISIONS.md), drafts
    acceptance criteria in `tasks/CURRENT.md`, and presents for your approval.
    Only approve once the criteria look right — they freeze here.
-2. **`@architect`** — after the PRD is approved. The architect plans the
-   implementation in `docs/ARCHITECTURE.md`, then autonomously delegates
-   build → test subagents, runs `scripts/phase-gate.sh`, reads the JSON
-   report, and routes failures. Results come back to `tasks/CURRENT.md`.
+ 2. **`scripts/orchestrate.sh`** — after the PRD is approved, the orchestrator
+    drives the loop: calls the architect to plan, build to write `src/`,
+    test to validate, runs `scripts/phase-gate.sh` after each phase, runs
+    pytest, and routes failures. Results are written to `tasks/CURRENT.md`.
 3. **`@pm`** (again) — review the results with the PM. Decide: next feature
    (loop back to step 1), fix bugs (loop back to step 2), or done.
 
-You never talk to `@build` or `@test` directly — the architect calls them.
+You never talk to `@build` or `@test` directly — the orchestrator calls them.
 
 ---
 

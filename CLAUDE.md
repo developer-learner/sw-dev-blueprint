@@ -49,7 +49,8 @@ Testing:      pytest
 │   └── CURRENT.md        # ⬅ PRD — acceptance criteria, frozen on approval
 ├── scripts/
 │   ├── bootstrap.sh      # one-time setup
-│   └── phase-gate.sh     # INV-2 boundary enforcement (build↔test)
+│   ├── phase-gate.sh     # INV-2 boundary enforcement (build↔test)
+│   └── orchestrate.sh    # code-driven build→test loop conductor
 ├── .opencode/
 │   └── prompts/          # agent role definitions (pm/architect/build/test)
 ├── .gate-paths           # configurable directories for INV-2 enforcement

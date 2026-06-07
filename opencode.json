@@ -20,13 +20,13 @@
       "prompt": "{file:./.opencode/prompts/architect.md}"
     },
     "build": {
-      "mode": "subagent",
+      "mode": "primary",
       "model": "lms/qwen/qwen3-coder-next",
       "prompt": "{file:./.opencode/prompts/build.md}",
       "permission": { "edit": { "tests/**": "deny", "**": "allow" } }
     },
     "test": {
-      "mode": "subagent",
+      "mode": "primary",
       "model": "lms/qwen/qwen3-coder-next",
       "prompt": "{file:./.opencode/prompts/test.md}",
       "permission": { "edit": { "src/**": "deny", "tests/**": "allow", "**": "deny" } }
