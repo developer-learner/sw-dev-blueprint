@@ -125,6 +125,24 @@ See BLUEPRINT.md Rules 6-7 for the full invariants.
 
 ---
 
+## Reporting
+
+When summarizing work since the last PM review (status reports, commit scoping, progress updates):
+
+1. Read `docs/.pm-last-review` to get the last reviewed ref:
+   ```
+   LAST=$(cat docs/.pm-last-review 2>/dev/null || git rev-list --max-parents=0 HEAD)
+   ```
+2. Derive the commit list from the tree, not memory:
+   ```
+   git log "$LAST"..HEAD --oneline
+   ```
+3. State the scope explicitly in the report: "N new commits since reviewed ref `$LAST`".
+4. Never write or advance `docs/.pm-last-review` — PM-owned.
+5. If the file is missing (fresh checkout), the `git rev-list` fallback uses the initial commit — the scope becomes the entire history, which is correct for a first report.
+
+---
+
 ## Key Contacts / Roles
 
 | Role | Name |
