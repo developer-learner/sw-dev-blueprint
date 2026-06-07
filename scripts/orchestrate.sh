@@ -97,31 +97,28 @@ while [ "$iter" -lt "$MAX_ITERS" ]; do
 
   # Build
   echo "--- Build ---"
-  run_agent build "Implement per the plan. Failing tests to fix: $failing_info"
+  run_agent build "Implement src/ per the plan and PRD. Write src/ only. Do not write tests."
   if ! bash scripts/phase-gate.sh build; then
-    cat >> tasks/CURRENT.md <<EOF
-
-## Notes / Context
-
-Orchestrator halted: build phase violated INV-2 (touched $test_dir). See phase-gate output.
-EOF
-    exit 1
+    echo "Build gate failure — cleaning up violating files and continuing"
+    git checkout -- "$test_dir" 2>/dev/null || true
+    git ls-files --others --exclude-standard "$test_dir" | xargs rm -f 2>/dev/null || true
   fi
   git add "$build_dir" && git commit -m "[build] iter $iter" 2>/dev/null || true
 
   # Test
   echo "--- Test ---"
-  run_agent test "Write/refresh tests from the PRD acceptance criteria (EARS clauses). One test per clause. Do not read src to decide correctness."
+  run_agent test "Write/refresh tests from the PRD acceptance criteria (EARS clauses). One test per clause. Write tests/ only. Do not write src/. Do not read src to decide correctness."
   if ! bash scripts/phase-gate.sh test; then
-    cat >> tasks/CURRENT.md <<EOF
-
-## Notes / Context
-
-Orchestrator halted: test phase violated INV-2 (touched $build_dir). See phase-gate output.
-EOF
-    exit 1
+    echo "Test gate failure — cleaning up violating files and continuing"
+    git checkout -- "$build_dir" 2>/dev/null || true
+    git ls-files --others --exclude-standard "$build_dir" | xargs rm -f 2>/dev/null || true
   fi
   git add "$test_dir" && git commit -m "[test] iter $iter" 2>/dev/null || true
+
+  # Install deps in container (ephemeral — build phase install is lost on exit)
+  if [ "${SANDBOX:-0}" = "1" ]; then
+    scripts/sandbox-run.sh pip install fastapi uvicorn httpx pytest pytest-asyncio 2>&1 || true
+  fi
 
   # Run tests
   echo "--- Running tests ---"
