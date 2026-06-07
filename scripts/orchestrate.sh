@@ -24,6 +24,9 @@ AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
+# LLM host address for container — single overridable default, inherited by sandbox-run.sh
+: "${SANDBOX_LLM_HOST:=host.containers.internal}"; export SANDBOX_LLM_HOST
+
 # --- Pre-flight ---
 echo "=== Pre-flight ==="
 python3 --version >/dev/null 2>&1 || { echo "FAIL: python3 required"; exit 1; }
@@ -70,7 +73,7 @@ run_agent() {
   echo "--- Agent: $name ---"
   if [ "${SANDBOX:-0}" = "1" ]; then
     scripts/sandbox-run.sh timeout "${AGENT_TIMEOUT}" opencode run \
-      --attach "http://host.containers.internal:$PORT" \
+      --attach "http://${SANDBOX_LLM_HOST}:$PORT" \
       --agent "$name" "$prompt"
   else
     $TIMEOUT_CMD "${AGENT_TIMEOUT}" opencode run \

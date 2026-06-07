@@ -9,7 +9,7 @@ TIMEOUT="${SANDBOX_TIMEOUT:-1800}"
 # LLM host address — staging step 0 proves which address reaches the host LLM
 # from inside the container. On Linux: host.containers.internal. On macOS
 # (via podman machine VM), verify reachability explicitly — don't assume.
-SANDBOX_LLM_HOST="${SANDBOX_LLM_HOST:-host.containers.internal}"
+: "${SANDBOX_LLM_HOST:=host.containers.internal}"
 
 podman image exists "$IMAGE" || podman build -t "$IMAGE" -f "$REPO/Containerfile" "$REPO"
 

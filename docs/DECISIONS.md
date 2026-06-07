@@ -145,7 +145,7 @@ Doc guards catch the LLM's *intent*; mechanical gates catch the *result*. Both h
 
 ## 2026-06-06 — Sandbox Wiring in Orchestrator
 
-**Decision:** `scripts/orchestrate.sh` routes agent calls and pytest through `scripts/sandbox-run.sh` when the `SANDBOX=1` environment variable is set. The sandbox path wraps each agent call with `timeout "${AGENT_TIMEOUT}"` (the container runs Debian where `timeout` is available from coreutils). The non-sandbox path uses `$TIMEOUT_CMD "${AGENT_TIMEOUT}"` (`gtimeout` on macOS, `timeout` on Linux). The LLM host address (`host.containers.internal`) is read from `SANDBOX_LLM_HOST` env var (set by sandbox-run.sh, defaulting to `host.containers.internal`). The orchestrator does not hard-code the address — it trusts the variable set by step 0.
+**Decision:** `scripts/orchestrate.sh` routes agent calls and pytest through `scripts/sandbox-run.sh` when the `SANDBOX=1` environment variable is set. The sandbox path wraps each agent call with `timeout "${AGENT_TIMEOUT}"` (the container runs Debian where `timeout` is available from coreutils). The non-sandbox path uses `$TIMEOUT_CMD "${AGENT_TIMEOUT}"` (`gtimeout` on macOS, `timeout` on Linux). `SANDBOX_LLM_HOST` is read from the environment; both `orchestrate.sh` and `sandbox-run.sh` default it to `host.containers.internal` independently. When the orchestrator drives the run, its exported value is inherited by the container launcher; run standalone, `sandbox-run.sh` supplies its own default. The orchestrator does not hard-code the address — it reads the variable set upstream.
 
 **Alternatives considered:**
 - (a) Always run inside the sandbox, no fallback — breaks for developers without Podman
