@@ -143,4 +143,34 @@ Doc guards catch the LLM's *intent*; mechanical gates catch the *result*. Both h
 
 ---
 
+## 2026-06-06 — Agent Permission Model: No Catch-All Deny
+
+**Decision:** The test agent's `edit` permission uses explicit `src/**": "deny"` and `tests/**": "allow"` with no `**": "deny"` catch-all. The catch-all overrode the specific allow because `**` matches `tests/` paths. Build agent keeps `tests/**": "deny"` with `**": "allow"` as its catch-all — reversed logic because build's allowed set (everything except tests) is too broad to enumerate.
+
+**Alternatives considered:**
+- (a) Keep `**": "deny"` and list every non-test directory explicitly — brittle, misses new directories
+- (b) Use `--dangerously-skip-permissions` server-side — bypasses the entire permission model
+- (c) Single agent with no role separation — violates INV-2
+
+**Reason:** Explicit + allow with no deny catch-all is the simplest permission config that lets the test agent write files. OpenCode's permission engine applies matching deny rules regardless of specificity — a `**`: deny always catches `tests/` paths. Removing the catch-all fixes this at the config level.
+
+**Do not suggest:** Re-adding `**": "deny"` to the test agent; adding `--dangerously-skip-permissions` as a permanent fix.
+
+---
+
+## 2026-06-06 — Local Model Tier: Qwen3.6-35B-A3B for Build/Test
+
+**Decision:** Build and test agents default to `lms/qwen/qwen3.6-35b-a3b` (35B parameters, 3B active). The 7B `qwen3-coder-next` model produces malformed tool calls (omits required fields like `filePath` and `content` from the Write tool) and is removed from any file-writing role. PM and architect agents remain on `[FRONTIER_MODEL]` per the cost-tier design.
+
+**Alternatives considered:**
+- (a) Run all agents on frontier models — higher cost, negates local-tier savings
+- (b) Wait for better 7B tool-calling support — uncertain timeline
+- (c) Use Gemma-4-31B — not tested, but 35B Qwen writes files correctly
+
+**Reason:** The 35B model is the smallest local model found that reliably constructs valid OpenCode tool calls. It writes files, installs dependencies, and passes gates. The two-tier cost model (frontier for planning, local for build/test) is preserved — the threshold is 35B, not 7B.
+
+**Do not suggest:** Reverting build/test to the 7B model; running build/test on frontier models permanently.
+
+---
+
 > Add new decisions above this line, newest first.
