@@ -446,3 +446,5 @@ test agent must derive expected behavior from the PRD, not from `src/`.
 
 *This document is the entry point. Everything else flows from it.*
 *Keep this file updated as the system evolves.*
+*Keep this document lean — prune redundancy, cross-reference instead of duplicating.*
+*Length is a smell to investigate, not a hard limit; there is no enforced line count.*
