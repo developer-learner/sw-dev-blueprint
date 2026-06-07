@@ -68,7 +68,15 @@ run_agent() {
   local name="$1"
   local prompt="$2"
   echo "--- Agent: $name ---"
-  opencode run --attach "$SERVER_URL" --agent "$name" "$prompt"
+  if [ "${SANDBOX:-0}" = "1" ]; then
+    scripts/sandbox-run.sh timeout "${AGENT_TIMEOUT}" opencode run \
+      --attach "http://host.containers.internal:$PORT" \
+      --agent "$name" "$prompt"
+  else
+    $TIMEOUT_CMD "${AGENT_TIMEOUT}" opencode run \
+      --attach "$SERVER_URL" \
+      --agent "$name" "$prompt"
+  fi
 }
 
 # --- Architect ---
@@ -118,7 +126,11 @@ EOF
   # Run tests
   echo "--- Running tests ---"
   mkdir -p .cache
-  pytest --json-report --json-report-file=.cache/test-report.json 2>/dev/null || true
+  if [ "${SANDBOX:-0}" = "1" ]; then
+    scripts/sandbox-run.sh pytest --json-report --json-report-file=.cache/test-report.json 2>/dev/null || true
+  else
+    pytest --json-report --json-report-file=.cache/test-report.json 2>/dev/null || true
+  fi
 
   # Parse JSON report: exit 0 = all pass, exit 1 = failures, exit 2 = no file, exit 3 = no/malformed tests
   if result=$(python3 -c '
