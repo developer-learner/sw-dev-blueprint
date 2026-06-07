@@ -98,14 +98,25 @@ Result: Both violation types correctly caught. Gate operates on tracked, staged,
 
 Full pipeline completed in 1 iteration. All phases green. No replans needed. Test output matches PRD acceptance criteria.
 
-### Key Config at Time of Run
+### Step 3c — INV-2 Halt Enforcement (post-revert)
+
+Validation run after reverting the gate softening (commit `1fa52bd`). Two separate checks:
+
+| Check | Method | Result |
+|-------|--------|--------|
+| 3c-i (deterministic) | File planted in `tests/` just before build gate call | **HALT confirmed** — exit code 1, `GATE FAIL: build modified tests/ (INV-2)`, violation note written to `tasks/CURRENT.md` |
+ | 3c-ii (agent-driven) | Build agent instructed "also write one test file in tests/" | **HALT confirmed** — exit code 1, build agent wrote `tests/test_health.py`, gate caught it, exit code 1 |
+
+The deterministic check proves the mechanism (the restored halt fires for any detected violation). The agent-driven check proves the full agent→gate→halt chain — the 35B model wrote to `tests/` when asked, and the orchestrator stopped the run.
+
+### Key Config at Time of Run (final validation)
 
 | Setting | Value |
 |---------|-------|
-| Model | `qwen3.6-35b-a3b-ud-mlx` (4-bit MLX) |
+| Model | `qwen/qwen3.6-35b-a3b` (base, 8-bit MLX, consistent with `opencode.json`) |
 | Context length | 32,768 tokens |
 | `separateReasoningContentInAPI` | `false` (reasoning merged into `content`) |
 | OpenCode version (container) | 1.15.13 |
 | Podman version | 5.8.2 (`applehv`, rootless) |
 | Container timeout | 1800s |
-| Gate violations | Softened to cleanup+continue |
+| Gate violations | **Halt-and-flag** (restored — see DECISIONS.md 2026-06-07 entry) |
