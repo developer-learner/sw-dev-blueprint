@@ -7,7 +7,22 @@ MAX_REPLANS=2
 PORT=4567
 SERVER_URL="http://127.0.0.1:$PORT"
 
-cd "$(cd "$(dirname "$0")/.." && pwd)"
+# Timeout command: use gtimeout on macOS (brew install coreutils),
+# timeout on Linux. Fail fast if neither is available.
+if command -v gtimeout &>/dev/null; then
+  TIMEOUT_CMD="gtimeout"
+elif command -v timeout &>/dev/null; then
+  TIMEOUT_CMD="timeout"
+else
+  echo "ERROR: Neither timeout nor gtimeout available. Install coreutils (brew install coreutils) on macOS." >&2
+  exit 1
+fi
+
+# Timeout for each agent call (seconds). 30 minutes allows complex
+# test generation and build iterations.
+AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
+
+cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
 # --- Pre-flight ---
 echo "=== Pre-flight ==="

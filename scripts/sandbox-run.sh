@@ -2,7 +2,7 @@
 # sandbox-run.sh — run a command inside a disposable Podman container over the repo only.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 IMAGE="swbp-sandbox"
 TIMEOUT="${SANDBOX_TIMEOUT:-1800}"
 
@@ -13,7 +13,7 @@ SANDBOX_LLM_HOST="${SANDBOX_LLM_HOST:-host.containers.internal}"
 
 podman image exists "$IMAGE" || podman build -t "$IMAGE" -f "$REPO/Containerfile" "$REPO"
 
-timeout "$TIMEOUT" podman run --rm \
+podman run --rm --timeout "$TIMEOUT" \
   --userns=keep-id \
   -v "$REPO:/work:Z" \
   -w /work \
