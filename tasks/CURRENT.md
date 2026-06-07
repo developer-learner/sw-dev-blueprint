@@ -81,7 +81,7 @@ Temporary context for this task only.]
 
 ## Approval
 
-**Status:** Draft | Approved
+**Status:** Draft
 **Approved by:** [human reviewer]
 
 > Build does NOT start until Status: Approved. Once Approved, Acceptance Criteria are FROZEN —

@@ -17,10 +17,24 @@ git --version >/dev/null 2>&1    || { echo "FAIL: git required"; exit 1; }
 python3 -c "import json, hashlib" 2>/dev/null || { echo "FAIL: python3 json/hashlib required"; exit 1; }
 echo "OK"
 
+# --- Parse .gate-paths for scoped git adds ---
+build_dir="src/"
+test_dir="tests/"
+if [ -f .gate-paths ]; then
+  _raw=$(grep '^build=' .gate-paths | cut -d= -f2- || true)
+  if [ -n "$_raw" ]; then
+    _raw="${_raw#./}"; _raw="${_raw%"${_raw##*[![:space:]]}"}"; build_dir="${_raw%/}/"
+  fi
+  _raw=$(grep '^test=' .gate-paths | cut -d= -f2- || true)
+  if [ -n "$_raw" ]; then
+    _raw="${_raw#./}"; _raw="${_raw%"${_raw##*[![:space:]]}"}"; test_dir="${_raw%/}/"
+  fi
+fi
+
 # --- Gate on approval ---
 echo "=== Checking PRD approval ==="
-if ! grep -q '^\*\*Status:\*\*.*Approved' tasks/CURRENT.md; then
-  echo "FAIL: PRD not approved (Status != Approved in tasks/CURRENT.md)"
+if ! grep -qE '^\*\*Status:\*\* *Approved *$' tasks/CURRENT.md; then
+  echo "FAIL: PRD not approved (Status must be exactly 'Approved')"
   exit 1
 fi
 echo "OK"
@@ -45,7 +59,7 @@ run_agent() {
 # --- Architect ---
 echo "=== Phase: Architect ==="
 run_agent architect "Produce/refresh the engineering plan from the approved PRD in tasks/CURRENT.md. Write ARCHITECTURE.md and DECISIONS.md. Do not build."
-git add -A && git commit -m "[plan]" 2>/dev/null || true
+git add docs/ && git commit -m "[plan]" 2>/dev/null || true
 
 # --- Build/test loop ---
 iter=0
@@ -61,30 +75,51 @@ while [ "$iter" -lt "$MAX_ITERS" ]; do
   # Build
   echo "--- Build ---"
   run_agent build "Implement per the plan. Failing tests to fix: $failing_info"
-  bash scripts/phase-gate.sh build
-  git add -A && git commit -m "[build] iter $iter" 2>/dev/null || true
+  if ! bash scripts/phase-gate.sh build; then
+    cat >> tasks/CURRENT.md <<EOF
+
+## Notes / Context
+
+Orchestrator halted: build phase violated INV-2 (touched $test_dir). See phase-gate output.
+EOF
+    exit 1
+  fi
+  git add "$build_dir" && git commit -m "[build] iter $iter" 2>/dev/null || true
 
   # Test
   echo "--- Test ---"
   run_agent test "Write/refresh tests from the PRD acceptance criteria (EARS clauses). One test per clause. Do not read src to decide correctness."
-  bash scripts/phase-gate.sh test
-  git add -A && git commit -m "[test] iter $iter" 2>/dev/null || true
+  if ! bash scripts/phase-gate.sh test; then
+    cat >> tasks/CURRENT.md <<EOF
+
+## Notes / Context
+
+Orchestrator halted: test phase violated INV-2 (touched $build_dir). See phase-gate output.
+EOF
+    exit 1
+  fi
+  git add "$test_dir" && git commit -m "[test] iter $iter" 2>/dev/null || true
 
   # Run tests
   echo "--- Running tests ---"
   mkdir -p .cache
   pytest --json-report --json-report-file=.cache/test-report.json 2>/dev/null || true
 
-  # Parse JSON report: exit 0 = all pass, exit 1 = failures, exit 2 = no report
+  # Parse JSON report: exit 0 = all pass, exit 1 = failures, exit 2 = no file, exit 3 = no/malformed tests
   if result=$(python3 -c '
 import json, hashlib, sys
 try:
     with open(".cache/test-report.json") as f:
         r = json.load(f)
 except FileNotFoundError:
-    print("no report found")
-    sys.exit(2)
+    print("no report found"); sys.exit(2)
+except json.JSONDecodeError:
+    print("malformed report"); sys.exit(3)
 tests = r.get("tests", [])
+summary = r.get("summary", {})
+total = summary.get("total", 0) if isinstance(summary, dict) else 0
+if total == 0 or not tests:
+    print("NO_TESTS"); sys.exit(3)
 failed = sorted(t["nodeid"] for t in tests if t.get("outcome") in ("failed", "error"))
 if not failed:
     sys.exit(0)
@@ -104,13 +139,24 @@ for n in failed:
 
 All tests pass. Feature built and validated in $iter iteration(s).
 EOF
-    git add -A && git commit -m "[success]" 2>/dev/null || true
+    git add tasks/CURRENT.md && git commit -m "[success]" 2>/dev/null || true
     exit 0
   else
     _rc=$?
     if [ "$_rc" -eq 2 ]; then
-      echo "WARN: no test report — no tests written yet"
+      echo "WARN: no test report"
       sig=""
+    elif [ "$_rc" -eq 3 ]; then
+      echo "FAIL: test phase produced no verdict"
+      cat >> tasks/CURRENT.md <<EOF
+
+## Notes / Context
+
+Orchestrator halted: test phase produced no passing-or-failing signal.
+The loop cannot proceed without a verdict — inspect the tester,
+the acceptance criteria (EARS mapping), and test collection.
+EOF
+      exit 1
     else
       sig=$(echo "$result" | grep '^SIG:' | head -1 | cut -d: -f2-) || true
       failing_info=$(echo "$result" | grep -v '^SIG:' | grep -v '^$' | head -20 | paste -sd ' | ' -) || true
@@ -140,7 +186,7 @@ EOF
           exit 1
         fi
         run_agent architect "These tests keep failing: $failing_info. Revise the plan/approach in ARCHITECTURE.md. Do not edit src or tests."
-        git add -A && git commit -m "[replan] attempt $replans" 2>/dev/null || true
+        git add docs/ && git commit -m "[replan] attempt $replans" 2>/dev/null || true
         repeat=0
       fi
     fi

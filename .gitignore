@@ -22,6 +22,10 @@ htmlcov/
 /.opencode/*
 !/.opencode/prompts/
 
+# Generated outputs
+repomix-output.md
+repomix-output.*
+
 # OS
 .DS_Store
 blueprint-dryrun*/
