@@ -102,9 +102,13 @@ while [ "$iter" -lt "$MAX_ITERS" ]; do
   echo "--- Build ---"
   run_agent build "Implement src/ per the plan and PRD. Write src/ only. Do not write tests."
   if ! bash scripts/phase-gate.sh build; then
-    echo "Build gate failure — cleaning up violating files and continuing"
-    git checkout -- "$test_dir" 2>/dev/null || true
-    git ls-files --others --exclude-standard "$test_dir" | xargs rm -f 2>/dev/null || true
+    cat >> tasks/CURRENT.md <<EOF
+
+## Notes / Context
+
+Orchestrator halted: build phase violated INV-2 (touched $test_dir). See phase-gate output.
+EOF
+    exit 1
   fi
   git add "$build_dir" && git commit -m "[build] iter $iter" 2>/dev/null || true
 
@@ -112,9 +116,13 @@ while [ "$iter" -lt "$MAX_ITERS" ]; do
   echo "--- Test ---"
   run_agent test "Write/refresh tests from the PRD acceptance criteria (EARS clauses). One test per clause. Write tests/ only. Do not write src/. Do not read src to decide correctness."
   if ! bash scripts/phase-gate.sh test; then
-    echo "Test gate failure — cleaning up violating files and continuing"
-    git checkout -- "$build_dir" 2>/dev/null || true
-    git ls-files --others --exclude-standard "$build_dir" | xargs rm -f 2>/dev/null || true
+    cat >> tasks/CURRENT.md <<EOF
+
+## Notes / Context
+
+Orchestrator halted: test phase violated INV-2 (touched $build_dir). See phase-gate output.
+EOF
+    exit 1
   fi
   git add "$test_dir" && git commit -m "[test] iter $iter" 2>/dev/null || true
 
