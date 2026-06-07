@@ -9,9 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://opencode.ai/install | bash -s -- --version 1.15.13 \
     && cp /root/.opencode/bin/opencode /usr/local/bin/opencode
 
-# Pytest toolchain (always installed)
+# Pytest toolchain + app deps (always installed)
 RUN pip install --no-cache-dir \
-    pytest pytest-json-report pytest-asyncio pytest-cov ruff mypy respx
+    pytest pytest-json-report pytest-asyncio pytest-cov ruff mypy respx \
+    fastapi uvicorn httpx pydantic
 
 # Project deps — only if requirements.txt exists at build time.
 # Rebuild image after bootstrap.sh generates it (see BLUEPRINT.md Rule 3).
