@@ -56,18 +56,16 @@ except Exception as e:
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
-hook_events: list[HookExecutionEvent] = []
+all_hook_events: list[HookExecutionEvent] = []
 
 
 def collect_hook_events(event):
     if isinstance(event, HookExecutionEvent):
-        hook_events.append(event)
+        all_hook_events.append(event)
 
 
 def run_scenario(phase: str, instruction: str, log_name: str) -> Path:
     """Run one agent scenario with given phase and instruction."""
-    hook_events.clear()
-
     # Set phase marker
     PHASE_FILE.parent.mkdir(parents=True, exist_ok=True)
     PHASE_FILE.write_text(phase + "\n")
@@ -168,6 +166,17 @@ log4 = run_scenario(
     "test-allowed.log",
 )
 
+# ── Guard: confirm the model actually invoked the tool ────────────────
+tool_call_count = len(all_hook_events)
+if tool_call_count == 0:
+    print("\n  ⚠ No file_editor invocations detected — gate was never tested")
+    SPIKE_DIR.joinpath("RESULT.md").write_text(
+        "INCOMPLETE — model never invoked file_editor, hook untested\n"
+    )
+    sys.exit(1)
+else:
+    print(f"\n  {tool_call_count} file_editor invocations recorded — gate was exercised")
+
 # ── Evaluate results ────────────────────────────────────────────────────
 
 print("\n=== Evaluation ===")
@@ -220,6 +229,10 @@ SPIKE_DIR.joinpath("attach-method.md").write_text(
     "reads the tool_input.path from stdin JSON, compares it against a phase marker file\n"
     "(/tmp/inv2-spike/PHASE) and .gate-paths, and exits 2 (block) on cross-boundary\n"
     "writes. No forking or patching of OpenHands internals — adoptable via config.\n"
+    "\n"
+    "Host retains git/routing control: the agent runs via LocalWorkspace on the host\n"
+    "filesystem, and the host (run-spike.py) drives the conversation loop. OpenHands\n"
+    "does not own the commit boundary or the routing between phases.\n"
 )
 
 print(f"\n=== SPIKE {result} ===")
