@@ -29,7 +29,7 @@ fi
 # ── Python venv + deps ────────────────────────────────────────────────
 echo "[3/5] Setting up Python virtual environment..."
 python3 -m venv "$VENV_DIR"
-"$VENV_DIR/bin/pip" install -q openhands-sdk 2>&1 | tail -1
+"$VENV_DIR/bin/pip" install -q openhands-sdk openhands-tools 2>&1 | tail -1
 echo "  OK — openhands-sdk installed"
 
 # ── Ensure hook is executable ──────────────────────────────────────────
