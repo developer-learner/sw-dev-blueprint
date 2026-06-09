@@ -32,6 +32,7 @@ echo "=== Pre-flight ==="
 python3 --version >/dev/null 2>&1 || { echo "FAIL: python3 required"; exit 1; }
 git --version >/dev/null 2>&1    || { echo "FAIL: git required"; exit 1; }
 [ -f .gate-paths ]               || { echo "FAIL: .gate-paths not found"; exit 1; }
+[ -f scripts/.control-plane-manifest ] || { echo "FAIL: scripts/.control-plane-manifest not found"; exit 1; }
 python3 -c "import json, hashlib" 2>/dev/null || { echo "FAIL: python3 json/hashlib required"; exit 1; }
 echo "OK"
 
@@ -66,26 +67,38 @@ SERVER_PID=$!
 sleep 2
 echo "Server running at $SERVER_URL"
 
-# --- run_agent helper ---
-run_agent() {
+# --- Phase-start wrapper: records ref before agent runs ---
+run_phase() {
   local name="$1"
   local prompt="$2"
-  echo "--- Agent: $name ---"
-  if [ "${SANDBOX:-0}" = "1" ]; then
+  local gate_arg="$3"  # build|test|architect
+  shift 3
+  local phase_start
+  phase_start=$(git rev-parse HEAD)
+  echo "--- Agent: $name (phase-start=$phase_start) ---"
+  if [ "${SANDBOX:-1}" = "1" ]; then
     scripts/sandbox-run.sh timeout "${AGENT_TIMEOUT}" opencode run \
       --attach "http://${SANDBOX_LLM_HOST}:$PORT" \
       --agent "$name" "$prompt"
-  else
+  elif [ "${I_UNDERSTAND_UNSANDBOXED:-0}" = "1" ]; then
     $TIMEOUT_CMD "${AGENT_TIMEOUT}" opencode run \
       --attach "$SERVER_URL" \
       --agent "$name" "$prompt"
+  else
+    echo "FAIL: SANDBOX=0 requires I_UNDERSTAND_UNSANDBOXED=1 (local debug override)"
+    exit 1
   fi
+  bash scripts/phase-gate.sh "$gate_arg" "$phase_start"
 }
 
 # --- Architect ---
 echo "=== Phase: Architect ==="
-run_agent architect "Produce/refresh the engineering plan from the approved PRD in tasks/CURRENT.md. Write ARCHITECTURE.md and DECISIONS.md. Do not build."
+run_phase architect "Produce/refresh the engineering plan from the approved PRD in tasks/CURRENT.md. Write ARCHITECTURE.md and DECISIONS.md. Do not build." architect
 git add docs/ && git commit -m "[plan]" 2>/dev/null || true
+
+# Freeze the API contract — test agent reads this, not the live ARCHITECTURE.md
+cp docs/ARCHITECTURE.md docs/ARCHITECTURE.approved.md 2>/dev/null || true
+git add docs/ARCHITECTURE.approved.md && git commit -m "[contract] frozen at approval" 2>/dev/null || true
 
 # --- Build/test loop ---
 iter=0
@@ -100,44 +113,31 @@ while [ "$iter" -lt "$MAX_ITERS" ]; do
 
   # Build
   echo "--- Build ---"
-  run_agent build "Implement src/ per the plan and PRD. Write src/ only. Do not write tests."
-  if ! bash scripts/phase-gate.sh build; then
-    cat >> tasks/CURRENT.md <<EOF
-
-## Notes / Context
-
-Orchestrator halted: build phase violated INV-2 (touched $test_dir). See phase-gate output.
-EOF
-    exit 1
-  fi
+  run_phase build "Implement src/ per the plan and PRD. Write src/ only. Do not write tests." build
   git add "$build_dir" && git commit -m "[build] iter $iter" 2>/dev/null || true
 
   # Test
   echo "--- Test ---"
-  run_agent test "Write/refresh tests from the PRD acceptance criteria (EARS clauses). One test per clause. Write tests/ only. Do not write src/. Do not read src to decide correctness."
-  if ! bash scripts/phase-gate.sh test; then
-    cat >> tasks/CURRENT.md <<EOF
-
-## Notes / Context
-
-Orchestrator halted: test phase violated INV-2 (touched $build_dir). See phase-gate output.
-EOF
-    exit 1
-  fi
+  run_phase test "Write/refresh tests from the PRD acceptance criteria (EARS clauses). One test per clause. Write tests/ only. Do not write src/. Do not read src to decide correctness." test
   git add "$test_dir" && git commit -m "[test] iter $iter" 2>/dev/null || true
 
   # Install deps in container (ephemeral — build phase install is lost on exit)
-  if [ "${SANDBOX:-0}" = "1" ]; then
-    scripts/sandbox-run.sh pip install fastapi uvicorn httpx pytest pytest-asyncio 2>&1 || true
+  if [ "${SANDBOX:-1}" = "1" ]; then
+    if [ -f requirements.txt ]; then
+      scripts/sandbox-run.sh pip install -r requirements.txt 2>&1 || true
+    fi
   fi
 
   # Run tests
   echo "--- Running tests ---"
   mkdir -p .cache
-  if [ "${SANDBOX:-0}" = "1" ]; then
+  if [ "${SANDBOX:-1}" = "1" ]; then
     scripts/sandbox-run.sh pytest --json-report --json-report-file=.cache/test-report.json 2>/dev/null || true
-  else
+  elif [ "${I_UNDERSTAND_UNSANDBOXED:-0}" = "1" ]; then
     pytest --json-report --json-report-file=.cache/test-report.json 2>/dev/null || true
+  else
+    echo "FAIL: SANDBOX=0 requires I_UNDERSTAND_UNSANDBOXED=1 (local debug override)"
+    exit 1
   fi
 
   # Parse JSON report: exit 0 = all pass, exit 1 = failures, exit 2 = no file, exit 3 = no/malformed tests
@@ -220,7 +220,7 @@ The PRD may be ambiguous or the approach needs rethinking (Rule 4).
 EOF
           exit 1
         fi
-        run_agent architect "These tests keep failing: $failing_info. Revise the plan/approach in ARCHITECTURE.md. Do not edit src or tests."
+         run_phase architect "These tests keep failing: $failing_info. Revise the plan/approach in ARCHITECTURE.md. Do not edit src or tests." architect
         git add docs/ && git commit -m "[replan] attempt $replans" 2>/dev/null || true
         repeat=0
       fi

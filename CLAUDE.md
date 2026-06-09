@@ -88,7 +88,7 @@ Testing:      pytest
 - **Do not commit secrets** — use `.env` and ensure `.gitignore` covers it
 
 **Pipeline guardrails (Rules 6-7, see BLUEPRINT.md):**
-- **Do not derive tests from `src/` implementation** — tests come from the PRD acceptance criteria and API contract only (INV-1, Rule 6). A test that passes because the code is self-consistent is not evidence.
+- **Do not derive tests from `src/` implementation** — tests come from the PRD acceptance criteria and the frozen API contract in `docs/ARCHITECTURE.approved.md` only (INV-1, Rule 6). The live `docs/ARCHITECTURE.md` is mutable mid-loop and is NOT a valid test source. A test that passes because the code is self-consistent is not evidence.
 - **Do not cross role boundaries** — Build writes `src/` only; Test writes `tests/` only. Enforced by `scripts/phase-gate.sh` (INV-2, Rule 7).
 - **Do not skip escalation** — test failure twice → re-plan; plan fails twice → escalate to PM; PM stuck → human decides.
 
