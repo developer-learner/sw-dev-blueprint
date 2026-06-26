@@ -131,6 +131,7 @@ iter=$(read_state "iteration" || echo 0); iter=${iter:-0}
 replans=$(read_state "replans_used" || echo 0); replans=${replans:-0}
 last_sig=$(read_state "last_failure_sig" || true)
 repeat=$(read_state "repeat_count" || echo 0); repeat=${repeat:-0}
+failing_info=$(read_state "failing_info" || true); failing_info=${failing_info:-}
 
 while [ "$iter" -lt "$MAX_ITERS" ]; do
   iter=$((iter + 1))
