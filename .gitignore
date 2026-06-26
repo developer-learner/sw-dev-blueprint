@@ -18,6 +18,9 @@ htmlcov/
 # Test artifacts
 .cache/
 
+# Pipeline runtime state (crash recovery for the orchestrator)
+.pipeline-state/
+
 # OpenCode session data (keep prompt files tracked)
 /.opencode/*
 !/.opencode/prompts/

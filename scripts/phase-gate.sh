@@ -72,6 +72,24 @@ case "$PHASE" in
       echo "$violations"
       exit 1
     fi
+
+    # INV-3: Every non-documentation decision in DECISIONS.md must appear in ARCHITECTURE.md
+    if [ -f "docs/DECISIONS.md" ] && [ -f "docs/ARCHITECTURE.md" ]; then
+      all_ids=$(grep '^## D-' "docs/DECISIONS.md" | grep -oE 'D-[0-9]+' || true)
+      doc_only=$(awk '/^## D-/ {did=$2} /^\*\*Documentation-only:\*\*/ {print did}' "docs/DECISIONS.md")
+      missing=""
+      while IFS= read -r id; do
+        [ -z "$id" ] && continue
+        echo "$doc_only" | grep -qF "$id" && continue
+        if ! grep -qF "$id" "docs/ARCHITECTURE.md"; then
+          missing="$missing $id"
+        fi
+      done <<< "$all_ids"
+      if [ -n "$missing" ]; then
+        echo "GATE FAIL: INV-3 — decisions not referenced in ARCHITECTURE.md:$missing"
+        exit 1
+      fi
+    fi
     ;;
   *)
     echo "usage: phase-gate.sh <build|test|architect> [phase-start-ref]"
