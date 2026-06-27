@@ -43,6 +43,9 @@ sw-dev-blueprint/
         └── ci.yml             # GitHub Actions: test + lint on every push
 ```
 
+> **Template files under `src/`, `docs/`, and `tasks/` are intentionally generic skeletons.** They are replaced with project-specific content by the Architect phase on your first pipeline run. Do not judge the template by the skeleton — judge it by the process that fills them.
+```
+
 ---
 
 ## Starting a new project
