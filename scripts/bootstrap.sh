@@ -116,6 +116,20 @@ chmod +x .githooks/pre-commit
 git config core.hooksPath .githooks
 echo "   core.hooksPath = .githooks"
 
+# --- Birth-SHA stamp (D-33): record which template commit this child came from.
+# gh repo create --template leaves no upstream link; without this stamp, drift
+# against the template can never be computed. Do it now — it cannot be
+# reconstructed later.
+echo "🧬 Stamping template birth SHA..."
+TEMPLATE_SLUG=$(grep '^repo=' .template-version | cut -d= -f2)
+BIRTH_SHA=$(gh api "repos/$TEMPLATE_SLUG/commits/HEAD" --jq .sha 2>/dev/null || true)
+if [ -n "$BIRTH_SHA" ]; then
+  "${SED_INPLACE[@]}" "s/^ref=.*/ref=$BIRTH_SHA/" .template-version
+  echo "   born from $TEMPLATE_SLUG @ ${BIRTH_SHA:0:12}"
+else
+  echo "   ⚠️  could not reach GitHub — stamp later with: scripts/update-template.sh --stamp"
+fi
+
 echo ""
 echo "✅ Bootstrap complete!"
 echo ""
