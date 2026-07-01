@@ -1,0 +1,52 @@
+name: check-drift
+
+# Fleet drift detection (D-33): compares this child's template-owned control
+# plane against the template repository. Skips itself in the template repo
+# and in unstamped children.
+#
+# Private template: add a TEMPLATE_READ_TOKEN repo secret (read-only PAT for
+# the template repo). Public template: no token needed.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, so a quiet child still hears the template move
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read fleet identity
+        id: tv
+        run: |
+          echo "repo=$(grep '^repo=' .template-version | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "ref=$(grep '^ref=' .template-version | cut -d= -f2)"   >> "$GITHUB_OUTPUT"
+
+      - name: Skip (template repo or unstamped child)
+        if: steps.tv.outputs.repo == github.repository || steps.tv.outputs.ref == 'UNSTAMPED'
+        run: echo "::notice::drift check skipped — this is the template repo or an unstamped child (scripts/update-template.sh --stamp)"
+
+      - name: Clone template and check drift
+        if: steps.tv.outputs.repo != github.repository && steps.tv.outputs.ref != 'UNSTAMPED'
+        env:
+          TOKEN: ${{ secrets.TEMPLATE_READ_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git clone --quiet "https://x-access-token:${TOKEN}@github.com/${{ steps.tv.outputs.repo }}.git" .template-clone
+          else
+            git clone --quiet "https://github.com/${{ steps.tv.outputs.repo }}.git" .template-clone
+          fi
+          git -C .template-clone fetch --quiet origin "${{ steps.tv.outputs.ref }}"
+          set +e
+          bash scripts/check-drift.sh .template-clone
+          rc=$?
+          set -e
+          if [ "$rc" -eq 2 ]; then
+            echo "::warning::control plane is BEHIND the template — run scripts/update-template.sh"
+            exit 0
+          fi
+          exit "$rc"

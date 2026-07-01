@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-33 — 2026-07-01 — Fleet drift: birth-SHA identity, ownership-split manifests, drift detection
+
+**Decision:** Three pieces. (1) **Birth-SHA**: `.template-version` records `repo=` (template slug) and `ref=` (template HEAD SHA at instantiation, stamped by `bootstrap.sh`, retrofittable via `update-template.sh --stamp`); `gh repo create --template` leaves no upstream link, so this is the only moment fleet identity can be captured. (2) **Ownership split**: the control-plane manifest becomes `scripts/.manifest-template` (template-owned logic — gates, orchestrator, validators, schemas, prompts, hooks, drift tooling) and `scripts/.manifest-project` (per-project adaptations under Rule 3 — `.gate-paths`, `opencode.json`, `Containerfile`, `ci.yml`, the doc layer). phase-gate verifies both, fail-closed; drift is computed over exactly the template list, so a Rule 3 adaptation is never a false positive. One-shot setup scripts are deliberately unlisted: children delete them at instantiation, and the read-only mounts (D-30) already cover them. (3) **Detection**: `scripts/check-drift.sh` does a three-way compare per template-owned file (child vs template@birth vs template@HEAD) → IN_SYNC / BEHIND (exit 2, CI warns) / LOCALLY_MODIFIED, MISSING_IN_CHILD, CHILD_ONLY (exit 1, CI fails); `.github/workflows/check-drift.yml` runs it on push and weekly, skipping itself in the template repo and unstamped children.
+
+**Alternatives considered:** (a) No fleet story — the documented failure: the Rule 8 fix lived only in spark until hand-ported. (b) One mixed manifest plus a separate drift-file list — two lists drift from each other; ownership belongs in the manifest itself. (c) Auto-sync on drift — propagation is a human-approved act (D-34); detection and propagation stay separate so CI never rewrites a child.
+
+**Reason:** Drift you cannot compute is drift you discover in production. The birth-SHA is cheap now and unrecoverable later; the split makes "adapted" and "drifted" mechanically distinguishable; the CI job makes a quiet child hear the template move.
+
+**Do not suggest:** Auto-applying template changes in CI. Putting template-owned files in `.manifest-project` to silence a drift failure — that is the drift, formalized.
+
+---
+
 ## D-32 — 2026-07-01 — INV-4: test-visible surface ⊆ ERD-locked surface (lowest-confidence gate)
 
 **Decision:** New invariant, same class as INV-1/2/3. Whatever the frozen tests observe is de-facto locked, whether or not the ERD meant to lock it — so the two locks are kept aligned mechanically: `scripts/check-test-surface.py` statically checks that tests import only `contracts.entry_points` entries (`module` or `module:symbol`) and exercise only declared `contracts.routes` path templates (segment-wise match, `{param}` wildcards). It runs inside `scripts/refreeze.sh` on the merged preview (current frozen tests + incoming delta), BEFORE the human approval prompt — a TPM test that reaches past the contracts is rejected before it can be frozen, and before it can silently shrink the EM's design space.
