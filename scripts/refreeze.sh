@@ -85,6 +85,20 @@ if errs:
 PYEOF
 fi
 
+# --- INV-4: test-visible surface ⊆ locked surface, checked on the MERGED
+# preview (current frozen state + incoming overlay) BEFORE the human sees the
+# approval prompt. A TPM test that reaches past the contracts is rejected
+# here — it never gets frozen (D-32).
+PREVIEW="$(mktemp -d)"
+trap 'rm -rf "$PREVIEW"' EXIT
+mkdir -p "$PREVIEW/tests"
+[ -d tests ] && cp -R tests/. "$PREVIEW/tests/" 2>/dev/null || true
+[ -d "$IN/tests" ] && cp -R "$IN/tests/." "$PREVIEW/tests/"
+INV4_CONTRACTS="$APPROVED/contracts.json"
+[ -f "$IN/contracts.json" ] && INV4_CONTRACTS="$IN/contracts.json"
+python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
+  || die "INV-4 rejected the delta — fix the tests or lock the surface in contracts.json, then restage"
+
 # --- Show the human the full diff ---
 echo "=============================================="
 echo "  Re-freeze: spec v$V -> v$NEW"
