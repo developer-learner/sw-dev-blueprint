@@ -70,22 +70,14 @@ if [ -n "$_raw" ]; then
   _raw="${_raw#./}"; _raw="${_raw%"${_raw##*[![:space:]]}"}"; build_dir="${_raw%/}/"
 fi
 
-# --- Re-freeze delta: reset tasks invalidated since the last run (D-31) ---
+# --- Re-freeze detection (the reset itself runs after the plan is fresh) ---
 LAST_V=$(read_state spec_version); LAST_V=${LAST_V:-$FROZEN_V}
-if [ "$FROZEN_V" != "$LAST_V" ] && [ -f "$APPROVED/DELTA-v$FROZEN_V.json" ] && [ -f tasks/plan.json ]; then
-  echo "=== Frozen spec advanced v$LAST_V -> v$FROZEN_V: resetting affected subtree ==="
-  if affected=$(python3 scripts/validate-plan.py --affected "$APPROVED/DELTA-v$FROZEN_V.json" 2>/dev/null); then
-    for id in $affected; do
-      echo "  reset: $id"
-      set_tstat "$id" pending
-      rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" 2>/dev/null || true
-    done
-  else
-    echo "  plan stale against v$FROZEN_V — EM will re-derive it"
-  fi
+SPEC_ADVANCED=0
+if [ "$FROZEN_V" != "$LAST_V" ]; then
+  SPEC_ADVANCED=1
+  echo "frozen spec advanced v$LAST_V -> v$FROZEN_V"
   rm -rf "$ESC_DIR"; mkdir -p "$ESC_DIR"   # bundles answered by this delta are consumed
 fi
-write_state spec_version "$FROZEN_V"
 
 # --- Headless server ---
 echo "=== Starting server on port $PORT ==="
@@ -298,6 +290,30 @@ finalize_batch() {  # writes the single copy-pasteable batch and halts
 # ==============================================================================
 echo "=== Phase: plan ==="
 ensure_plan
+
+# --- Re-freeze delta: reset the affected subtree, now that the plan is fresh
+# and validated against the new spec (D-31). Tasks whose ENTRIES changed are
+# also caught by the fingerprint pass below; this catches the remaining case:
+# unchanged entries whose mapped TEST CONTENT changed in the delta.
+if [ "$SPEC_ADVANCED" = "1" ]; then
+  if [ -f "$APPROVED/DELTA-v$FROZEN_V.json" ]; then
+    echo "=== Resetting subtree affected by delta v$FROZEN_V ==="
+    affected=$(python3 scripts/validate-plan.py --affected "$APPROVED/DELTA-v$FROZEN_V.json")
+    for id in $affected; do
+      echo "  reset: $id"
+      set_tstat "$id" pending
+      rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" 2>/dev/null || true
+    done
+  fi
+  # escalated/blocked tasks get a fresh chance under the new spec
+  for f in "$TASK_STATE"/*.status; do
+    [ -f "$f" ] || continue
+    case "$(cat "$f")" in
+      escalated|blocked) printf 'pending\n' > "$f" ;;
+    esac
+  done
+fi
+write_state spec_version "$FROZEN_V"
 
 echo "=== Phase: task DAG ==="
 while :; do

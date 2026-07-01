@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-31 — 2026-07-01 — Versioned re-freeze: frozen spec changes only via human-approved delta
+
+**Decision:** The TPM's artifacts (PRD.md, ERD.md, contracts.json in `scripts/.approved/`; the test suite in `tests/`) are hash-pinned by `scripts/.approved/frozen-manifest` and verified by **every** phase-gate run, fail-closed. They change through exactly one path: `scripts/refreeze.sh`. The operator stages the TPM's delta (full new content of only the changed files) under `scripts/.approved/incoming/`; refreeze shows the human the complete diff, requires an interactive y/N (this diff-approval IS the approval gate — it also replaces the old `Status: Approved` honor-string for the initial freeze), applies, re-collects test node-ids in the sandbox, writes `DELTA-vN.json` (changed contract ids + changed/removed test node-ids), bumps `VERSION`, regenerates the frozen-manifest, and commits `[refreeze vN]`. On the next run the orchestrator resumes **only the affected subtree**: the stale plan is re-derived by the EM, unchanged task entries keep their done status via fingerprints, and `validate-plan.py --affected DELTA-vN.json` additionally resets tasks whose mapped test content changed under an unchanged entry (plus transitive dependents). Escalated/blocked tasks get a fresh chance under the new spec.
+
+**Alternatives considered:** (a) Frozen-forever spec — the repo's own history shows what boxed-in agents do against an unsatisfiable oracle (a gate was once quietly weakened to force a pass); wrongness needs a protocol, not a workaround. (b) Silently mutable spec — the pre-D-08 freeze-trap failure, where a re-plan architect overwrote the approved contract. (c) Approval recorded as a status string an agent can write — the original LOW-severity hole; an interactive tty prompt on a diff is not agent-forgeable through any lane. (d) Full re-run after every delta — wastes the completed subtree; the delta file exists precisely to compute the minimal reset.
+
+**Reason:** This threads both historical failure modes: no silent mutation (agents physically cannot write the frozen artifacts — D-30 mounts + manifest check), and no dogmatic freeze (a bounded, versioned, human-approved revision path exists, and the `[refreeze vN]` commit is the durable record of every TPM round-trip).
+
+**Do not suggest:** Letting any agent stage or apply a delta. Skipping the interactive prompt for "trivial" deltas. Editing files under `scripts/.approved/` or `tests/` directly — the next gate run fails closed on the manifest.
+
+---
+
 ## D-30 — 2026-07-01 — Sandbox flip: read-only repo + per-lane rw mounts; pre-commit hook for the human path
 
 **Decision:** `scripts/sandbox-run.sh` mounts the repo **read-only** and grants write access per-lane via `--rw <relpath>` (coder: build lane only; EM: `tasks/` only; test runs and smoke checks: `.cache/` only or nothing). `--rw` refuses `scripts/`, `.git/`, and `.githooks/` unconditionally — the control plane is never agent-writable. The agent user's HOME moves to a container tmpfs (OpenCode/pip session data must not live in the read-only repo). For the interactive/human entry point, `.githooks/pre-commit` enforces the active pipeline phase (from `.pipeline-state/phase` + `task_target`) and always verifies the control-plane manifest and the frozen spec; `bootstrap.sh` sets `core.hooksPath=.githooks`.
