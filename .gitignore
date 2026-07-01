@@ -21,6 +21,12 @@ htmlcov/
 # Pipeline runtime state (crash recovery for the orchestrator)
 .pipeline-state/
 
+# EM consult output — consumed and archived by the orchestrator, never committed
+tasks/diagnosis.json
+
+# TPM delta staging — applied by refreeze.sh, never committed as-is
+scripts/.approved/incoming/
+
 # OpenCode session data (keep prompt files tracked)
 /.opencode/*
 !/.opencode/prompts/

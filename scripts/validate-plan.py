@@ -168,6 +168,11 @@ def validate():
             not isinstance(t["smoke_check"], str) or not t["smoke_check"].strip()
         ):
             errs.append(f"{where}: smoke_check, when present, must be a non-empty string")
+        if isinstance(t.get("tests"), list) and not t["tests"] and not t.get("smoke_check"):
+            errs.append(
+                f"{where}: no mapped tests and no smoke_check — every task needs "
+                "an acceptance signal, even a non-oracular one"
+            )
 
     if errs:
         fail(errs)

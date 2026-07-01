@@ -12,27 +12,33 @@
     }
   },
   "agent": {
-    "pm": {
+    "em": {
       "mode": "primary",
-      "model": "[FRONTIER_MODEL]",
-      "prompt": "{file:./.opencode/prompts/pm.md}"
+      "model": "[EM_MODEL]",
+      "prompt": "{file:./.opencode/prompts/em.md}",
+      "permission": {
+        "edit": {
+          "src/**": "deny",
+          "tests/**": "deny",
+          "docs/**": "deny",
+          "scripts/**": "deny",
+          "tasks/**": "allow"
+        }
+      }
     },
-    "architect": {
-      "mode": "primary",
-      "model": "[FRONTIER_MODEL]",
-      "prompt": "{file:./.opencode/prompts/architect.md}"
-    },
-    "build": {
+    "coder": {
       "mode": "primary",
       "model": "lms/qwen/qwen3.6-35b-a3b",
-      "prompt": "{file:./.opencode/prompts/build.md}",
-      "permission": { "edit": { "tests/**": "deny", "**": "allow" } }
-    },
-    "test": {
-      "mode": "primary",
-      "model": "lms/qwen/qwen3.6-35b-a3b",
-      "prompt": "{file:./.opencode/prompts/test.md}",
-      "permission": { "edit": { "src/**": "deny", "tests/**": "allow" } }
+      "prompt": "{file:./.opencode/prompts/coder.md}",
+      "permission": {
+        "edit": {
+          "tests/**": "deny",
+          "tasks/**": "deny",
+          "docs/**": "deny",
+          "scripts/**": "deny",
+          "**": "allow"
+        }
+      }
     }
   }
 }

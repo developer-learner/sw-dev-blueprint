@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
-# phase-gate.sh <build|test|architect> [phase-start-ref]
+# phase-gate.sh <build|test|architect|em|task|manifest> [phase-start-ref] [task-target]
 # Inverted whitelist gate: fail if the phase touched anything outside its
-# permitted directory. Defaults to diffing against current HEAD; pass a
+# permitted lane. Defaults to diffing against current HEAD; pass a
 # phase-start ref (recorded before the agent ran) to catch committed changes.
+#
+# Phases:
+#   build     — legacy lane: only the build dir may change
+#   test      — legacy lane: only the test dir may change
+#   architect — docs/ only, plus the INV-3 decision-traceability check
+#   em        — tasks/ only (the EM's sole write lane, D-26)
+#   task      — EXACTLY ONE file may change: the task target passed as $3
+#               (structural atomicity for the coder, D-26)
+#   manifest  — integrity checks only (control plane + frozen spec); used by
+#               the orchestrator pre-flight and the pre-commit hook
 set -e
 
 PHASE="$1"
@@ -35,6 +45,22 @@ if [ -f "$MANIFEST" ]; then
       exit 1
     fi
   done < "$MANIFEST"
+fi
+
+# Frozen-spec integrity (D-31). The frozen TPM artifacts (PRD/ERD/contracts/
+# tests) may only change via scripts/refreeze.sh, which regenerates this
+# manifest under an interactive human approval. Any other change fails closed.
+FROZEN="scripts/.approved/frozen-manifest"
+if [ -f "$FROZEN" ]; then
+  while IFS='  ' read -r expected_hash path; do
+    [ -z "$expected_hash" ] && continue
+    [ -z "$path" ] && continue
+    actual=$(sha256sum "$path" 2>/dev/null | cut -d' ' -f1 || echo "MISSING")
+    if [ "$actual" != "$expected_hash" ]; then
+      echo "GATE FAIL: frozen spec tampered — $path changed outside scripts/refreeze.sh"
+      exit 1
+    fi
+  done < "$FROZEN"
 fi
 
 # Collect all changes since phase-start ref: committed + staged + working + untracked
@@ -91,8 +117,30 @@ case "$PHASE" in
       fi
     fi
     ;;
+  em)
+    # Whitelist: only tasks/ may change (plan.json / diagnosis.json lane)
+    violations=$(echo "$CHANGED" | { grep -v "^tasks/" || true; } )
+    if [ -n "$violations" ]; then
+      echo "GATE FAIL: em touched files outside tasks/ (D-26):"
+      echo "$violations"
+      exit 1
+    fi
+    ;;
+  task)
+    # Structural atomicity: EXACTLY the one task-target file may change.
+    TARGET="${3:?usage: phase-gate.sh task <phase-start-ref> <target-file>}"
+    violations=$(echo "$CHANGED" | { grep -vFx "$TARGET" || true; } | { grep -v '^$' || true; } )
+    if [ -n "$violations" ]; then
+      echo "GATE FAIL: task phase touched files other than $TARGET (D-26):"
+      echo "$violations"
+      exit 1
+    fi
+    ;;
+  manifest)
+    # Integrity checks above are the whole job.
+    ;;
   *)
-    echo "usage: phase-gate.sh <build|test|architect> [phase-start-ref]"
+    echo "usage: phase-gate.sh <build|test|architect|em|task|manifest> [phase-start-ref] [task-target]"
     exit 2
     ;;
 esac
