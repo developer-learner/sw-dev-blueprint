@@ -3,9 +3,10 @@
 > A GitHub template repository for LLM-assisted software development.
 > One-time setup. Every new project bootstraps from this.
 >
-> **Execution model:** Talk to the PM agent (`@pm`) in plain English. It writes a
-> PRD. You approve. The architect plans, build writes code, test validates from the
-> PRD. Git is the undo. Tests are the truth.
+> **Execution model:** Tell the TPM (frontier LLM, web chat) what you want. It
+> writes the PRD, the contracts, and the tests. You approve the freeze. The shell
+> orchestrator drives an EM (mid-tier) to plan and a local coder to execute, one
+> file per task. Git is the undo. The frozen tests are the truth.
 
 ---
 
@@ -32,7 +33,7 @@ sw-dev-blueprint/
 │   └── BACKLOG.md             # Prioritized work queue
 │
 ├── .opencode/
-│   └── prompts/               # Agent role definitions (pm/architect/build/test)
+│   └── prompts/               # Agent role definitions (em/coder)
 ├── scripts/
 │   ├── bootstrap.sh           # One-time project setup script
 │   ├── phase-gate.sh          # INV-2 boundary enforcement
@@ -66,26 +67,30 @@ cd my-new-project
 
 ---
 
-## The working loop — four-role pipeline
+## The working loop — capability ladder (D-27)
 
 ```
-Human casual instruction  ──►  PM (PRD in tasks/CURRENT.md)
-                                   │  ← human approves (criteria freeze here)
-                                   ▼
-                          scripts/orchestrate.sh ──► Architect → eng plan
-                                                       │
-                                                       ▼
-                                                  Build (src/ only) ──► Test (tests/ only, from PRD)
-                                                                               │
-                                                                        pass → done
-                                                                        fail → route up (see Rule 2/7)
+CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside OpenCode)
+                          │  writes PRD + ERD/contracts + the test suite
+                          ▼
+            scripts/refreeze.sh  ← human approves the diff (THE approval gate)
+                          │  spec frozen: scripts/.approved/ + tests/, hash-pinned
+                          ▼
+            scripts/orchestrate.sh (shell owns ALL procedure)
+                          │
+              EM (mid-tier, OpenCode) ──► tasks/plan.json ──► validate-plan.py gate
+                          │
+              per task, in DAG order:
+                Coder (local) writes ONE file ──► phase-gate task ──► mapped frozen tests
+                          │
+              all tasks done ──► FULL frozen suite green = done
+                fail → escalation ladder (retry → EM consult → bounded revisions
+                        → batched TPM bundle → refreeze → affected subtree resumes)
 ```
 
-**Your touch-points:** write the casual instruction, scan Flagged Assumptions + Acceptance
-Criteria, approve the PRD. The loop runs autonomously after that.
-
-See **BLUEPRINT.md → Hard Rules** for the escalation and boundary rules, and the full
-diagram under "The System in One Diagram".
+**Your touch-points:** give the TPM chat your intent, approve the refreeze diff,
+run the orchestrator, and answer escalation batches by carrying
+`.pipeline-state/escalations/BATCH.md` to the TPM chat. See `docs/ESCALATION.md`.
 
 ---
 
@@ -101,22 +106,22 @@ diagram under "The System in One Diagram".
 
 ---
 
-## Using the agents
+## Using the tiers
 
-Start a session, then switch agents with `@name`:
+1. **TPM (web chat)** — describe what you want in the frontier chat. It returns
+   the PRD, the ERD with machine-readable `contracts.json`, and the test suite.
+   Save them under `scripts/.approved/incoming/` and run `scripts/refreeze.sh`:
+   review the diff, approve with y — the spec freezes here (version-stamped,
+   hash-pinned; no agent can touch it).
+2. **`scripts/orchestrate.sh`** — drives everything: the EM emits a validated
+   task plan, the coder executes one file per task inside a read-only-repo
+   sandbox, gates and mapped frozen tests run after each task, and the feature
+   is done only when the FULL frozen suite is green. Exit 2 means an
+   escalation batch is waiting in `.pipeline-state/escalations/BATCH.md` —
+   paste it into the TPM chat, stage the returned delta, refreeze, re-run.
 
-1. **`@pm`** — write a PRD from your casual instruction. The PM reads the
-   project's context (CLAUDE.md, CONVENTIONS.md, DECISIONS.md), drafts
-   acceptance criteria in `tasks/CURRENT.md`, and presents for your approval.
-   Only approve once the criteria look right — they freeze here.
- 2. **`scripts/orchestrate.sh`** — after the PRD is approved, the orchestrator
-    drives the loop: calls the architect to plan, build to write `src/`,
-    test to validate, runs `scripts/phase-gate.sh` after each phase, runs
-    pytest, and routes failures. Results are written to `tasks/CURRENT.md`.
-3. **`@pm`** (again) — review the results with the PM. Decide: next feature
-   (loop back to step 1), fix bugs (loop back to step 2), or done.
-
-You never talk to `@build` or `@test` directly — the orchestrator calls them.
+You never talk to `em` or `coder` directly — the orchestrator calls them at
+shell-chosen points, and everything they produce is schema-validated.
 
 ---
 

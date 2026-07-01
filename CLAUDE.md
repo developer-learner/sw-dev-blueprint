@@ -48,11 +48,17 @@ Testing:      pytest
 ├── tasks/                # current work (PRD) + backlog
 │   └── CURRENT.md        # ⬅ PRD — acceptance criteria, frozen on approval
 ├── scripts/
-│   ├── bootstrap.sh      # one-time setup
-│   ├── phase-gate.sh     # INV-2 boundary enforcement (build↔test)
-│   └── orchestrate.sh    # code-driven build→test loop conductor
+│   ├── bootstrap.sh      # one-time setup (sets core.hooksPath)
+│   ├── phase-gate.sh     # lane + integrity gate (INV-2/3, frozen spec)
+│   ├── orchestrate.sh    # shell-driven task-DAG conductor (owns all procedure)
+│   ├── validate-plan.py  # plan.json gate (atomicity, DAG, coverage, mapping)
+│   ├── refreeze.sh       # ONLY path frozen TPM artifacts change (human y/N)
+│   ├── check-test-surface.py  # INV-4: tests ⊆ locked surface
+│   ├── schemas/          # plan / diagnosis / contracts schemas
+│   └── .approved/        # frozen TPM spec: PRD, ERD, contracts, VERSION, hashes
 ├── .opencode/
-│   └── prompts/          # agent role definitions (pm/architect/build/test)
+│   └── prompts/          # agent role definitions (em/coder)
+├── .githooks/            # pre-commit gate for the interactive/human path
 ├── .gate-paths           # configurable directories for INV-2 enforcement
 ├── CLAUDE.md             # this file
 └── CONVENTIONS.md        # code style rules
@@ -87,10 +93,11 @@ Testing:      pytest
 - **Do not use `time.sleep()`** in production code — use proper async patterns
 - **Do not commit secrets** — use `.env` and ensure `.gitignore` covers it
 
-**Pipeline guardrails (Rules 6-7, see BLUEPRINT.md):**
-- **Do not derive tests from `src/` implementation** — tests come from the PRD acceptance criteria and the frozen API contract in `scripts/.approved/ARCHITECTURE.approved.md` only (INV-1, Rule 6). The live `docs/ARCHITECTURE.md` is mutable mid-loop and is NOT a valid test source. A test that passes because the code is self-consistent is not evidence.
-- **Do not cross role boundaries** — Build writes `src/` only; Test writes `tests/` only. Enforced by `scripts/phase-gate.sh` (INV-2, Rule 7).
-- **Do not skip escalation** — test failure twice → re-plan; plan fails twice → escalate to PM; PM stuck → human decides.
+**Pipeline guardrails (Rules 6-7, see BLUEPRINT.md; ladder details in DECISIONS.md D-26..D-32):**
+- **No agent authors or edits tests** — the suite is TPM-authored, installed only via `scripts/refreeze.sh`, and hash-pinned in `scripts/.approved/frozen-manifest` (INV-1, now structural: tests are written before the code exists, by a tier that never sees the implementation).
+- **Do not cross role boundaries** — Coder writes exactly the one file its task names (`phase-gate.sh task`); EM writes `tasks/` only (`phase-gate.sh em`). Enforced by read-only sandbox mounts (D-30) with the gate as backstop (INV-2).
+- **Tests observe only the locked surface** — imports from `contracts.entry_points`, routes from `contracts.routes` (INV-4, checked at freeze time by `scripts/check-test-surface.py`).
+- **Do not skip escalation** — retry → EM consult → brief/plan revision (bounded) → batched TPM bundle → human-approved re-freeze. All counters shell-owned. See `docs/ESCALATION.md`.
 
 **Operating guardrails (from hard-won failures — see BLUEPRINT.md):**
 - **Do not set a thinking model as the active model.** Thinking models leave `content` empty and put output in `reasoning_content`, which breaks parsing. The model must be non-thinking local OR frontier.
@@ -108,22 +115,26 @@ See `tasks/CURRENT.md` for the active PRD. Start a session with `@pm` to write o
 
 ---
 
-## Four-Role Pipeline
+## Capability Ladder (D-27)
 
-| Agent | Mode | Writes | Model |
-|-------|------|--------|-------|
-| `@pm` | Primary | `tasks/CURRENT.md` (PRD), `docs/PRODUCT.md` | Frontier |
-| `@architect` | Primary | `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` | Frontier |
-| `@build` | Subagent | `src/**` only | Local |
-| `@test` | Subagent | `tests/**` only (from PRD, never `src/`) | Local |
+| Tier | Where it runs | Produces | Writes |
+|------|---------------|----------|--------|
+| **CEO** (human) | conversation | business intent | — |
+| **TPM** (frontier LLM) | human-operated **web chat**, outside OpenCode | PRD, ERD + `contracts.json`, the test suite | nothing directly — installed via `scripts/refreeze.sh` (human-approved diff), frozen in `scripts/.approved/` + `tests/` |
+| **EM** (mid-tier LLM) | OpenCode agent `em` | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) | `tasks/**` only |
+| **Coder** (local LLM) | OpenCode agent `coder` | one file per task | that one file only (gate-enforced) |
 
-**The loop:** start with `@pm` to write a PRD → human approves → switch to
-`@architect` → architect runs build→test subagents → results written to
-`tasks/CURRENT.md` → switch back to `@pm` to review with human.
+Tests are **run by the shell** (`pytest --json-report`, parsed by
+`scripts/orchestrate.sh`) — there is no test agent. The shell orchestrator is
+the only actor with procedural authority: it validates the plan, walks the
+DAG, runs gates and acceptance, owns all state and escalation counters
+(D-26). The EM advises at exactly two shell-initiated points; it never drives.
 
-See BLUEPRINT.md Rules 6-7 for the full invariants.
-
-PM: see `docs/PM-ROLE.md` for the full job description and verify-at-source discipline.
+**The loop:** TPM spec frozen (`refreeze.sh`, human y/N) → `scripts/orchestrate.sh`
+→ EM emits plan → validated → coder executes one task at a time → mapped
+frozen tests + gate after each → full frozen suite green = done. Failures
+climb the escalation ladder (`docs/ESCALATION.md`); spec problems come back
+as a batched bundle for the TPM web chat and re-enter via `refreeze.sh`.
 
 ---
 
