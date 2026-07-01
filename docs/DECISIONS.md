@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-34 — 2026-07-01 — Template propagation: update-template.sh (the refreeze pattern, applied to the control plane)
+
+**Decision:** Children pull control-plane improvements with `scripts/update-template.sh`: it resolves the template (a local clone via `--from`, or `gh repo clone` of the `.template-version` slug), takes the file list from the **template's** `.manifest-template` at the target ref (so files added upstream flow in), shows the human one aggregate diff, requires an interactive y/N (`--dry-run` to inspect without a tty), applies contents **and exec bits**, installs the template's manifest verbatim, advances `ref=` in `.template-version`, regenerates `.manifest-project`, runs the integrity gate as a post-apply check, and commits `[template-update <sha>]`. Files removed upstream are reported for manual deletion, never auto-deleted. `--stamp` mode retrofits a pre-D-33 child (writes `ref=` only). Same protected-artifact protocol as D-31: staged delta → human diff-approval → hash re-pin → versioned commit.
+
+**Alternatives considered:** (a) Generalize `refreeze.sh` into one approve-delta engine serving both spec and control plane — considered and rejected: the two flows share only the approval UX (~40 lines); everything else differs (staging source, validation steps — INV-4 and node-id collection are spec-only — and post-apply actions). A forced common engine is parameter soup; a shared *pattern* with two small tools is cheaper to hold. Revisit only if a third protected-artifact class appears. (b) git subtree/submodule for `scripts/` — Tier 3 machinery; see D-35 for the trigger. (c) Auto-apply in CI — propagation into a child is a human-approved act, same reasoning as D-31.
+
+**Reason:** This closes the documented incident class directly: the Rule 8 fix that lived only in spark until hand-ported becomes `update-template.sh` + one y. Detection (D-33) says *that* you're behind; this is *how* you catch up, with the same fail-closed integrity guarantees as every other protected write.
+
+**Do not suggest:** Auto-applying template updates. Letting the tool delete files. Running it inside the template repo (it refuses).
+
+---
+
 ## D-33 — 2026-07-01 — Fleet drift: birth-SHA identity, ownership-split manifests, drift detection
 
 **Decision:** Three pieces. (1) **Birth-SHA**: `.template-version` records `repo=` (template slug) and `ref=` (template HEAD SHA at instantiation, stamped by `bootstrap.sh`, retrofittable via `update-template.sh --stamp`); `gh repo create --template` leaves no upstream link, so this is the only moment fleet identity can be captured. (2) **Ownership split**: the control-plane manifest becomes `scripts/.manifest-template` (template-owned logic — gates, orchestrator, validators, schemas, prompts, hooks, drift tooling) and `scripts/.manifest-project` (per-project adaptations under Rule 3 — `.gate-paths`, `opencode.json`, `Containerfile`, `ci.yml`, the doc layer). phase-gate verifies both, fail-closed; drift is computed over exactly the template list, so a Rule 3 adaptation is never a false positive. One-shot setup scripts are deliberately unlisted: children delete them at instantiation, and the read-only mounts (D-30) already cover them. (3) **Detection**: `scripts/check-drift.sh` does a three-way compare per template-owned file (child vs template@birth vs template@HEAD) → IN_SYNC / BEHIND (exit 2, CI warns) / LOCALLY_MODIFIED, MISSING_IN_CHILD, CHILD_ONLY (exit 1, CI fails); `.github/workflows/check-drift.yml` runs it on push and weekly, skipping itself in the template repo and unstamped children.
