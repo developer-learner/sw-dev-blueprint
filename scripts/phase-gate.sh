@@ -33,9 +33,16 @@ if [ -f .gate-paths ]; then
   fi
 fi
 
-# Control-plane hash check. Read manifest, hash each file, compare.
-MANIFEST="scripts/.control-plane-manifest"
-if [ -f "$MANIFEST" ]; then
+# Control-plane hash check, split by ownership (D-33):
+#   .manifest-template — template-owned logic; drift against the template repo
+#                        is computed over exactly this list (check-drift.sh)
+#   .manifest-project  — per-project adaptations (Rule 3); never drift-checked
+# Both are required and both fail closed.
+for MANIFEST in scripts/.manifest-template scripts/.manifest-project; do
+  if [ ! -f "$MANIFEST" ]; then
+    echo "GATE FAIL: control-plane manifest missing: $MANIFEST"
+    exit 1
+  fi
   while IFS='  ' read -r expected_hash path; do
     [ -z "$expected_hash" ] && continue
     [ -z "$path" ] && continue
@@ -45,7 +52,7 @@ if [ -f "$MANIFEST" ]; then
       exit 1
     fi
   done < "$MANIFEST"
-fi
+done
 
 # Frozen-spec integrity (D-31). The frozen TPM artifacts (PRD/ERD/contracts/
 # tests) may only change via scripts/refreeze.sh, which regenerates this
