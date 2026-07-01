@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sw-dev-blueprint EM diagnosis (tasks/diagnosis.json)",
+  "description": "Schema-bound verdict the EM writes when the shell orchestrator consults it after a task fails twice, or when the full frozen suite fails after all tasks passed (spec drift). The shell routes MECHANICALLY on `verdict` — the EM advises, it never drives (D-26/D-29). The orchestrator validates this file with scripts/validate-plan.py --diagnosis, consumes it, and deletes it; it is never committed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "verdict", "reason"],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "The failing task id (e.g. T3), or the literal string DRIFT for a suite-red/tasks-green consult."
+    },
+    "verdict": {
+      "enum": ["brief_wrong", "decomposition_wrong", "contract_or_test_wrong"],
+      "description": "brief_wrong: the task brief under-specified or mis-specified the work — supply revised_brief. decomposition_wrong: the task split itself is wrong (wrong file boundaries, missing task, bad dependency) — the orchestrator will ask for a plan re-emit. contract_or_test_wrong: the frozen spec (contracts.json entry or TPM test) is wrong — this escalates to the TPM as a batched bundle; `reason` becomes the evidence the human operator carries to the web chat."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plain-language explanation of the verdict, written to be read by the tier above (orchestrator log, or the TPM via the escalation bundle)."
+    },
+    "revised_brief": {
+      "type": "string",
+      "minLength": 1,
+      "description": "REQUIRED when verdict is brief_wrong: the full replacement brief (Rule 8 discipline applies). Ignored otherwise."
+    }
+  }
+}

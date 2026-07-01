@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sw-dev-blueprint task plan (tasks/plan.json)",
+  "description": "The EM's decomposition of the frozen ERD into atomic one-file tasks. This artifact is the EM's ONLY channel of authority: the shell orchestrator validates it with scripts/validate-plan.py before any coder runs, walks it in topological order, and owns all status/completion state itself. There is deliberately NO status field — the EM never marks anything done (D-26). Cross-file semantic checks (unique files, ERD-inventory coverage, exactly-once test mapping, acyclic DAG, contract-id existence) live in validate-plan.py, not in this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "erd_version", "tasks"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Plan revision counter. The EM bumps this on every re-emit (decomposition_wrong revisions)."
+    },
+    "erd_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The scripts/.approved/VERSION this plan was derived from. A plan whose erd_version lags the frozen VERSION is stale and fails validation."
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "file", "depends_on", "brief", "contracts", "tests"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^T[0-9]+$",
+            "description": "Task id, unique within the plan."
+          },
+          "file": {
+            "type": "string",
+            "description": "The ONE file this task creates or modifies, relative to repo root, under the build lane (.gate-paths build=). Unique across tasks — one task per file, one file per task. phase-gate.sh task enforces that the coder touched exactly this path."
+          },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^T[0-9]+$" },
+            "description": "Task ids that must be done before this one. Must form a DAG."
+          },
+          "brief": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Self-contained coder brief per BLUEPRINT.md Rule 8: exact path, exact signatures, exact inputs/outputs, exact acceptance condition. Zero inference gaps — the coder sees this brief and nothing else."
+          },
+          "contracts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Ids of frozen contract entries (from scripts/.approved/contracts.json) this task implements or touches. Every id must exist in the frozen contracts."
+          },
+          "tests": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Frozen TPM test node-ids expected to pass once this task and its dependencies are done. This is the oracle PROJECTION (D-28): the EM schedules the TPM's tests onto tasks; it never authors acceptance. Across the whole plan, every frozen node-id must appear exactly once."
+          },
+          "smoke_check": {
+            "type": "string",
+            "description": "OPTIONAL shell command for tasks with no covering frozen test (internal plumbing). Explicitly non-oracular: a passing smoke_check proves the file loads/runs, never that the feature is correct."
+          }
+        }
+      }
+    }
+  }
+}

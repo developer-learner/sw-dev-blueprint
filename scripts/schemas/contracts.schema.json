@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sw-dev-blueprint frozen contracts (scripts/.approved/contracts.json)",
+  "description": "The machine-readable section of the TPM's ERD: the locked cross-component surface. The TPM authors it in the web chat; the human installs it via scripts/refreeze.sh; no agent can write it (it lives outside every lane and is hash-pinned in scripts/.approved/frozen-manifest). Everything listed here is LOCKED — the EM owns implementation inside these seams and may not invent or alter them. INV-4 additionally requires that the frozen tests observe the system ONLY through surfaces declared here (test-visible surface must be a subset of the locked surface).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["erd_version", "files", "entry_points"],
+  "properties": {
+    "erd_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Must equal scripts/.approved/VERSION. Bumped only by refreeze.sh."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "The ERD build inventory: every source file the feature requires, relative to repo root. The plan gate requires exactly one task per listed file — coverage failures surface at validation, not integration."
+    },
+    "entry_points": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Importable symbols tests may use, as 'module' or 'module:symbol' (e.g. 'src.main' or 'src.main:app'). INV-4: any import of src.* in tests/ outside this list fails the surface gate."
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "method", "path"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable contract id, e.g. 'route:GET /health'. Referenced by plan tasks." },
+          "method": { "type": "string" },
+          "path": { "type": "string", "description": "Path template, e.g. '/api/v1/items/{item_id}'." }
+        }
+      },
+      "description": "HTTP surface. INV-4: any route-shaped string a test sends a request to must appear here."
+    },
+    "schemas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "e.g. 'schema:Item'." },
+          "fields": { "type": "object", "description": "Field name -> type, as locked by the TPM." }
+        }
+      },
+      "description": "Data shapes crossing a seam (request/response bodies, persisted records)."
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "e.g. 'error:404-item'." },
+          "status": { "type": "integer" },
+          "shape": { "type": "object", "description": "Error body shape." }
+        }
+      },
+      "description": "Locked error responses."
+    }
+  }
+}
