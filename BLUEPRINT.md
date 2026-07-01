@@ -173,6 +173,40 @@ PRD is the sole oracle (INV-1).
 - On a wall, halt and escalate UP one layer (see Rule 2 escalation paths).
   No layer invents the decision of the layer above it.
 
+### Rule 8 — Brief the Build agent as a precision tool, not an autonomous agent
+
+Local coder models in the 27-31B class are frequently strong at code
+generation but weak at agentic follow-through: they will not reliably infer
+scope, self-check their own output against an acceptance condition, or
+pause to flag ambiguity — they either execute exactly what's specified or
+they drift/stall. Treat this as the default assumption for the Build role
+until a specific model is proven otherwise on this project's own build plan
+(see Rule 2's escalation path if it isn't).
+
+- **Every Build task must be atomic and self-contained**: exact file
+  path(s), exact function/component signature, exact inputs/outputs, exact
+  acceptance condition. Zero inference gaps — if executing the brief
+  correctly requires the model to infer intent, split the task further.
+- **Boundaries are enforced mechanically, not requested.** Do not phrase
+  "don't touch tests/" or similar constraints as instructions to Build —
+  `phase-gate.sh` / agent permissions enforce this (Rule 7). Asking the
+  model to self-restrain does not substitute for the mechanical gate.
+- **Never hand Build a multi-step plan or "implement the architecture doc."**
+  One task, one concern. A task that touches two or more files (e.g. "add a
+  component AND wire it into the parent") is a common failure point — Build
+  may complete one half and silently treat the task as done. Prefer
+  splitting multi-file work into separate sub-tasks (e.g. "5a — create the
+  component," "5b — wire it into the parent") until evidence on this
+  project's own build plan shows the model handles it in one pass.
+- **End every task brief with an explicit self-verify step**, phrased as an
+  action, not a description: "Before finishing, re-open `<file>` and confirm
+  `<specific condition>`." Do not rely on the model to self-check
+  unprompted — Rule 5 (tests are ground truth) still applies on top of this;
+  this reduces how often it's needed, it doesn't replace it.
+- This is a prompt-brief-quality problem, not a Rule 2 (escalation tripwire)
+  problem: Rule 2 catches loops after they start, this prevents triggering
+  them in the first place.
+
 ---
 
 ## Step 0 — Pre-Flight Check (run BEFORE anything else)
