@@ -96,12 +96,13 @@ SERVER_PID=$!
 sleep 2
 
 # --- Agent runners -----------------------------------------------------------
-# NOTE: sandbox lane narrowing (repo ro + lane rw) lands with the sandbox flip;
-# until then phase-gate is the enforcement backstop after every phase.
+# Sandbox lanes (D-30): repo mounted read-only, ONLY the phase's lane mounted
+# rw — violations are physically impossible in-loop; phase-gate remains the
+# backstop for the interactive/human path.
 run_em() {  # $1 prompt
   local phase_start; phase_start=$(git rev-parse HEAD)
   write_state phase em
-  scripts/sandbox-run.sh timeout "$AGENT_TIMEOUT" opencode run \
+  scripts/sandbox-run.sh --rw tasks -- timeout "$AGENT_TIMEOUT" opencode run \
     --attach "http://${SANDBOX_LLM_HOST}:$PORT" --agent em "$1" \
     2>&1 | tee "$LOG_DIR/em-last.log" || true
   bash scripts/phase-gate.sh em "$phase_start"
@@ -112,7 +113,7 @@ run_coder() {  # $1 task-id  $2 file  $3 brief  $4 attempt
   local phase_start; phase_start=$(git rev-parse HEAD)
   write_state phase task
   write_state task_target "$2"
-  scripts/sandbox-run.sh timeout "$AGENT_TIMEOUT" opencode run \
+  scripts/sandbox-run.sh --rw "${build_dir%/}" -- timeout "$AGENT_TIMEOUT" opencode run \
     --attach "http://${SANDBOX_LLM_HOST}:$PORT" --agent coder "$3" \
     2>&1 | tee "$LOG_DIR/$1-a$4.log" || true
   bash scripts/phase-gate.sh task "$phase_start" "$2"   # violation = hard halt (D-15/D-22)
@@ -124,7 +125,7 @@ run_coder() {  # $1 task-id  $2 file  $3 brief  $4 attempt
 # Sets TESTS_RC (0 pass · 1 fail · 3 no verdict) and FAILING (ids, |-joined).
 run_tests() {
   mkdir -p .cache
-  scripts/sandbox-run.sh pytest -p no:cacheprovider --json-report \
+  scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
     --json-report-file=.cache/test-report.json "$@" >/dev/null 2>&1 || true
   local out
   if out=$(python3 - <<'PYEOF'
@@ -362,7 +363,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     evidence=""
   fi
   if [ "$pass" = "1" ] && [ -n "$smoke" ]; then
-    if ! scripts/sandbox-run.sh sh -c "$smoke" >/dev/null 2>&1; then
+    if ! scripts/sandbox-run.sh -- sh -c "$smoke" >/dev/null 2>&1; then
       pass=0; evidence="smoke_check failed: $smoke"
     fi
   fi

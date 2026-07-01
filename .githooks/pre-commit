@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# pre-commit — the interactive-path backstop (D-30).
+#
+# The orchestrator runs phase-gate.sh itself after every phase; this hook
+# covers the OTHER entry point: a human (or a hand-driven agent session)
+# committing directly. It enforces whatever phase the pipeline says is
+# active, and always verifies the control-plane manifest and the frozen
+# spec (both fail-closed).
+#
+# Enabled by: git config core.hooksPath .githooks   (bootstrap.sh does this)
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+phase=$(cat .pipeline-state/phase 2>/dev/null || true)
+target=$(cat .pipeline-state/task_target 2>/dev/null || true)
+
+case "$phase" in
+  task)
+    [ -n "$target" ] || { echo "pre-commit: task phase active but no task_target recorded"; exit 1; }
+    exec bash scripts/phase-gate.sh task HEAD "$target"
+    ;;
+  em|build|test|architect)
+    exec bash scripts/phase-gate.sh "$phase" HEAD
+    ;;
+  *)
+    # No active phase: integrity checks only (control plane + frozen spec).
+    exec bash scripts/phase-gate.sh manifest HEAD
+    ;;
+esac

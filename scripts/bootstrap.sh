@@ -109,6 +109,13 @@ if [ ! -d .git ]; then
   git commit -m "chore: bootstrap from sw-dev-blueprint template"
 fi
 
+# --- Gate hooks for the interactive/human path (D-30) ---
+# The orchestrator runs phase-gate.sh itself; this covers direct commits.
+echo "🪝 Enabling pre-commit gate hook..."
+chmod +x .githooks/pre-commit
+git config core.hooksPath .githooks
+echo "   core.hooksPath = .githooks"
+
 echo ""
 echo "✅ Bootstrap complete!"
 echo ""
