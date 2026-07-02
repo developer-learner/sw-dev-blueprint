@@ -41,3 +41,6 @@ repomix-output.*
 # OS
 .DS_Store
 blueprint-dryrun*/
+
+# TPM agent write lane — outbox is consumed by refreeze.sh, never committed
+.tpm/

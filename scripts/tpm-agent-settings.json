@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "deny": [
+      "Read(./src/**)",
+      "Edit(./src/**)",
+      "Write(./src/**)",
+      "Edit(./tests/**)",
+      "Write(./tests/**)",
+      "Edit(./scripts/**)",
+      "Write(./scripts/**)",
+      "Edit(./.githooks/**)",
+      "Write(./.githooks/**)",
+      "Edit(./.github/**)",
+      "Write(./.github/**)",
+      "Edit(./.opencode/**)",
+      "Write(./.opencode/**)",
+      "Edit(./.git/**)",
+      "Write(./.git/**)",
+      "Edit(./.gate-paths)",
+      "Write(./.gate-paths)",
+      "Edit(./.template-version)",
+      "Write(./.template-version)",
+      "Edit(./opencode.json)",
+      "Write(./opencode.json)",
+      "Edit(./Containerfile)",
+      "Write(./Containerfile)",
+      "Bash",
+      "NotebookEdit"
+    ],
+    "allow": [
+      "Read(./**)",
+      "Edit(./.tpm/**)",
+      "Write(./.tpm/**)"
+    ]
+  }
+}
