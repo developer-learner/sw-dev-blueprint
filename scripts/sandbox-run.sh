@@ -21,7 +21,9 @@ TIMEOUT="${SANDBOX_TIMEOUT:-1800}"
 # LLM host address — staging step 0 proves which address reaches the host LLM
 # from inside the container. On Linux: host.containers.internal. On macOS
 # (via podman machine VM), verify reachability explicitly — don't assume.
+# Port defaults to LM Studio's; override for any other OpenAI-compatible server.
 : "${SANDBOX_LLM_HOST:=host.containers.internal}"
+: "${SANDBOX_LLM_PORT:=1234}"
 
 RW_MOUNTS=()
 while [ $# -gt 0 ]; do
@@ -55,7 +57,7 @@ podman run --rm --timeout "$TIMEOUT" \
   -w /work \
   --network slirp4netns \
   --add-host "$SANDBOX_LLM_HOST:host-gateway" \
-  --env OPENAI_API_BASE="http://$SANDBOX_LLM_HOST:1234/v1" \
+  --env OPENAI_API_BASE="http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1" \
   --env PYTHONPATH=/work \
   --env PYTHONDONTWRITEBYTECODE=1 \
   --memory=4g --cpus=2 \

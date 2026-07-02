@@ -7,6 +7,22 @@ on:
     branches: [main]
 
 jobs:
+  # Control-plane self-test: gate scripts are tested unconditionally — no
+  # skeleton guard, because these need no project src/ or requirements. The
+  # selftest_ (not test_) filename keeps it out of the frozen suite's bare
+  # `pytest` collection in orchestrate.sh/refreeze.sh.
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest
+        run: pip install pytest
+      - name: Gate-script self-tests
+        run: pytest scripts/selftest/selftest_gates.py -q
+
   test:
     runs-on: ubuntu-latest
     # NOTE: the skeleton guard is a STEP, not a job-level `if` — hashFiles()

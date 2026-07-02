@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-36 — 2026-07-02 — Gate-script self-tests (`scripts/selftest/`) + sandbox LLM port made configurable
+
+**Decision:** The two Python gate scripts — `validate-plan.py` and `check-test-surface.py` — get a hermetic pytest suite at `scripts/selftest/selftest_gates.py`, run by a dedicated unconditional CI job (`selftest`, no skeleton guard: it needs no project `src/` or requirements). The file is deliberately named `selftest_` (not `test_`) so the bare `pytest` / `pytest --collect-only` runs in `orchestrate.sh` and `refreeze.sh` never collect it into the frozen suite or its node-id set; it runs only when invoked explicitly. Placement under `scripts/` keeps it agent-unwritable via the existing `--rw` refusal. Both manifests track it. Separately, `sandbox-run.sh` reads `SANDBOX_LLM_PORT` (default 1234, LM Studio) instead of hardcoding the port, matching the existing `SANDBOX_LLM_HOST` pattern (D-30 addendum).
+
+**Alternatives considered:** (a) Integration tests for `orchestrate.sh`/`refreeze.sh` — rejected for now: shell-loop harnesses are expensive to carry, and dry runs cover them until an incident says otherwise (D-32's adopt-on-trigger doctrine). (b) A root pytest config (`testpaths=tests`) to allow normal `test_*` naming — rejected: it changes what the pipeline's bare `pytest` collects for every child, a control-plane behavior change disproportionate to the need. (c) Skipping self-tests entirely — rejected: a validator that wrongly passes fails open, and these two scripts are pure functions over JSON/file trees, so coverage is cheap to write and carry.
+
+**Reason:** External review (2026-07-02) correctly flagged that a project whose philosophy is "tests as ground truth" had zero tests for its own gate scripts. The Python gates are the highest-value, lowest-cost slice: deterministic, subprocess-testable, and the failure mode (fail-open validation) is the worst in the gate set.
+
+**Do not suggest:** Renaming the selftest file to `test_*.py` or moving it into `tests/` (frozen TPM lane; would pollute frozen node-id collection). Extending self-tests to the bash orchestration before an incident triggers it. Conditioning the `selftest` CI job on the skeleton guard.
+
+---
+
 ## D-35 — 2026-07-01 — Fleet Tier 3 (versioned core distribution): designed, deliberately NOT built
 
 **Documentation-only:** This entry records a design and its adoption trigger so it is not re-litigated each session. No code exists for it, on purpose.
