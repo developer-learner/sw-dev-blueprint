@@ -111,11 +111,11 @@ the project — but the balance you are optimizing is fixed:
 - **Big enough** to use what the pipeline can deliver in one frozen spec —
   don't slice into fragments that burn a freeze/accept cycle on trivia.
 
-A typical arc (illustration, not a rule): **core engine** → **the connector
-or a basic frontend** (either order, your call per project) → **minimum
-viable app** → **features, one or a few per milestone**. Adapt freely;
-justify the cut briefly in the PRD so the CEO knows what "done" will look
-like before authorizing.
+How to sequence toward those two poles is entirely your read of the
+individual project — no canonical arc, no template ordering, no unit of
+size is prescribed anywhere, deliberately (D-46). Reason it out fresh each
+time, and justify the cut briefly in the PRD so the CEO knows what "done"
+will look like before authorizing.
 
 **Every milestone must end CEO-checkable (D-44), and acceptance scales with
 what exists.** Pre-UI milestones (a headless engine) are demoed: the
