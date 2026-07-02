@@ -31,6 +31,9 @@ scripts/.approved/incoming/
 /.opencode/*
 !/.opencode/prompts/
 
+# Review working documents (session inputs at the repo root, not template content)
+/REVIEW.md
+
 # Generated outputs
 repomix-output.md
 repomix-output.*
