@@ -9,10 +9,21 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 step() { echo "--- $* ---"; }
 
 # Step 0: Pre-flight check (Hard Rule 1 & 4)
+# Model-agnostic: probe whatever model the CEO has loaded — never hardcode one.
 step "Pre-flight: checking local LLM at $LLM_URL ..."
+LOADED_MODEL="$(curl -s --max-time 10 "http://localhost:1234/v1/models" \
+  | python3 -c 'import sys,json
+try:
+    d = json.load(sys.stdin)["data"]
+    print(d[0]["id"] if d else "", end="")
+except Exception:
+    print("", end="")' || true)"
+[ -n "$LOADED_MODEL" ] || die "no model loaded in LM Studio. Load one (any non-thinking model) and retry."
+echo "  loaded model: $LOADED_MODEL"
+
 PREFLIGHT_RAW="$(curl -s --max-time 30 "$LLM_URL" \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen/qwen3-coder-next","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":5,"temperature":0}' \
+  -d "{\"model\":\"$LOADED_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly: OK\"}],\"max_tokens\":5,\"temperature\":0}" \
   || true)"
 
 [ -n "$PREFLIGHT_RAW" ] || die "no response from LM Studio. Is the server up with a model loaded?"
