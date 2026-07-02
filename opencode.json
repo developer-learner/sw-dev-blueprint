@@ -9,7 +9,12 @@
       "opencode.json": "deny",
       ".gate-paths": "deny",
       ".template-version": "deny",
-      "src/**": "deny"
+      "src/**": "deny",
+      "conftest.py": "deny",
+      "pytest.ini": "deny",
+      "pyproject.toml": "deny",
+      "setup.cfg": "deny",
+      "tox.ini": "deny"
     },
     "bash": {
       "scripts/refreeze.sh *": "ask",
@@ -26,7 +31,6 @@
       "git log*": "allow",
       "git diff*": "allow",
       "git show*": "allow",
-      "pytest*": "allow",
       "cat *": "allow",
       "ls *": "allow",
       "*": "ask"
@@ -44,7 +48,8 @@
           "tests/**": "deny",
           "docs/**": "deny",
           "scripts/**": "deny",
-          "tasks/**": "allow"
+          "tasks/**": "allow",
+          "**": "deny"
         }
       }
     },
@@ -59,6 +64,16 @@
           "tasks/**": "deny",
           "docs/**": "deny",
           "scripts/**": "deny",
+          ".githooks/**": "deny",
+          ".opencode/**": "deny",
+          "opencode.json": "deny",
+          ".gate-paths": "deny",
+          ".template-version": "deny",
+          "conftest.py": "deny",
+          "pytest.ini": "deny",
+          "pyproject.toml": "deny",
+          "setup.cfg": "deny",
+          "tox.ini": "deny",
           "**": "allow"
         }
       }
