@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-43 — 2026-07-02 — Flat hierarchy under the shell: `em`/`coder` denied the task tool
+
+**Decision:** Both subagents get `"tools": { "task": false }` in `opencode.json`. The orchestrator invokes EM and coder independently, as direct reportees; neither agent can spawn any other agent. The EM "manages" the coder exclusively through `tasks/plan.json` — its briefs are the management; the shell delivers them, gates each result, and owns retries.
+
+**Alternatives considered:** EM-drives-coder (the org-chart intuition the names suggest) — rejected: coder would run inside EM's sandbox context (wrong write lane), the per-task gate and mapped-test run between tasks would be skipped, escalation counters would drift, and the task tool is the known OpenCode permission-bypass route (issues cited at D-24/D-39).
+
+**Reason:** No LLM should sit in the reporting chain of another LLM — every inter-agent handoff must cross a deterministic checkpoint (D-26). Advisory "EM never drives" becomes mechanical.
+
+**Do not suggest:** Re-enabling the task tool for either subagent to "streamline" plan execution; having the conductor invoke coder directly around the orchestrator.
+
+---
+
 ## D-42 — 2026-07-02 — Refreeze approval without a terminal: `--diff` / `--approve <hash>` behind the OpenCode ask-prompt
 
 **Decision:** `scripts/refreeze.sh` gains two non-interactive modes so the conductor (D-40) can drive freezes while the human stays the gate. `--diff` validates the staging dir, prints the full diff plus its `DIFF-SHA` (sha256 of the diff text), and applies nothing. `--approve <sha>` recomputes the diff and proceeds only if the hash matches; `opencode.json` marks `scripts/refreeze.sh *` as `bash: ask`, so the CEO's click on that prompt — whose command line carries the hash of the diff they just read in chat — IS the approval. Any change to staging between review and approval changes the hash and fails closed. The interactive y/N path is unchanged and remains the fallback.

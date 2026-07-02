@@ -18,8 +18,9 @@
   "agent": {
     "em": {
       "mode": "subagent",
-      "description": "Engineering manager: decomposes the frozen spec into tasks/plan.json and answers shell-initiated consults with tasks/diagnosis.json. Writes tasks/** only.",
+      "description": "Engineering manager: decomposes the frozen spec into tasks/plan.json and answers shell-initiated consults with tasks/diagnosis.json. Writes tasks/** only. Never spawns agents — the shell invokes the coder from the plan (D-26/D-43).",
       "prompt": "{file:./.opencode/prompts/em.md}",
+      "tools": { "task": false },
       "permission": {
         "edit": {
           "src/**": "deny",
@@ -32,8 +33,9 @@
     },
     "coder": {
       "mode": "subagent",
-      "description": "Implements exactly the one source file its task brief names, then runs the brief's self-verify step. Never touches tests, tasks, docs, or scripts.",
+      "description": "Implements exactly the one source file its task brief names, then runs the brief's self-verify step. Never touches tests, tasks, docs, or scripts, and never spawns agents (D-43).",
       "prompt": "{file:./.opencode/prompts/coder.md}",
+      "tools": { "task": false },
       "permission": {
         "edit": {
           "tests/**": "deny",
