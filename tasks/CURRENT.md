@@ -37,10 +37,19 @@
 
 ---
 
-## Definition of Done (per feature — mechanical, not judgment)
+## Definition of Done (per feature)
+
+Mechanical checks:
 
 - Full frozen suite green (`scripts/orchestrate.sh` exit 0)
 - `docs/ARCHITECTURE.md` updated if structure changed
 - `docs/DECISIONS.md` updated if a non-obvious choice was made
 - No linter errors (`ruff check src/`)
-- Branch merged to main; entry moved to `BACKLOG.md` completed table
+
+The one judgment check (D-44 — the CEO's gate, never skipped or delegated):
+
+- **CEO has used the running prototype and accepted the milestone.**
+  "Tests green" means built-as-specified; only this means built-right.
+  Record the acceptance here with a date.
+
+Then: branch merged to main; entry moved to `BACKLOG.md` completed table

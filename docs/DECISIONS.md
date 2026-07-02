@@ -21,6 +21,30 @@
 
 ## Decisions
 
+## D-45 — 2026-07-02 — Conductor bash allowlist: pipeline scripts + read-only git; everything else asks
+
+**Decision:** The Build (conductor) session's bash permission in `opencode.json` becomes an allowlist — the pipeline scripts (orchestrate, bootstrap, new-project, tpm-pack/unpack/agent, sandbox-run, check-drift), read-only git (`status`/`log`/`diff`/`show`), pytest, and read-only file commands are allowed; `refreeze.sh` stays `ask` (D-42); **everything else falls to `ask`**. Combined with the playbook rule, this gives the non-technical CEO a decision procedure requiring zero code judgment: the only prompt you expect is refreeze-approve; any other prompt = alarm = deny and ask the conductor what it wanted.
+
+**Alternatives considered:** (a) Default-allow bash (previous state) — rejected: bash bypasses `permission.edit`, so a conductor could `sed -i` protected files without any prompt. (b) Default-deny — rejected: the conductor legitimately needs incidental commands (installing a dep the CEO approved, starting the app for UAT); `ask` keeps those possible with the human in the loop.
+
+**Reason:** Closes the routine accident surface of D-40's honest caveat (conductor bash outside the sandbox) while keeping fail-closed backstops (hooks, manifests) as the guarantee against what slips through. OpenCode permission enforcement remains soft (D-24/D-39); this is friction + visibility, not a wall.
+
+**Do not suggest:** Widening the allowlist with write-capable commands (`sed -i`, `rm`, `git push`, `pip install`) to reduce prompts; those prompts are the point.
+
+---
+
+## D-44 — 2026-07-02 — The CEO gate is outcome acceptance, not diff review; refreeze approval reframed as authorization
+
+**Decision:** The CEO does not review code or diffs — ever. The refreeze approval (terminal y/N or D-42 hash prompt) is redefined as **authorization**: "this delta is a change I asked for," verified by matching the TPM's plain-language description against the CEO's own request. The technical scrutiny of a delta is entirely mechanical and pre-approval: INV-4 surface check, contracts schema validation, hash binding. The CEO's real quality gate moves to the end of every milestone: **user-test the running prototype** (conductor launches it; CEO uses it like a real user). Definition of Done gains this as its one judgment item: orchestrate exit 0 = built-as-specified; CEO acceptance = built-right. A green suite that fails CEO acceptance is a spec defect → back to the TPM, not a code fix.
+
+**Alternatives considered:** (a) CEO reads every diff (original D-31/D-42 framing) — rejected: not meaningful for a non-technical CEO; a signoff that can't distinguish good from bad diffs is theater and trains rubber-stamping. (b) A second LLM as diff reviewer — rejected for now: adds an unaccountable layer whose review is itself unverifiable self-report; may be revisited as a separate decision.
+
+**Reason:** Matches the actual operator (CEO checks outcomes, not codebases) and the agile cadence: milestones are the checkpoints, prototype acceptance is the check. Aligns the gate's claimed meaning with its real meaning — the system's honesty principle applied to its own front door.
+
+**Do not suggest:** Skipping the UAT step because tests are green; treating CEO acceptance as optional for "internal" milestones (every milestone ends at something the CEO can try — if it doesn't, the milestone was cut wrong).
+
+---
+
 ## D-43 — 2026-07-02 — Flat hierarchy under the shell: `em`/`coder` denied the task tool
 
 **Decision:** Both subagents get `"tools": { "task": false }` in `opencode.json`. The orchestrator invokes EM and coder independently, as direct reportees; neither agent can spawn any other agent. The EM "manages" the coder exclusively through `tasks/plan.json` — its briefs are the management; the shell delivers them, gates each result, and owns retries.
