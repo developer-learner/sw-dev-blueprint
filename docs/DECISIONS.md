@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-47 — 2026-07-02 — External TPM review of D-40..D-46 adjudicated: pytest/conftest hole closed, permissions hardened, honest-layer statements added
+
+**Decision:** A frontier-LLM review of the conductor redesign produced five findings; all were verified against the tree before acting (none taken on the reviewer's word). Actions: **(1) CONFIRMED+FIXED** — `"pytest*": "allow"` plus undenied root `conftest.py` gave the conductor a zero-prompt arbitrary-code-execution path (write `./conftest.py`, run bare `pytest` unsandboxed), also loadable inside sandboxed suite runs where `.cache/` is writable (test-report forgery path). Removed `pytest*` from the allowlist (suite runs go through `sandbox-run.sh`; bare pytest now asks) and denied edits to root pytest-config files (`conftest.py`, `pytest.ini`, `pyproject.toml`, `setup.cfg`, `tox.ini`) for the conductor AND the coder. **(2) OPEN** — OpenCode glob-vs-compound-command matching is untested; caveat recorded in D-45, probe scheduled for first live session. **(3) FIXED** — D-42's conductor-relayed-diff weakening now stated in its entry. **(4) CONFIRMED+FIXED** — coder's `"**": "allow"` could override global control-plane denies depending on merge semantics; denies mirrored into the coder block, and `em` got an explicit `"**": "deny"` terminal rule (fail closed regardless of merge semantics). **(5) FIXED** — `new-project.sh` warns when multiple models are loaded and respects `SANDBOX_LLM_PORT`; stale y/N-only comments in `refreeze.sh` header and CLAUDE.md structure tree updated.
+
+**Reason:** The pipeline's own doctrine applied to its own control plane: external review, source-verified adjudication, fixes committed per concern. Finding 1 was the exact class D-45 claims to prevent (unprompted write→execute), found by an actor who never saw this session — the review layer works.
+
+**Do not suggest:** Re-adding `pytest*` to the conductor allowlist "for quick checks" — `scripts/sandbox-run.sh -- pytest ...` is the allowed, sandboxed way to run tests.
+
+---
+
 ## D-46 — 2026-07-02 — Milestone sizing is TPM judgment against a fixed balance; no formula
 
 **Decision:** Milestone cutting is the TPM's call, made per project, documented briefly in each PRD. The optimization target is fixed and two-sided: small enough that the CEO's acceptance check (D-44) catches errors before they compound — one bad milestone is the maximum blast radius; big enough to use a full freeze→build cycle well — no fragment milestones that spend a freeze/accept round-trip on trivia. No arc, ordering, or size unit is prescribed to the TPM — not even as an example: an example in role instructions anchors an LLM and becomes a de-facto formula (the CEO's own sketch — engine → connector/frontend → MVP → features — lives only here, as history, deliberately outside `TPM-ROLE.md`). Corollary: every milestone must end CEO-checkable, with acceptance depth scaling to what exists — live demo with real inputs for pre-UI milestones, hands-on prototype use once any UI exists. A milestone whose CEO check can't be described is cut wrong.
@@ -39,7 +49,7 @@
 
 **Alternatives considered:** (a) Default-allow bash (previous state) — rejected: bash bypasses `permission.edit`, so a conductor could `sed -i` protected files without any prompt. (b) Default-deny — rejected: the conductor legitimately needs incidental commands (installing a dep the CEO approved, starting the app for UAT); `ask` keeps those possible with the human in the loop.
 
-**Reason:** Closes the routine accident surface of D-40's honest caveat (conductor bash outside the sandbox) while keeping fail-closed backstops (hooks, manifests) as the guarantee against what slips through. OpenCode permission enforcement remains soft (D-24/D-39); this is friction + visibility, not a wall.
+**Reason:** Closes the routine accident surface of D-40's honest caveat (conductor bash outside the sandbox) while keeping fail-closed backstops (hooks, manifests) as the guarantee against what slips through. OpenCode permission enforcement remains soft (D-24/D-39); this is friction + visibility, not a wall. **Unverified assumption (Rule 6, flagged by D-47 review):** whether OpenCode matches these globs against parsed sub-commands or the raw command string is untested — if raw-string, `scripts/bootstrap.sh && <anything>` would pass as allowed. Probe this in the first live conductor session before trusting the allowlist; until then treat it as friction only.
 
 **Do not suggest:** Widening the allowlist with write-capable commands (`sed -i`, `rm`, `git push`, `pip install`) to reduce prompts; those prompts are the point.
 
@@ -75,7 +85,7 @@
 
 **Alternatives considered:** (a) Keep terminal-only y/N — rejected by CEO direction (no command running). (b) Honor-string approval ("CEO said yes in chat") — rejected: no binding between what was read and what is applied. (c) A `--yes` flag — rejected: approves whatever staging contains at run time, not what was reviewed.
 
-**Reason:** The gate's essence is "a human read THIS diff and approved THIS diff." The hash preserves that binding without a TTY. Honest layer statement: the ask-prompt depends on OpenCode's permission enforcement (soft, see D-24/D-39 caveats); the backstops remain the hash binding itself, the pre-commit hook, and the frozen-manifest verification failing closed on every gate run.
+**Reason:** The gate's essence is "a human read THIS diff and approved THIS diff." The hash preserves that binding without a TTY. Honest layer statement: the ask-prompt depends on OpenCode's permission enforcement (soft, see D-24/D-39 caveats); the backstops remain the hash binding itself, the pre-commit hook, and the frozen-manifest verification failing closed on every gate run. **Known weakening vs terminal y/N (D-47 review):** the CEO sees the diff only through the conductor's relay — a misreporting conductor could display doctored diff text alongside the true hash of different staged content, and the prompt would look right; the tty path showed the script's own output on a trusted channel. The raw diff is always at `.pipeline-state/refreeze-pending.diff` for direct reading, the terminal path remains for structural freezes, and the blast radius of an unread-but-authorized delta is one milestone, caught at UAT (D-44). Accident-class threat, accepted; not zero.
 
 **Do not suggest:** Adding `--yes`/`--force`; letting the conductor summarize the diff instead of printing it in full; approving on a stale hash after restaging.
 

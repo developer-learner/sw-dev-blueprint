@@ -52,7 +52,7 @@ Testing:      pytest
 │   ├── phase-gate.sh     # lane + integrity gate (INV-2/3, frozen spec)
 │   ├── orchestrate.sh    # shell-driven task-DAG conductor (owns all procedure)
 │   ├── validate-plan.py  # plan.json gate (atomicity, DAG, coverage, mapping)
-│   ├── refreeze.sh       # ONLY path frozen TPM artifacts change (human y/N)
+│   ├── refreeze.sh       # ONLY path frozen TPM artifacts change (human-gated: y/N or --approve <hash>, D-42)
 │   ├── check-test-surface.py  # INV-4: tests ⊆ locked surface
 │   ├── schemas/          # plan / diagnosis / contracts schemas
 │   └── .approved/        # frozen TPM spec: PRD, ERD, contracts, VERSION, hashes
