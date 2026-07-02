@@ -5,8 +5,10 @@
 # phase-start ref (recorded before the agent ran) to catch committed changes.
 #
 # Phases:
-#   build     — legacy lane: only the build dir may change
-#   test      — legacy lane: only the test dir may change
+#   build     — legacy lane: only the build dir may change (+ build_extra
+#               exact files from .gate-paths, e.g. package.json)
+#   test      — legacy lane: only the test dir may change (+ test_extra
+#               exact files from .gate-paths)
 #   architect — docs/ only, plus the INV-3 decision-traceability check
 #   em        — tasks/ only (the EM's sole write lane, D-26)
 #   task      — EXACTLY ONE file may change: the task target passed as $3
@@ -22,6 +24,8 @@ PHASE_START="${2:-HEAD}"
 # Falls back to built-in defaults if .gate-paths is tampered/missing.
 build_dir="src/"
 test_dir="tests/"
+build_extra=""
+test_extra=""
 if [ -f .gate-paths ]; then
   _raw=$(grep '^build=' .gate-paths | cut -d= -f2- || true)
   if [ -n "$_raw" ]; then
@@ -31,6 +35,11 @@ if [ -f .gate-paths ]; then
   if [ -n "$_raw" ]; then
     _raw="${_raw#./}"; _raw="${_raw%"${_raw##*[![:space:]]}"}"; test_dir="${_raw%/}/"
   fi
+  # build_extra / test_extra: space-separated exact file paths a legacy phase
+  # may also touch outside its dir (e.g. package.json for a JS build lane).
+  # Exact-match only — no globs, no regex (see grep -vFx use below).
+  build_extra=$(grep '^build_extra=' .gate-paths | cut -d= -f2- || true)
+  test_extra=$(grep '^test_extra=' .gate-paths | cut -d= -f2- || true)
 fi
 
 # Control-plane hash check, split by ownership (D-33):
@@ -80,19 +89,25 @@ CHANGED=$( {
 
 case "$PHASE" in
   build)
-    # Whitelist: only src/ may change; anything outside src/ → fail
+    # Whitelist: only src/ (+ build_extra exact files) may change
     violations=$(echo "$CHANGED" | { grep -v "^$build_dir" || true; } )
+    for pattern in $build_extra; do
+      violations=$(echo "$violations" | { grep -vFx "$pattern" || true; } )
+    done
     if [ -n "$violations" ]; then
-      echo "GATE FAIL: build touched files outside $build_dir (INV-2):"
+      echo "GATE FAIL: build touched files outside $build_dir or build_extra (INV-2):"
       echo "$violations"
       exit 1
     fi
     ;;
   test)
-    # Whitelist: only tests/ may change; anything outside tests/ → fail
+    # Whitelist: only tests/ (+ test_extra exact files) may change
     violations=$(echo "$CHANGED" | { grep -v "^$test_dir" || true; } )
+    for pattern in $test_extra; do
+      violations=$(echo "$violations" | { grep -vFx "$pattern" || true; } )
+    done
     if [ -n "$violations" ]; then
-      echo "GATE FAIL: test touched files outside $test_dir (INV-2):"
+      echo "GATE FAIL: test touched files outside $test_dir or test_extra (INV-2):"
       echo "$violations"
       exit 1
     fi

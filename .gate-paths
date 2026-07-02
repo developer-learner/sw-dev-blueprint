@@ -3,5 +3,8 @@
 # uses a non-standard directory structure (e.g. app/ + spec/).
 # Format: <phase>=<directory>
 # Keys: build=  test=  (must match phase-gate.sh <build|test> argument)
+# Optional: build_extra= / test_extra= — space-separated list of exact file
+# paths outside the dir above that the phase may also touch (e.g. a JS
+# stack's package.json for build). Exact-match only, no globs/regex.
 build=src/
 test=tests/

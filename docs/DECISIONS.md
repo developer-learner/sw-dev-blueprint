@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-37 — 2026-07-02 — `build_extra`/`test_extra`: exact-file lane exceptions in `.gate-paths`
+
+**Decision:** `.gate-paths` gains two optional keys, `build_extra=` and `test_extra=` — space-separated lists of **exact file paths** outside the lane directory that the legacy `build`/`test` phases may also touch. `phase-gate.sh` filters them from the violation list with `grep -vFx` (fixed-string, whole-line): no globs, no regex, no prefix matching. Unset keys change nothing — the default gate behavior is byte-identical to before. Motivating case: a JS/TS build lane that must touch `package.json` alongside its source directory.
+
+**Alternatives considered:** (a) Glob/regex patterns — rejected: a pattern is a scope grant whose true size is unknowable at review time; an exact filename is auditable at a glance. (b) Making the lane a path *list* instead of one directory — rejected: broader redesign of every consumer of `build_dir`/`test_dir` for a need that is, so far, one file per stack. (c) Nothing (status quo) — rejected: `.gate-paths` already exists precisely so non-default layouts don't require editing the gate; "one manifest file outside the lane" is the same class of layout fact, and without this key the only workaround is disabling the gate.
+
+**Reason:** Closes the concrete slice of the stack-flexibility gap (flagged by the 2026-07-02 external review) that costs almost nothing to carry: directories were already configurable, but one out-of-lane manifest file (`package.json`, `Cargo.toml`, `go.mod`) had no legal path. Verified in an isolated worktree: gate still fails without the key, passes with it, and a nested `frontend/package.json` does NOT match a bare `package.json` entry — exact-match semantics hold.
+
+**Do not suggest:** Extending `build_extra`/`test_extra` to globs, regexes, or directories — if a phase needs a whole extra directory, that is a lane redesign (alternative (b)) and gets its own decision. Adding entries to `.gate-paths` on an agent's initiative: the file is control-plane-adjacent and lane-widening is a human call (Rule 3).
+
+---
+
 ## D-36 — 2026-07-02 — Gate-script self-tests (`scripts/selftest/`) + sandbox LLM port made configurable
 
 **Decision:** The two Python gate scripts — `validate-plan.py` and `check-test-surface.py` — get a hermetic pytest suite at `scripts/selftest/selftest_gates.py`, run by a dedicated unconditional CI job (`selftest`, no skeleton guard: it needs no project `src/` or requirements). The file is deliberately named `selftest_` (not `test_`) so the bare `pytest` / `pytest --collect-only` runs in `orchestrate.sh` and `refreeze.sh` never collect it into the frozen suite or its node-id set; it runs only when invoked explicitly. Placement under `scripts/` keeps it agent-unwritable via the existing `--rw` refusal. Both manifests track it. Separately, `sandbox-run.sh` reads `SANDBOX_LLM_PORT` (default 1234, LM Studio) instead of hardcoding the port, matching the existing `SANDBOX_LLM_HOST` pattern (D-30 addendum).
