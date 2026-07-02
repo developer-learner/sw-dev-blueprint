@@ -43,10 +43,10 @@ Testing:      pytest
 │   ├── models/           # data models
 │   ├── services/         # business logic
 │   └── utils/            # shared utilities
-├── tests/                # mirrors src/ structure; derives from PRD (INV-1)
-├── docs/                 # architecture, decisions, product
-├── tasks/                # current work (PRD) + backlog
-│   └── CURRENT.md        # ⬅ PRD — acceptance criteria, frozen on approval
+├── tests/                # TPM-authored frozen suite (INV-1); changes only via refreeze.sh
+├── docs/                 # architecture, decisions, product, TPM role, escalation
+├── tasks/                # EM write lane (plan.json) + session notes + backlog
+│   └── CURRENT.md        # session notes — active work, halt notes (the PRD lives in scripts/.approved/)
 ├── scripts/
 │   ├── bootstrap.sh      # one-time setup (sets core.hooksPath)
 │   ├── phase-gate.sh     # lane + integrity gate (INV-2/3, frozen spec)
@@ -73,7 +73,7 @@ Testing:      pytest
 - Use `loguru` for logging — never `print()`
 - One responsibility per function — if it needs a comment explaining what it does, split it
 - Tests live in `tests/` mirroring `src/` structure (e.g. `src/services/user.py` → `tests/services/test_user.py`)
-- Write tests alongside new code, not after
+- Tests are TPM-authored and land via `scripts/refreeze.sh` BEFORE the code they gate — never written after the fact to match an implementation
 - Use `pydantic` for data validation and serialization
 - Environment variables via `python-dotenv` — never hardcode secrets
 
@@ -111,7 +111,9 @@ Testing:      pytest
 
 ## Current Focus
 
-See `tasks/CURRENT.md` for the active PRD. Start a session with `@pm` to write or update it.
+The frozen spec (PRD/ERD/contracts + version) lives in `scripts/.approved/`;
+`tasks/CURRENT.md` holds session notes and halt notes. New features start in
+the TPM web chat (see `docs/TPM-ROLE.md`) and enter via `scripts/refreeze.sh`.
 
 ---
 

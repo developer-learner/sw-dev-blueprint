@@ -1,99 +1,46 @@
-# CURRENT.md — Active Task
+# CURRENT.md — Session Notes
 
-> This is the session-level spec. Update before every coding session.
-> The LLM reads this to know exactly what to build — and what to leave alone.
-> When done, move to BACKLOG.md and write the next task here.
-
----
-
-## Task: [TASK_NAME]
-
-**Status:** [Not started | In progress | In review | Done]
-**Branch:** `[feature/task-name]`
-**Estimated effort:** [Small / Medium / Large]
+> This is the human-facing status page, NOT the spec. The PRD, ERD, contracts
+> and test suite live frozen in `scripts/.approved/` + `tests/` and change
+> only via `scripts/refreeze.sh` (D-31). Update this file at the start and end
+> of every working session; halt notes (Rule 4) land here.
 
 ---
 
-## What
+## Active Feature
 
-[One paragraph. What should exist when this task is complete that doesn't exist now.]
-
----
-
-## Acceptance Criteria
-
-> Write each criterion in EARS form so it maps one-to-one to a test (sharpens INV-1).
-> <!-- EARS forms:
->      THE SYSTEM SHALL <behavior>                      (always)
->      WHEN <trigger>, THE SYSTEM SHALL <response>       (event)
->      WHILE <state>, THE SYSTEM SHALL <behavior>        (during a state)
->      IF <condition>, THEN THE SYSTEM SHALL <response>  (error/edge)
->      WHERE <feature>, THE SYSTEM SHALL <behavior>      (optional feature)
->      One clause = one test. Attach a concrete I/O example where useful. -->
-
-- [ ] WHEN <trigger>, THE SYSTEM SHALL <observable response>
-- [ ] IF <invalid input>, THEN THE SYSTEM SHALL <error response>
-- [ ] THE SYSTEM SHALL <invariant that always holds>
-- [ ] Tests pass for the above; no existing tests broken
+**Feature:** [FEATURE_NAME]
+**Frozen spec version:** [see `scripts/.approved/VERSION`]
+**Orchestrator state:** [not started | running | exit 0 (done) | exit 1 (failed, see below) | exit 2 (TPM batch pending)]
+**Branch:** `[feature/name]`
 
 ---
 
-## Out of Scope
+## Escalations In Flight
 
-> Explicit. Prevents the LLM from building things you don't want yet.
+> Orchestrator exit 2 means a batch is waiting in
+> `.pipeline-state/escalations/BATCH.md`. Track its round-trip here.
 
-- [Thing that sounds related but isn't this task]
-- [Future feature that will come later]
-
----
-
-## Files Likely Involved
-
-> Give the LLM a map so it edits the right files.
-
-```
-src/services/[relevant_service].py   # main logic here
-src/api/[relevant_router].py         # route handler
-src/models/[relevant_model].py       # if schema changes
-tests/services/test_[service].py     # unit tests
-tests/api/test_[router].py           # API tests
-```
+- [ ] Batch carried to the TPM chat: [DATE or n/a]
+- [ ] TPM delta staged under `scripts/.approved/incoming/`: [DATE or n/a]
+- [ ] Re-frozen as v[N] and orchestrator re-run: [DATE or n/a]
 
 ---
 
 ## Notes / Context
 
-[Anything the LLM needs to know that isn't in ARCHITECTURE.md or DECISIONS.md.
-Temporary context for this task only.]
+> Halt-and-notify notes (Rule 4) go here: what stopped, why, what decision is
+> needed. Also temporary context for this session that isn't worth a
+> DECISIONS.md entry.
+
+[none]
 
 ---
 
----
+## Definition of Done (per feature — mechanical, not judgment)
 
-## Flagged Assumptions
-
-> Where the casual instruction was ambiguous, the PM picked a reading. List each pick here.
-> This is the human's review surface — they scan only this + Acceptance Criteria.
-
-- [Ambiguity] → [Assumption taken]. e.g. "share reports" → assumed view-only links, not collab editing.
-
----
-
-## Approval
-
-**Status:** Draft
-**Approved by:** [human reviewer]
-
-> Build does NOT start until Status: Approved. Once Approved, Acceptance Criteria are FROZEN —
-> no agent may edit them. Changes require a new Draft cycle and re-approval.
-
----
-
-## Definition of Done
-
-- [ ] Acceptance criteria all checked
-- [ ] Tests written and passing
-- [ ] `docs/ARCHITECTURE.md` updated if structure changed
-- [ ] `docs/DECISIONS.md` updated if non-obvious choice was made
-- [ ] No linter errors (`ruff check src/`)
-- [ ] Branch merged to main
+- Full frozen suite green (`scripts/orchestrate.sh` exit 0)
+- `docs/ARCHITECTURE.md` updated if structure changed
+- `docs/DECISIONS.md` updated if a non-obvious choice was made
+- No linter errors (`ruff check src/`)
+- Branch merged to main; entry moved to `BACKLOG.md` completed table

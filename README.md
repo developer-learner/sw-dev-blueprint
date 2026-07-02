@@ -18,7 +18,7 @@ sw-dev-blueprint/
 ├── CLAUDE.md                  # 🧠 Master LLM context (auto-read by OpenCode + Claude Code)
 ├── AGENTS.md                  # Symlink → CLAUDE.md (OpenCode's preferred filename)
 ├── CONVENTIONS.md             # Code style rules
-├── opencode.json              # OpenCode model + agent config (4-role pipeline)
+├── opencode.json              # OpenCode model + agent config (em/coder)
 ├── .env.example               # Environment variable template
 ├── .gitignore                 # Python + OpenCode gitignore
 │
@@ -26,10 +26,12 @@ sw-dev-blueprint/
 │   ├── ARCHITECTURE.md        # Data models, API structure, key flows
 │   ├── DECISIONS.md           # Why choices were made (prevents LLM drift)
 │   ├── PRODUCT.md             # Evergreen product context
-│   └── TESTING.md             # Testing strategy + conventions
+│   ├── TESTING.md             # Testing strategy + conventions
+│   ├── TPM-ROLE.md            # The top tier's job description
+│   └── ESCALATION.md          # Failure ladder + TPM bundle format
 │
 ├── tasks/
-│   ├── CURRENT.md             # PRD — acceptance criteria, frozen on approval
+│   ├── CURRENT.md             # Session notes — active work, halt notes
 │   └── BACKLOG.md             # Prioritized work queue
 │
 ├── .opencode/
@@ -44,7 +46,7 @@ sw-dev-blueprint/
         └── ci.yml             # GitHub Actions: test + lint on every push
 ```
 
-> **Template files under `src/`, `docs/`, and `tasks/` are intentionally generic skeletons.** They are replaced with project-specific content by the Architect phase on your first pipeline run. Do not judge the template by the skeleton — judge it by the process that fills them.
+> **Template files under `src/`, `docs/`, and `tasks/` are intentionally generic skeletons.** They are filled with project-specific content at bootstrap and by the first frozen spec. Do not judge the template by the skeleton — judge it by the process that fills them.
 ```
 
 ---
