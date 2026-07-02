@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-46 — 2026-07-02 — Milestone sizing is TPM judgment against a fixed balance; no formula
+
+**Decision:** Milestone cutting is the TPM's call, made per project, documented briefly in each PRD. The optimization target is fixed and two-sided: small enough that the CEO's acceptance check (D-44) catches errors before they compound — one bad milestone is the maximum blast radius; big enough to use a full freeze→build cycle well — no fragment milestones that spend a freeze/accept round-trip on trivia. Canonical illustrative arc (not a rule): core engine → connector/basic frontend (order ad hoc) → minimum viable app → features. Corollary: every milestone must end CEO-checkable, with acceptance depth scaling to what exists — live demo with real inputs for pre-UI milestones, hands-on prototype use once any UI exists. A milestone whose CEO check can't be described is cut wrong.
+
+**Alternatives considered:** (a) A sizing formula (N tasks / N files / N tests per milestone) — rejected: project-dependent; a formula would be gamed or fought rather than judged. (b) CEO cuts milestones — rejected: sizing requires estimating what the pipeline can deliver in one spec, which is technical judgment; the CEO states outcomes and accepts results.
+
+**Reason:** CEO-stated doctrine (2026-07-02): balance early error detection by human user-testing against per-cycle throughput; "a TPM can intelligently figure this out; there is no formula ideally, and it depends on project." Resolves the D-44 tension for backend-only milestones (nothing hands-on to test) via scaled acceptance instead of forbidding them.
+
+**Do not suggest:** Adding numeric sizing thresholds to gates or schemas; milestones that end at internal refactors with no CEO-observable behavior.
+
+---
+
 ## D-45 — 2026-07-02 — Conductor bash allowlist: pipeline scripts + read-only git; everything else asks
 
 **Decision:** The Build (conductor) session's bash permission in `opencode.json` becomes an allowlist — the pipeline scripts (orchestrate, bootstrap, new-project, tpm-pack/unpack/agent, sandbox-run, check-drift), read-only git (`status`/`log`/`diff`/`show`), pytest, and read-only file commands are allowed; `refreeze.sh` stays `ask` (D-42); **everything else falls to `ask`**. Combined with the playbook rule, this gives the non-technical CEO a decision procedure requiring zero code judgment: the only prompt you expect is refreeze-approve; any other prompt = alarm = deny and ask the conductor what it wanted.

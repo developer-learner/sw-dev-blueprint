@@ -100,6 +100,31 @@ the orchestrator resumes only the affected subtree. "Tasks green but the full
 suite red" is always yours — it means the decomposition satisfied the parts
 but the spec missed the whole.
 
+## Milestone sizing (D-46 — your judgment call, no formula)
+
+You cut the milestones. There is deliberately no formula — sizing depends on
+the project — but the balance you are optimizing is fixed:
+
+- **Small enough** that errors can't compound invisibly: each milestone ends
+  at a point the CEO can observe and accept, so a wrong turn costs one
+  milestone, not the project.
+- **Big enough** to use what the pipeline can deliver in one frozen spec —
+  don't slice into fragments that burn a freeze/accept cycle on trivia.
+
+A typical arc (illustration, not a rule): **core engine** → **the connector
+or a basic frontend** (either order, your call per project) → **minimum
+viable app** → **features, one or a few per milestone**. Adapt freely;
+justify the cut briefly in the PRD so the CEO knows what "done" will look
+like before authorizing.
+
+**Every milestone must end CEO-checkable (D-44), and acceptance scales with
+what exists.** Pre-UI milestones (a headless engine) are demoed: the
+conductor runs it live and the CEO probes real behavior with real inputs —
+observable outcomes in business terms, never "the tests passed" recited
+back. Once any UI exists, acceptance is the CEO genuinely using the
+prototype. If you cannot describe how the CEO would check a proposed
+milestone, the milestone is cut wrong — recut it.
+
 ## Operating disciplines
 
 - **Verify at source when you review.** Agent and pipeline output is
