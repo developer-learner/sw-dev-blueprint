@@ -21,6 +21,20 @@
 
 ## Decisions
 
+## D-35 — 2026-07-01 — Fleet Tier 3 (versioned core distribution): designed, deliberately NOT built
+
+**Documentation-only:** This entry records a design and its adoption trigger so it is not re-litigated each session. No code exists for it, on purpose.
+
+**Decision:** The structural endgame for fleet distribution — template-owned scripts shipped as a versioned release artifact (`blueprint-core-vN`) with its own manifest, pulled by children as a tracked dependency, giving the control plane a provenance chain anchored outside every child — is **deferred**. Chosen shape, if/when built: release-artifact over git-subtree (cleaner provenance, no merge noise in children; the D-33 manifest split already defines exactly what the artifact would contain). **Adoption trigger, per the repo's own doctrine (D-25, D-32 — adopt on trigger, don't pre-harden):** roughly five or more active children, or the D-34 update flow demonstrably chafing (updates skipped because the diff-review burden grew, or children needing divergent control-plane versions). Until then, D-33 detection + D-34 propagation cover the only incident class that has actually occurred.
+
+**Alternatives considered:** (a) Build it now — one active child; machinery would be maintained for years before anything needs it, and the migration of existing children (establishing spark's baseline by hand — it has no birth-SHA) is real human work with no current payoff. (b) git subtree — git-native but pollutes child history and makes partial adoption ambiguous. (c) Never — at real fleet scale, per-child diff-approval of every control-plane update stops scaling; the trigger exists because the need plausibly will.
+
+**Reason:** Cheap-to-build is not the bar; cheap-to-carry is. Recording the shape and the trigger costs one D-entry; building it costs a distribution mechanism plus child migration, against a doctrine this repo has already paid to learn twice (D-01's bloat prune, D-04's demoted line-count gate).
+
+**Do not suggest:** Building Tier 3 before the trigger fires. Re-opening subtree-vs-artifact from scratch when it does — start from this entry's rationale and revise with evidence.
+
+---
+
 ## D-34 — 2026-07-01 — Template propagation: update-template.sh (the refreeze pattern, applied to the control plane)
 
 **Decision:** Children pull control-plane improvements with `scripts/update-template.sh`: it resolves the template (a local clone via `--from`, or `gh repo clone` of the `.template-version` slug), takes the file list from the **template's** `.manifest-template` at the target ref (so files added upstream flow in), shows the human one aggregate diff, requires an interactive y/N (`--dry-run` to inspect without a tty), applies contents **and exec bits**, installs the template's manifest verbatim, advances `ref=` in `.template-version`, regenerates `.manifest-project`, runs the integrity gate as a post-apply check, and commits `[template-update <sha>]`. Files removed upstream are reported for manual deletion, never auto-deleted. `--stamp` mode retrofits a pre-D-33 child (writes `ref=` only). Same protected-artifact protocol as D-31: staged delta → human diff-approval → hash re-pin → versioned commit.

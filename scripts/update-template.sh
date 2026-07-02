@@ -63,7 +63,8 @@ if [ "$STAMP" = "1" ]; then
   sed_inplace "s/^ref=.*/ref=$TARGET/" .template-version
   bash scripts/regen-manifest.sh scripts/.manifest-project
   git add .template-version scripts/.manifest-project
-  git commit -m "[template-stamp ${TARGET:0:12}]"
+  git commit -m "[template-stamp ${TARGET:0:12}]" >/dev/null 2>&1 \
+    || echo "(already stamped at this ref — no commit needed)"
   echo "stamped: $SLUG @ ${TARGET:0:12} (was: $BIRTH)"
   exit 0
 fi
