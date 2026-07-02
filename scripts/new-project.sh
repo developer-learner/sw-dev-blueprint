@@ -3,7 +3,8 @@ set -e
 
 PROJECT_NAME="$1"
 TARGET_DIR="$(pwd)/$PROJECT_NAME"
-LLM_URL="http://localhost:1234/v1/chat/completions"
+LLM_PORT="${SANDBOX_LLM_PORT:-1234}"
+LLM_URL="http://localhost:$LLM_PORT/v1/chat/completions"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 step() { echo "--- $* ---"; }
@@ -11,15 +12,21 @@ step() { echo "--- $* ---"; }
 # Step 0: Pre-flight check (Hard Rule 1 & 4)
 # Model-agnostic: probe whatever model the CEO has loaded — never hardcode one.
 step "Pre-flight: checking local LLM at $LLM_URL ..."
-LOADED_MODEL="$(curl -s --max-time 10 "http://localhost:1234/v1/models" \
+LOADED_MODELS="$(curl -s --max-time 10 "http://localhost:$LLM_PORT/v1/models" \
   | python3 -c 'import sys,json
 try:
-    d = json.load(sys.stdin)["data"]
-    print(d[0]["id"] if d else "", end="")
+    for m in json.load(sys.stdin)["data"]:
+        print(m["id"])
 except Exception:
-    print("", end="")' || true)"
-[ -n "$LOADED_MODEL" ] || die "no model loaded in LM Studio. Load one (any non-thinking model) and retry."
-echo "  loaded model: $LOADED_MODEL"
+    pass' || true)"
+[ -n "$LOADED_MODELS" ] || die "no model loaded in LM Studio. Load one (any non-thinking model) and retry."
+LOADED_MODEL="$(printf '%s\n' "$LOADED_MODELS" | head -1)"
+if [ "$(printf '%s\n' "$LOADED_MODELS" | wc -l | tr -d ' ')" -gt 1 ]; then
+  echo "  WARNING: multiple models loaded — probing the first:"
+  printf '%s\n' "$LOADED_MODELS" | sed 's/^/    /'
+  echo "  (make sure your OpenCode global config maps agents to the intended ones)"
+fi
+echo "  probing model: $LOADED_MODEL"
 
 PREFLIGHT_RAW="$(curl -s --max-time 30 "$LLM_URL" \
   -H "Content-Type: application/json" \

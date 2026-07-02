@@ -7,7 +7,8 @@
 # directory and runs this script, which:
 #
 #   1. shows the human a full diff of what would change,
-#   2. requires an interactive y/N (THE approval gate — no honor-strings),
+#   2. requires human approval — interactive y/N, or the D-42 hash-bound
+#      --diff / --approve flow (THE approval gate — no honor-strings),
 #   3. applies the files, re-collects test node-ids, records the delta,
 #   4. re-freezes: bumps VERSION, regenerates the hash manifest,
 #      commits [refreeze vN].
