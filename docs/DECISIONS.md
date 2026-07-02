@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-38 — 2026-07-02 — TPM shuttle scripts (`tpm-pack.sh`/`tpm-unpack.sh`) + CEO playbook; TPM stays chat-side
+
+**Decision:** The operator's courier burden around the chat-based TPM is automated, not the air gap. `scripts/tpm-pack.sh` assembles the complete TPM session briefing (TPM-ROLE.md, contracts schema, and the currently frozen spec + VERSION when one exists) into one clipboard blob — deliberately excluding `src/` and `tests/` (oracle independence, INV-1). `scripts/tpm-unpack.sh` splits the TPM's reply — artifacts wrapped in mandatory `=== FILE: <path> ===` / `=== END FILE ===` sentinels, format recorded in TPM-ROLE.md — into `scripts/.approved/incoming/`, validating paths against the same whitelist `refreeze.sh` enforces, fail-closed (one bad path rejects the whole reply; a non-empty staging dir requires `--force`). The trust model is unchanged: unpack only stages; the human y/N diff in `refreeze.sh` remains the only installation door. `docs/CEO-PLAYBOOK.md` documents the operator loop end-to-end.
+
+**Alternatives considered:** (a) Repo read/write access for the TPM — rejected: read access breaks oracle independence for every milestone after the first (the TPM could derive tests from `src/`), and write access re-opens the exact incident class in TPM-ROLE.md's institutional memory (an agent quietly weakening a gate to make a run pass). (b) Scoped agent-TPM (deny-read `src/`, write only `incoming/`) — viable, deferred: harness-permission scoping is a softer guarantee than the chat air gap; revisit if shuttle friction still chafes after a few real milestones. (c) Status quo (manual file courier) — rejected: per-artifact hand-selection is error-prone in both directions, and friction the operator routinely skips is a control that doesn't exist.
+
+**Reason:** The no-repo-access design is load-bearing; the copy-paste drudgery around it is not. Separating the two makes the safe design cheap enough to actually operate: one paste starts a milestone, one command banks the reply. On CEO-PLAYBOOK.md vs D-01: this is an operator runbook for machinery that did not exist at D-01 — it restates no diagrams or rules from BLUEPRINT.md, which is what D-01 pruned.
+
+**Do not suggest:** Giving the TPM direct repo access (see alternative (b) for the recorded upgrade path and its trigger). Having tpm-pack include `src/` or the frozen `tests/` "for context". Letting tpm-unpack write anywhere but the staging dir, or skip its path whitelist because refreeze validates too — the double validation is deliberate (named culprit at unpack time; defense in depth at install time).
+
+---
+
 ## D-37 — 2026-07-02 — `build_extra`/`test_extra`: exact-file lane exceptions in `.gate-paths`
 
 **Decision:** `.gate-paths` gains two optional keys, `build_extra=` and `test_extra=` — space-separated lists of **exact file paths** outside the lane directory that the legacy `build`/`test` phases may also touch. `phase-gate.sh` filters them from the violation list with `grep -vFx` (fixed-string, whole-line): no globs, no regex, no prefix matching. Unset keys change nothing — the default gate behavior is byte-identical to before. Motivating case: a JS/TS build lane that must touch `package.json` alongside its source directory.

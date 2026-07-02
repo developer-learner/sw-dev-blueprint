@@ -59,6 +59,20 @@ Deliver all artifacts as complete files (never fragments) in the staging
 layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`, `contracts.json`,
 `tests/<file>.py`.
 
+**Delivery format (mandatory):** wrap every artifact in sentinels, exactly —
+
+```
+=== FILE: <path> ===
+<full file content>
+=== END FILE ===
+```
+
+The operator installs your reply mechanically (`scripts/tpm-unpack.sh` →
+`scripts/refreeze.sh`); only those four path shapes are accepted, fail-closed.
+Anything outside the sentinels is treated as discussion, not artifact. Your
+session context likewise arrives as one `scripts/tpm-pack.sh` bundle — when a
+frozen spec is included, derive deltas from it, never from chat memory.
+
 **3. Respond — escalation bundles come to you, batched.**
 When the pipeline exhausts its bounded ladder (retry → EM consult → brief and
 plan revisions, all shell-counted, D-29), the orchestrator packages a batch in
