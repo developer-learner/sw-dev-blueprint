@@ -1,20 +1,24 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "lms": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "LM Studio local",
-      "options": { "baseURL": "http://127.0.0.1:1234/v1" },
-      "models": {
-        "qwen/qwen3-coder-next": { "name": "Qwen3 Coder Next (local)" },
-        "qwen/qwen3.6-35b-a3b": { "name": "Qwen3.6 35B A3B (local)" }
-      }
+  "permission": {
+    "edit": {
+      "tests/**": "deny",
+      "scripts/**": "deny",
+      ".githooks/**": "deny",
+      ".opencode/**": "deny",
+      "opencode.json": "deny",
+      ".gate-paths": "deny",
+      ".template-version": "deny",
+      "src/**": "deny"
+    },
+    "bash": {
+      "scripts/refreeze.sh *": "ask"
     }
   },
   "agent": {
     "em": {
-      "mode": "primary",
-      "model": "[EM_MODEL]",
+      "mode": "subagent",
+      "description": "Engineering manager: decomposes the frozen spec into tasks/plan.json and answers shell-initiated consults with tasks/diagnosis.json. Writes tasks/** only.",
       "prompt": "{file:./.opencode/prompts/em.md}",
       "permission": {
         "edit": {
@@ -27,8 +31,8 @@
       }
     },
     "coder": {
-      "mode": "primary",
-      "model": "lms/qwen/qwen3.6-35b-a3b",
+      "mode": "subagent",
+      "description": "Implements exactly the one source file its task brief names, then runs the brief's self-verify step. Never touches tests, tasks, docs, or scripts.",
       "prompt": "{file:./.opencode/prompts/coder.md}",
       "permission": {
         "edit": {
