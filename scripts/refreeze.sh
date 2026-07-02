@@ -16,7 +16,19 @@
 # legitimately revised (bounded, versioned, human-approved) and can NEVER be
 # silently mutated — every gate run verifies the frozen-manifest, fail-closed.
 #
-# Usage: refreeze.sh <staging-dir>          (default: scripts/.approved/incoming)
+# Usage:
+#   refreeze.sh [<staging-dir>]             interactive y/N (default gate, D-31)
+#   refreeze.sh --diff [<staging-dir>]      validate + print full diff and its
+#                                           DIFF-SHA, apply nothing (agent flow
+#                                           step 1: conductor shows this to the CEO)
+#   refreeze.sh --approve <sha> [<staging-dir>]
+#                                           non-interactive apply, D-42: the sha
+#                                           must match the recomputed diff hash;
+#                                           the OpenCode "ask" permission prompt
+#                                           on this exact command is the human
+#                                           gate — the CEO approves a command
+#                                           carrying the hash of the diff they read.
+# Default staging dir: scripts/.approved/incoming
 # Staging layout — ONLY the changed files, full new content, paths preserved:
 #   PRD.md  ERD.md  contracts.json          -> installed to scripts/.approved/
 #   tests/<file>.py ...                     -> installed to tests/
@@ -24,12 +36,20 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 APPROVED="scripts/.approved"
+
+MODE="interactive"
+APPROVE_SHA=""
+case "${1:-}" in
+  --diff)    MODE="diff"; shift ;;
+  --approve) MODE="approve"; APPROVE_SHA="${2:?usage: refreeze.sh --approve <sha> [staging-dir]}"; shift 2 ;;
+esac
 IN="${1:-$APPROVED/incoming}"
 
 die() { echo "REFREEZE FAIL: $*" >&2; exit 1; }
 
 [ -d "$IN" ] || die "staging dir not found: $IN (see docs/ESCALATION.md for the layout)"
-[ -t 0 ] || die "refreeze requires an interactive terminal — the human diff-approval IS the gate"
+[ "$MODE" != "interactive" ] || [ -t 0 ] \
+  || die "interactive refreeze requires a terminal — the human diff-approval IS the gate (agents: use --diff then --approve <sha>, D-42)"
 
 V=$(cat "$APPROVED/VERSION" 2>/dev/null || echo 0)
 NEW=$((V + 1))
@@ -99,10 +119,9 @@ INV4_CONTRACTS="$APPROVED/contracts.json"
 python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
   || die "INV-4 rejected the delta — fix the tests or lock the surface in contracts.json, then restage"
 
-# --- Show the human the full diff ---
-echo "=============================================="
-echo "  Re-freeze: spec v$V -> v$NEW"
-echo "=============================================="
+# --- Build the full diff (deterministic — its hash is the approval token) ---
+DIFF_FILE=".pipeline-state/refreeze-pending.diff"
+mkdir -p .pipeline-state
 show_diff() {  # $1 current-path  $2 incoming-path
   if [ -f "$1" ]; then
     diff -u "$1" "$2" || true   # rc 1 = differences; that is the point
@@ -111,16 +130,32 @@ show_diff() {  # $1 current-path  $2 incoming-path
     cat "$2"
   fi
 }
-for f in $CHANGED_DOCS; do
+{
+  for f in $CHANGED_DOCS; do
+    echo ""
+    echo "--- $APPROVED/$f ---"
+    show_diff "$APPROVED/$f" "$IN/$f"
+  done
+  for f in $CHANGED_TEST_FILES; do
+    echo ""
+    echo "--- $f ---"
+    show_diff "$f" "$IN/$f"
+  done
+} > "$DIFF_FILE"
+DIFF_SHA=$(sha256sum "$DIFF_FILE" | awk '{print $1}')
+
+echo "=============================================="
+echo "  Re-freeze: spec v$V -> v$NEW"
+echo "=============================================="
+cat "$DIFF_FILE"
+
+if [ "$MODE" = "diff" ]; then
   echo ""
-  echo "--- $APPROVED/$f ---"
-  show_diff "$APPROVED/$f" "$IN/$f"
-done
-for f in $CHANGED_TEST_FILES; do
-  echo ""
-  echo "--- $f ---"
-  show_diff "$f" "$IN/$f"
-done
+  echo "DIFF-SHA: $DIFF_SHA"
+  echo "(nothing applied — to install, the CEO approves:"
+  echo "  scripts/refreeze.sh --approve $DIFF_SHA $IN)"
+  exit 0
+fi
 
 # --- Record what changes BEFORE applying (drives the affected-subtree reset) ---
 OLD_NODEIDS=$(cat "$APPROVED/test-nodeids" 2>/dev/null || true)
@@ -153,13 +188,23 @@ PYEOF
 fi
 
 # --- The human approval gate ---
-echo ""
-printf 'Approve this delta and re-freeze as v%s? [y/N] ' "$NEW"
-read -r ANSWER
-case "$ANSWER" in
-  y|Y|yes|YES) ;;
-  *) echo "aborted — nothing changed"; exit 1 ;;
-esac
+if [ "$MODE" = "approve" ]; then
+  # D-42: non-interactive path. The human gate is the OpenCode "ask" prompt on
+  # this exact command line — approving it means approving THIS diff, because
+  # the sha on the command line must equal the hash of the recomputed diff.
+  [ "$APPROVE_SHA" = "$DIFF_SHA" ] \
+    || die "diff hash mismatch — staging changed since the CEO reviewed it (expected $DIFF_SHA, got $APPROVE_SHA). Re-run --diff and re-approve."
+  echo ""
+  echo "approved via diff-hash $DIFF_SHA (D-42)"
+else
+  echo ""
+  printf 'Approve this delta and re-freeze as v%s? [y/N] ' "$NEW"
+  read -r ANSWER
+  case "$ANSWER" in
+    y|Y|yes|YES) ;;
+    *) echo "aborted — nothing changed"; exit 1 ;;
+  esac
+fi
 
 # --- Apply ---
 for f in $CHANGED_DOCS; do
