@@ -132,11 +132,18 @@ shell-chosen points, and everything they produce is schema-validated.
 OpenCode config lives in `~/.config/opencode/opencode.json` (global) or
 `opencode.json` at the project root.
 
-> ⚠️ **Critical:** use provider key `lms` NOT `lmstudio` — the name `lmstudio`
-> collides with OpenCode's built-in catalog and loads wrong model names.
-> See `opencode.json` in this repo for the exact working config.
+The repo's `opencode.json` is deliberately **model-free**: it defines the
+agents' roles, prompts, and write lanes only. Which actual LLM backs each
+agent is the CEO's local choice — set the provider block and per-agent
+`model` overrides in your **global** `~/.config/opencode/opencode.json`
+(OpenCode merges global + project config). Load whatever you like in
+LM Studio; the blueprint never names a model.
 
-> ⚠️ **Rule 1:** Do NOT use a thinking model (e.g. qwen3.6-35b-a3b).
+> ⚠️ **Critical:** for LM Studio use provider key `lms` NOT `lmstudio` — the
+> name `lmstudio` collides with OpenCode's built-in catalog and loads wrong
+> model names.
+
+> ⚠️ **Rule 1:** Do NOT use a thinking model for any agent tier.
 > Verify with Pre-Flight Step 0 that `content` is populated and
 > `reasoning_content` is empty.
 

@@ -121,10 +121,16 @@ the TPM web chat (see `docs/TPM-ROLE.md`) and enter via `scripts/refreeze.sh`.
 
 | Tier | Where it runs | Produces | Writes |
 |------|---------------|----------|--------|
-| **CEO** (human) | conversation | business intent | — |
-| **TPM** (frontier LLM) | human-operated **web chat**, outside OpenCode | PRD, ERD + `contracts.json`, the test suite | nothing directly — installed via `scripts/refreeze.sh` (human-approved diff), frozen in `scripts/.approved/` + `tests/` |
-| **EM** (mid-tier LLM) | OpenCode agent `em` | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) | `tasks/**` only |
-| **Coder** (local LLM) | OpenCode agent `coder` | one file per task | that one file only (gate-enforced) |
+| **CEO** (human) | conversation with the conductor | business intent, freeze approvals | — (runs no commands, D-40) |
+| **TPM** (frontier LLM) | web chat (D-38) or scoped repo agent via `scripts/tpm-agent.sh` (D-39) | PRD, ERD + `contracts.json`, the test suite | nothing directly — installed via `scripts/refreeze.sh` (human-approved diff, D-42), frozen in `scripts/.approved/` + `tests/` |
+| **Conductor** | OpenCode **Build** agent (built-in) | status reports, script invocations | docs/session notes; denied on `tests/`, `scripts/`, `src/`, control plane (D-40) |
+| **EM** (mid-tier LLM) | OpenCode subagent `em` | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) | `tasks/**` only |
+| **Coder** (local LLM) | OpenCode subagent `coder` | one file per task | that one file only (gate-enforced) |
+
+Which actual LLM backs each OpenCode agent is never recorded in this repo:
+the CEO maps models to agents in the global `~/.config/opencode/opencode.json`
+(D-41). The blueprint constrains model *class* only (frontier / mid / local
+non-thinking), never model identity.
 
 Tests are **run by the shell** (`pytest --json-report`, parsed by
 `scripts/orchestrate.sh`) — there is no test agent. The shell orchestrator is
@@ -132,7 +138,9 @@ the only actor with procedural authority: it validates the plan, walks the
 DAG, runs gates and acceptance, owns all state and escalation counters
 (D-26). The EM advises at exactly two shell-initiated points; it never drives.
 
-**The loop:** TPM spec frozen (`refreeze.sh`, human y/N) → `scripts/orchestrate.sh`
+**The loop (all steps conductor-driven; the CEO only talks and approves):**
+TPM spec frozen (`refreeze.sh` — terminal y/N, or conductor `--diff` /
+`--approve <hash>` behind the OpenCode ask-prompt, D-42) → `scripts/orchestrate.sh`
 → EM emits plan → validated → coder executes one task at a time → mapped
 frozen tests + gate after each → full frozen suite green = done. Failures
 climb the escalation ladder (`docs/ESCALATION.md`); spec problems come back

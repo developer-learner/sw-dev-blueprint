@@ -21,6 +21,42 @@
 
 ## Decisions
 
+## D-42 — 2026-07-02 — Refreeze approval without a terminal: `--diff` / `--approve <hash>` behind the OpenCode ask-prompt
+
+**Decision:** `scripts/refreeze.sh` gains two non-interactive modes so the conductor (D-40) can drive freezes while the human stays the gate. `--diff` validates the staging dir, prints the full diff plus its `DIFF-SHA` (sha256 of the diff text), and applies nothing. `--approve <sha>` recomputes the diff and proceeds only if the hash matches; `opencode.json` marks `scripts/refreeze.sh *` as `bash: ask`, so the CEO's click on that prompt — whose command line carries the hash of the diff they just read in chat — IS the approval. Any change to staging between review and approval changes the hash and fails closed. The interactive y/N path is unchanged and remains the fallback.
+
+**Alternatives considered:** (a) Keep terminal-only y/N — rejected by CEO direction (no command running). (b) Honor-string approval ("CEO said yes in chat") — rejected: no binding between what was read and what is applied. (c) A `--yes` flag — rejected: approves whatever staging contains at run time, not what was reviewed.
+
+**Reason:** The gate's essence is "a human read THIS diff and approved THIS diff." The hash preserves that binding without a TTY. Honest layer statement: the ask-prompt depends on OpenCode's permission enforcement (soft, see D-24/D-39 caveats); the backstops remain the hash binding itself, the pre-commit hook, and the frozen-manifest verification failing closed on every gate run.
+
+**Do not suggest:** Adding `--yes`/`--force`; letting the conductor summarize the diff instead of printing it in full; approving on a stale hash after restaging.
+
+---
+
+## D-41 — 2026-07-02 — Model identity leaves the repo: the blueprint is model-agnostic
+
+**Decision:** No file in the template or its instances names an actual LLM (no model IDs in `opencode.json`, scripts, or operative docs). The repo's `opencode.json` defines roles, prompts, modes, and write lanes only. The CEO maps agents to models in the global `~/.config/opencode/opencode.json` (OpenCode merges global + project config) and loads whatever they choose in LM Studio; pre-flight probes discover the loaded model via `GET /v1/models` instead of asserting a name. The blueprint constrains model *class* only: TPM frontier-tier, EM mid-tier, coder local non-thinking (Hard Rule 1 stays, expressed class-wise).
+
+**Alternatives considered:** (a) Keep pinned models with placeholders like `[EM_MODEL]` — rejected: placeholders leak into instances unfilled (see sparkv2) and every model swap dirties the repo. (b) Env-var indirection in the repo config — rejected: still couples the repo to a naming scheme.
+
+**Reason:** Model choice is an operator preference that changes weekly; the pipeline's guarantees come from gates and frozen tests, not from any particular model. Hardcoding created recurring drift between what docs claimed and what was actually loaded (SANDBOX-VALIDATION.md records four different models in one week).
+
+**Do not suggest:** Re-adding model IDs to the repo "for reproducibility" — record the model used for a given run in session notes if it matters, not in the control plane.
+
+---
+
+## D-40 — 2026-07-02 — OpenCode Build agent as conductor; `em`/`coder` become subagents; CEO runs no commands
+
+**Decision:** OpenCode is the harness AND the CEO's single interface. The built-in **Build** agent is the conductor: the CEO talks to it in business language; it runs `new-project.sh`, the TPM shuttle scripts, `refreeze.sh --diff/--approve` (D-42), and `SANDBOX=1 scripts/orchestrate.sh`, then reports results. `em` and `coder` flip to `"mode": "subagent"` — machine-invocable (task tool / `opencode run --agent`), no longer Tab-cycled by a human. Procedural authority does NOT move: `orchestrate.sh` still owns the DAG, gates, counters, and escalation (D-26); Build launches it and interprets exit codes, nothing more. Project-level `opencode.json` denies the Build session edits to `tests/`, `scripts/`, `src/`, hooks, and the control plane.
+
+**Alternatives considered:** (a) Build re-implements orchestration conversationally — rejected: reintroduces LLM procedural authority that D-26 removed for cause. (b) Keep em/coder as Tab-cycled primaries — rejected: requires the CEO to operate the TUI, contradicting the no-commands direction.
+
+**Reason:** The CEO's two real decisions (what to build, whether to approve a freeze) never required a terminal; everything else was operator toil. Honest layer statement: Build's edit denies are OpenCode-harness-soft (the D-24/D-39 permission caveats apply) — the hard walls remain the read-only sandbox mounts for em/coder (D-30), phase-gate manifests failing closed, and the pre-commit hook.
+
+**Do not suggest:** Moving DAG/retry/escalation logic into Build's prompt; making the TPM an OpenCode agent (OpenCode cannot deny reads — see D-39 alternative (b)); giving Build write access to `scripts/` or `tests/` to "unblock" a run.
+
+---
+
 ## D-39 — 2026-07-02 — Agent-mode TPM: scoped repo access via `tpm-agent.sh` (D-38(b) triggered by CEO decision)
 
 **Decision:** The TPM may now run as a repo agent — `scripts/tpm-agent.sh` launches Claude Code with `scripts/tpm-agent-settings.json`. Containment, per the shape D-38(b) recorded: WRITE only `.tpm/outbox/` (gitignored; installed exclusively through the interactive human y/N of `scripts/refreeze.sh .tpm/outbox` — refreeze already took a staging-dir argument, unchanged); READ everything except `src/` (harness-denied), with `Bash` denied entirely so the wall cannot be bypassed via `cat`; anything outside the pre-approved lane falls to the harness's ask-prompt, which the playbook tells the CEO to treat as an alarm. The TPM triggers no procedure — orchestrate/refreeze/EM/coder runs stay operator- and shell-initiated. Chat mode (D-38 pack/unpack) remains fully supported as the fallback and the stronger air gap. The operator's imagined third job — couriering prompts from TPM to EM — is explicitly documented as nonexistent: the frozen spec is the only TPM→EM handoff, delivered by `orchestrate.sh` (D-26/D-28).

@@ -15,8 +15,9 @@ The CEO does **not** talk to the EM or the coder, and neither do you: below
 you, everything is driven by `scripts/orchestrate.sh` at shell-chosen points.
 
 You run in one of two modes; which one is stated when your session starts.
-In both, a human-approved diff (`scripts/refreeze.sh`, interactive y/N) is
-the only door your work enters through, and once in, it is version-stamped
+In both, a human-approved diff (`scripts/refreeze.sh` — interactive y/N, or
+the conductor's `--diff` / `--approve <hash>` flow gated by the OpenCode
+ask-prompt, D-42) is the only door your work enters through, and once in, it is version-stamped
 and hash-pinned (D-31). This is not a limitation to work around; it is the
 design. Your authority is exactly your artifacts.
 

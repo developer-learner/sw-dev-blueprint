@@ -25,9 +25,10 @@ the scope its capability class can carry, and the shell owns all procedure.
 | Tier | Where it runs | Produces |
 |------|---------------|----------|
 | **CEO** (human) | conversation | business intent; approvals |
-| **TPM** (frontier LLM) | human-operated **web chat**, outside OpenCode | PRD, ERD + `contracts.json`, the test suite |
-| **EM** (mid-tier LLM) | OpenCode agent `em` | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) |
-| **Coder** (local LLM) | OpenCode agent `coder` | one file per task |
+| **TPM** (frontier LLM) | **web chat** (D-38) or scoped repo agent via `tpm-agent.sh` (D-39) | PRD, ERD + `contracts.json`, the test suite |
+| **Conductor** (any capable LLM) | OpenCode **Build** agent (built-in) | no artifacts — runs the scripts, shuttles TPM I/O, reports to the CEO (D-40) |
+| **EM** (mid-tier LLM) | OpenCode subagent `em` | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) |
+| **Coder** (local LLM) | OpenCode subagent `coder` | one file per task |
 
 Tests are **run by the shell** (`scripts/orchestrate.sh` → pytest) — there is
 no test agent. The TPM's spec enters the repo only through
@@ -62,10 +63,10 @@ The full stack this system runs on. Know every object before operating it.
 | **venv** | Per-project dependency isolation. NOT a security sandbox — it stops dependency collisions, not destructive commands. |
 | **podman** | The actual sandbox. `scripts/sandbox-run.sh` mounts the repo read-only and grants each agent only its write lane (D-30). `SANDBOX=1` is mandatory for the orchestrator. |
 | **LM Studio** | The local inference server (`localhost:1234`) for the coder tier. Most common failure point — verify the correct non-thinking model is loaded (Pre-Flight Step 0). |
-| **OpenCode** | The agent runner. Hosts exactly two agents — `em` and `coder` — which the orchestrator invokes at shell-chosen points. Install: `brew install sst/tap/opencode`. |
+| **OpenCode** | The agent harness AND the CEO's single interface (D-40). The built-in **Build** agent is the conductor: the CEO talks to it, it runs the scripts and reports back — the CEO runs no commands. `em` and `coder` are subagents (`mode: subagent`); the orchestrator still invokes them at shell-chosen points via `opencode run --agent`. Install: `brew install sst/tap/opencode`. |
 | **TPM (frontier LLM)** | Runs in a web chat the human operates, outside OpenCode. Authors the spec and the test suite; answers escalation batches. Never touches the repo — its output enters via `scripts/refreeze.sh`. |
 | **EM (mid-tier LLM)** | OpenCode agent `em`. Decomposes the frozen spec into `tasks/plan.json`; diagnoses failures on consult. Writes `tasks/` only. Advisory — the shell decides. |
-| **Coder (local LLM)** | OpenCode agent `coder`. MUST be non-thinking (e.g. `qwen/qwen3-coder-next` via LM Studio). Writes exactly the one file its task names. |
+| **Coder (local LLM)** | OpenCode agent `coder`. MUST be non-thinking; the CEO picks which loaded LM Studio model backs it (global OpenCode config — the repo never names a model). Writes exactly the one file its task names. |
 | **pytest / CI** | The test harness = **ground truth**, machine-readable via `.cache/test-report.json`. The suite is TPM-authored and frozen; the shell runs it. |
 | **The docs** | The memory layer for stateless LLMs (this file + CLAUDE.md + CONVENTIONS.md + docs/ + tasks/). |
 | **AGENTS.md** | Symlink to CLAUDE.md. OpenCode's preferred filename; symlink keeps content in sync with no duplication. |
@@ -83,7 +84,7 @@ Read these files from the repository in this exact order:
 | 1 | `README.md` | System overview + working loop | Always — first |
 | 2 | `CLAUDE.md` | Project identity, stack, guardrails, capability ladder | Always — every session |
 | 3 | `CONVENTIONS.md` | Code style and patterns | Always — every session |
-| 4 | `opencode.json` | OpenCode model + agent configuration (em/coder) | Setup + model/agent changes |
+| 4 | `opencode.json` | OpenCode agent configuration — roles, lanes, modes; model-free by design (D-41) | Setup + agent changes |
 | 5 | `.opencode/prompts/*.md` | Agent role prompts (em/coder) | Agent setup |
 | 6 | `docs/PRODUCT.md` | What we're building and why | New features |
 | 7 | `docs/ARCHITECTURE.md` | Data models, API, key flows | Any code change |
@@ -112,9 +113,9 @@ empty, which breaks agent parsing (empty/invalid response → silent failure or
 JSON error).
 
 - The active coder model in OpenCode MUST be non-thinking.
-- Local non-thinking models: `qwen/qwen3-coder-next` (verified working).
-- Local thinking models to NEVER use as agent: `qwen3.6-35b-a3b` and any
-  model with "thinking" or "reasoner" in the name.
+- Which specific model that is, is the CEO's choice — never hardcoded in
+  this blueprint or in the repo's `opencode.json`. Avoid any model with
+  "thinking" or "reasoner" in the name.
 - Frontier models (Claude, GPT) are safe — they are not thinking models.
 - Verify before relying: see Pre-Flight Step 0 — confirm `content` is
   populated and `reasoning_content` is empty or absent.
@@ -237,16 +238,19 @@ specified or they drift. The system absorbs this structurally:
 **1. LM Studio reachable + correct (non-thinking) coder model loaded:**
 
 ```bash
+# discover whatever model the CEO has loaded (never hardcode one)
+MODEL=$(curl -s http://localhost:1234/v1/models | python3 -c \
+  'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])')
 curl -s http://localhost:1234/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen/qwen3-coder-next","messages":[{"role":"user","content":"Reply with just OK"}],"max_tokens":5}'
+  -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with just OK\"}],\"max_tokens\":5}"
 ```
 
 PASS only if BOTH:
-- the response `model` field matches `qwen/qwen3-coder-next` (not a fallback), AND
+- the models endpoint returned at least one loaded model, AND
 - `content` is populated (e.g. `"OK"`) and `reasoning_content` is absent or empty.
 
-If `model` echoes a different name → wrong model loaded, fix in LM Studio.
+If no model is listed → nothing loaded, fix in LM Studio.
 If `content` is empty and `reasoning_content` is populated → thinking model
 loaded, swap to non-thinking (Rule 1).
 
@@ -282,10 +286,13 @@ If any check fails, STOP and report exactly which one. Do not proceed.
 ## The System in One Diagram
 
 ```
-CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside OpenCode)
+CEO business intent ──► TPM (frontier LLM — web chat D-38 or scoped repo agent D-39)
                           │  writes PRD + ERD/contracts + the test suite
                           ▼
-            scripts/refreeze.sh  ← human approves the diff (THE approval gate)
+            scripts/refreeze.sh  ← CEO approves the diff (THE approval gate:
+                          │        terminal y/N, or conductor-driven
+                          │        --diff / --approve <hash> via the OpenCode
+                          │        ask-prompt, D-42 — CEO reads, then approves)
                           │  spec frozen: scripts/.approved/ + tests/, hash-pinned
                           ▼
             scripts/orchestrate.sh (shell owns ALL procedure)
@@ -438,7 +445,7 @@ builds via `scripts/orchestrate.sh`.
 |------|-------------|-----|
 | TPM | Frontier (web chat, human-operated) | Spec authorship and test authorship are the highest-leverage, hardest-to-verify work — concentrate the strongest model there, at conversation cadence (no API cost) |
 | EM | Mid-tier | Decomposition and diagnosis need reasoning but are schema-validated — a mechanical gate catches what the model gets wrong |
-| Coder | Local (`lms/qwen/qwen3-coder-next`) | Free, fast; atomic one-file tasks with exact briefs are exactly what coder-class local models do well |
+| Coder | Local (LM Studio, CEO-chosen model) | Free, fast; atomic one-file tasks with exact briefs are exactly what coder-class local models do well |
 | Tests | None (shell runs pytest) | Running tests requires no judgment; authoring them does (TPM) |
 
 **Rule:** capability problems climb the ladder via the escalation protocol
