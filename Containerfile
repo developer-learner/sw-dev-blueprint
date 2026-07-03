@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # OpenCode (pinned to host version) — make globally available for `agent` user
-RUN curl -fsSL https://opencode.ai/install | bash -s -- --version 1.15.13 \
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --version 1.17.12 \
     && cp /root/.opencode/bin/opencode /usr/local/bin/opencode
 
 # Pytest toolchain + app deps (always installed)
