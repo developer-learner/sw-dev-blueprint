@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-48 — 2026-07-02 — Conductor denied the task tool: no agent in this repo can spawn another
+
+**Decision:** The built-in Build agent gets `"tools": { "task": false }` in the project `opencode.json`, completing D-43. No agent — conductor, em, or coder — can spawn any agent. The only inter-agent invocation path in the entire system is `orchestrate.sh` calling `opencode run --agent` inside the sandbox. CEO-surfaced gap: "Build hands to the orchestrator" was doc-advisory while Build held the task tool — it could have dispatched coder directly, skipping sandbox mounts and per-task gates. Residual soft path: Build running `opencode run --agent coder` via bash is not allowlisted, so it falls to the ask-prompt (= CEO alarm), subject to the D-45 glob caveat.
+
+**Alternatives considered:** Leaving Build the task tool for utility subagents (explore-style) — rejected: the pipeline never needs it, and the utility doesn't justify keeping open the one bypass around the shell's procedural monopoly.
+
+**Reason:** "The shell is the only actor with procedural authority" (D-26) is now enforced by configuration at every seat, not by prompt discipline. Rules that can be mechanical must be (CLAUDE.md operating-rules preamble).
+
+**Do not suggest:** Re-enabling task for Build to "parallelize" or "speed up" anything; the orchestrator is the parallelism boundary.
+
+---
+
 ## D-47 — 2026-07-02 — External TPM review of D-40..D-46 adjudicated: pytest/conftest hole closed, permissions hardened, honest-layer statements added
 
 **Decision:** A frontier-LLM review of the conductor redesign produced five findings; all were verified against the tree before acting (none taken on the reviewer's word). Actions: **(1) CONFIRMED+FIXED** — `"pytest*": "allow"` plus undenied root `conftest.py` gave the conductor a zero-prompt arbitrary-code-execution path (write `./conftest.py`, run bare `pytest` unsandboxed), also loadable inside sandboxed suite runs where `.cache/` is writable (test-report forgery path). Removed `pytest*` from the allowlist (suite runs go through `sandbox-run.sh`; bare pytest now asks) and denied edits to root pytest-config files (`conftest.py`, `pytest.ini`, `pyproject.toml`, `setup.cfg`, `tox.ini`) for the conductor AND the coder. **(2) OPEN** — OpenCode glob-vs-compound-command matching is untested; caveat recorded in D-45, probe scheduled for first live session. **(3) FIXED** — D-42's conductor-relayed-diff weakening now stated in its entry. **(4) CONFIRMED+FIXED** — coder's `"**": "allow"` could override global control-plane denies depending on merge semantics; denies mirrored into the coder block, and `em` got an explicit `"**": "deny"` terminal rule (fail closed regardless of merge semantics). **(5) FIXED** — `new-project.sh` warns when multiple models are loaded and respects `SANDBOX_LLM_PORT`; stale y/N-only comments in `refreeze.sh` header and CLAUDE.md structure tree updated.

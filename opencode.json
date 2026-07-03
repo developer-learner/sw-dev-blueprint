@@ -37,6 +37,9 @@
     }
   },
   "agent": {
+    "build": {
+      "tools": { "task": false }
+    },
     "em": {
       "mode": "subagent",
       "description": "Engineering manager: decomposes the frozen spec into tasks/plan.json and answers shell-initiated consults with tasks/diagnosis.json. Writes tasks/** only. Never spawns agents — the shell invokes the coder from the plan (D-26/D-43).",
