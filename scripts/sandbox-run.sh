@@ -15,7 +15,12 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
-IMAGE="swbp-sandbox"
+# Image tag = content hash of what defines it (D-50): a requirements.txt or
+# Containerfile change yields a new tag, forcing a rebuild automatically —
+# the stale-image failure (TPM picks a new stack, sandbox still has the old
+# one, pytest "collects no tests") becomes structurally impossible.
+STACK_HASH="$(cat "$REPO/Containerfile" "$REPO/requirements.txt" 2>/dev/null | sha256sum | cut -c1-12)"
+IMAGE="swbp-sandbox:$STACK_HASH"
 TIMEOUT="${SANDBOX_TIMEOUT:-1800}"
 
 # LLM host address — staging step 0 proves which address reaches the host LLM
@@ -44,7 +49,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-podman image exists "$IMAGE" || podman build -t "$IMAGE" -f "$REPO/Containerfile" "$REPO"
+podman info >/dev/null 2>&1 \
+  || { echo "sandbox-run: podman is not running — start it (podman machine start). The sandbox is mandatory (D-30); there is no unsandboxed fallback." >&2; exit 1; }
+podman image exists "$IMAGE" || {
+  echo "sandbox-run: building sandbox image $IMAGE (first run or stack changed)..." >&2
+  podman build -t "$IMAGE" -f "$REPO/Containerfile" "$REPO" >&2
+}
 
 # HOME on a tmpfs: the agent user needs a writable home for OpenCode/pip
 # session data, and it must not be the (read-only) repo. Ephemeral by design.
