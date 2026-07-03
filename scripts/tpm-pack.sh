@@ -12,15 +12,23 @@
 # (INV-1) means the TPM never sees the implementation, and it re-authors
 # tests from spec, never from the previously frozen suite's text.
 #
-# Usage: tpm-pack.sh [--stdout]
-#   default: copy to clipboard (pbcopy/xclip/wl-copy) when stdout is a tty;
-#   --stdout (or piping) writes the bundle to stdout instead.
+# Usage: tpm-pack.sh [--clipboard]
+#   default: write the bundle to stdout (D-49 — agents run this and must
+#   relay the FULL output verbatim to the CEO; TTY auto-detection misfired
+#   inside agent harnesses that allocate a pty, silently eating the bundle);
+#   --clipboard: copy to clipboard instead (pbcopy/wl-copy/xclip) — the
+#   human-at-a-terminal convenience, now opt-in. --stdout is accepted as a
+#   no-op for backward compatibility.
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
 APPROVED="scripts/.approved"
-FORCE_STDOUT=0
-[ "${1:-}" = "--stdout" ] && FORCE_STDOUT=1
+WANT_CLIPBOARD=0
+case "${1:-}" in
+  --clipboard) WANT_CLIPBOARD=1 ;;
+  --stdout|"") ;;
+  *) echo "tpm-pack: unknown option ${1} (usage: tpm-pack.sh [--clipboard])" >&2; exit 1 ;;
+esac
 
 emit() {
   echo "=== CONTEXT FILE: $1 ==="
@@ -71,7 +79,7 @@ elif command -v wl-copy >/dev/null 2>&1; then copy_cmd="wl-copy"
 elif command -v xclip >/dev/null 2>&1; then copy_cmd="xclip -selection clipboard"
 fi
 
-if [ "$FORCE_STDOUT" -eq 0 ] && [ -t 1 ] && [ -n "$copy_cmd" ]; then
+if [ "$WANT_CLIPBOARD" -eq 1 ] && [ -n "$copy_cmd" ]; then
   printf '%s\n' "$OUT" | $copy_cmd
   echo "tpm-pack: bundle copied to clipboard ($(printf '%s' "$OUT" | wc -c | tr -d ' ') bytes, $(printf '%s\n' "$OUT" | wc -l | tr -d ' ') lines)." >&2
   echo "tpm-pack: paste it as the FIRST message of a fresh TPM chat, then state your ask." >&2
