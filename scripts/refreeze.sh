@@ -218,9 +218,18 @@ done
 
 # --- Re-collect the frozen test node-ids (inside the sandbox, read-only) ---
 echo "collecting test node-ids..."
-NODEIDS=$(scripts/sandbox-run.sh -- pytest --collect-only -q -p no:cacheprovider 2>/dev/null \
+COLLECT_ERR=".pipeline-state/refreeze-collect.err"
+NODEIDS=$(scripts/sandbox-run.sh -- pytest --collect-only -q -p no:cacheprovider 2>"$COLLECT_ERR" \
   | grep '::' || true)
-[ -n "$NODEIDS" ] || die "pytest collected no tests — a frozen spec without a suite cannot gate anything"
+if [ -z "$NODEIDS" ]; then
+  echo "--- collection stderr (last 15 lines) ---" >&2
+  tail -15 "$COLLECT_ERR" >&2 || true
+  if grep -q "ModuleNotFoundError\|ImportError" "$COLLECT_ERR" 2>/dev/null; then
+    die "pytest could not IMPORT the suite (see stderr above) — the TPM's stack is missing from the sandbox. Fix: add the packages to requirements.txt; the image rebuilds automatically on the next run (D-50)."
+  fi
+  die "pytest collected no tests — a frozen spec without a suite cannot gate anything (see stderr above)"
+fi
+rm -f "$COLLECT_ERR"
 printf '%s\n' "$NODEIDS" > "$APPROVED/test-nodeids"
 
 # --- Record the delta for the orchestrator's affected-subtree reset (D-31) ---
