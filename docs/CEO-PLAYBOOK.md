@@ -2,10 +2,12 @@
 
 > You are the CEO. You make two kinds of decisions: **what to build**, and
 > **whether to approve a spec change**. Everything else runs without you.
-> You run **no commands** (D-40): your interface is the OpenCode chat, where
-> the built-in **Build** agent acts as conductor — it runs every script
-> below and reports back in plain language. The only thing it cannot do for
-> you is approve a freeze: that prompt is yours by design.
+> You run **no commands** (D-40): your interface is a conductor chat —
+> Claude Code, OpenCode's built-in Build agent, or any similar tool you
+> prefer (D-53: the choice is a preference, not an architecture decision,
+> since EM/coder never go through it) — which runs every script below and
+> reports back in plain language. The only thing it cannot do for you is
+> approve a freeze: that prompt is yours by design.
 >
 > (Operator runbook for the D-38..D-42 machinery — not the Quick Reference
 > Card that D-01 pruned; nothing here restates BLUEPRINT.md rules.)
@@ -20,8 +22,9 @@ copy-pasting instructions to the EM, something is being done wrong.
 
 ```
 you ⇄ TPM (agent or web chat)  →  .tpm/outbox
-you ⇄ conductor (OpenCode Build) → refreeze --diff → you read the diff
+you ⇄ conductor (any chat agent) → refreeze --diff → you read the diff
         → your approval click (--approve <hash>) → orchestrate.sh ⇄ EM/coder
+                                            (one HTTP completion each, D-53)
                                                         │
 you ←── stuck? conductor reports; TPM reads BATCH.md ───┘
 ```

@@ -8,6 +8,17 @@
 # their out-of-band anchor for free: no agent can write the gate that polices
 # it, nor the manifest, nor the frozen tests.
 #
+# D-53: this sandbox now runs ONLY pytest and smoke_check — the model calls
+# that used to happen inside it (via containerized OpenCode) now happen on
+# the host, before any container starts (scripts/llm-call.sh). Nothing in
+# here talks to an LLM, so there is no LLM host/port wiring and no config to
+# mount — that entire class of failure (D-52's stale mapping, D-50's
+# version-pin drift) no longer has a place to occur. Network is fully
+# disabled: the frozen suite exercises the app in-process (TestClient/ASGI
+# transport, no real sockets), so untrusted generated code gets no
+# exfiltration path. A project whose tests genuinely need network is a
+# reason to revisit this, not a reason to assume it quietly.
+#
 # Usage: sandbox-run.sh [--rw <relpath>]... [--] <command...>
 #   --rw src        mount $REPO/src read-write (created if missing)
 #   --rw .cache     e.g. for the pytest JSON report
@@ -22,13 +33,6 @@ REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 STACK_HASH="$(cat "$REPO/Containerfile" "$REPO/requirements.txt" 2>/dev/null | sha256sum | cut -c1-12)"
 IMAGE="swbp-sandbox:$STACK_HASH"
 TIMEOUT="${SANDBOX_TIMEOUT:-1800}"
-
-# LLM host address — staging step 0 proves which address reaches the host LLM
-# from inside the container. On Linux: host.containers.internal. On macOS
-# (via podman machine VM), verify reachability explicitly — don't assume.
-# Port defaults to LM Studio's; override for any other OpenAI-compatible server.
-: "${SANDBOX_LLM_HOST:=host.containers.internal}"
-: "${SANDBOX_LLM_PORT:=1234}"
 
 RW_MOUNTS=()
 while [ $# -gt 0 ]; do
@@ -49,25 +53,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# D-52: the CEO's agent→model mapping (D-41) lives in the HOST global config;
-# the container's ephemeral HOME (/tmp) would otherwise lose it, and OpenCode
-# silently substitutes a remote default model — pipeline work leaving the
-# machine with nobody deciding that. Mount the mapping (and auth, if present)
-# read-only into the container HOME, rewriting localhost to the address that
-# reaches the host from inside the container. The no-silent-fallback halt
-# itself lives in orchestrate.sh, which verifies the agent ran as invoked.
-GLOBAL_MOUNTS=()
-OC_CONFIG_TMP=""
-trap '[ -n "$OC_CONFIG_TMP" ] && rm -f "$OC_CONFIG_TMP"' EXIT
-if [ -f "$HOME/.config/opencode/opencode.json" ]; then
-  OC_CONFIG_TMP="$(mktemp)"
-  sed -e "s/127\.0\.0\.1/$SANDBOX_LLM_HOST/g" -e "s/localhost/$SANDBOX_LLM_HOST/g" \
-    "$HOME/.config/opencode/opencode.json" > "$OC_CONFIG_TMP"
-  GLOBAL_MOUNTS+=(-v "$OC_CONFIG_TMP:/tmp/.config/opencode/opencode.json:ro,Z")
-fi
-[ -f "$HOME/.local/share/opencode/auth.json" ] \
-  && GLOBAL_MOUNTS+=(-v "$HOME/.local/share/opencode/auth.json:/tmp/.local/share/opencode/auth.json:ro,Z")
-
 podman info >/dev/null 2>&1 \
   || { echo "sandbox-run: podman is not running — start it (podman machine start). The sandbox is mandatory (D-30); there is no unsandboxed fallback." >&2; exit 1; }
 podman image exists "$IMAGE" || {
@@ -75,19 +60,16 @@ podman image exists "$IMAGE" || {
   podman build -t "$IMAGE" -f "$REPO/Containerfile" "$REPO" >&2
 }
 
-# HOME on a tmpfs: the agent user needs a writable home for OpenCode/pip
-# session data, and it must not be the (read-only) repo. Ephemeral by design.
+# HOME on a tmpfs: pip/pytest need a writable home for cache/session data,
+# and it must not be the (read-only) repo. Ephemeral by design.
 podman run --rm --timeout "$TIMEOUT" \
   --userns=keep-id \
   -v "$REPO:/work:ro,Z" \
   ${RW_MOUNTS[@]+"${RW_MOUNTS[@]}"} \
   --tmpfs /tmp:rw,size=256m \
-  ${GLOBAL_MOUNTS[@]+"${GLOBAL_MOUNTS[@]}"} \
   --env HOME=/tmp \
   -w /work \
-  --network slirp4netns \
-  --add-host "$SANDBOX_LLM_HOST:host-gateway" \
-  --env OPENAI_API_BASE="http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1" \
+  --network none \
   --env PYTHONPATH=/work \
   --env PYTHONDONTWRITEBYTECODE=1 \
   --memory=4g --cpus=2 \

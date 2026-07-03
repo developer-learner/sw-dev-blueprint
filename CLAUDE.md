@@ -125,28 +125,34 @@ the TPM web chat (see `docs/TPM-ROLE.md`) and enter via `scripts/refreeze.sh`.
 |------|---------------|----------|--------|
 | **CEO** (human) | conversation with the conductor | business intent, freeze approvals | — (runs no commands, D-40) |
 | **TPM** (frontier LLM) | web chat (D-38) or scoped repo agent via `scripts/tpm-agent.sh` (D-39) | PRD, ERD + `contracts.json`, the test suite | nothing directly — installed via `scripts/refreeze.sh` (human-approved diff, D-42), frozen in `scripts/.approved/` + `tests/` |
-| **Conductor** | OpenCode **Build** agent (built-in) | status reports, script invocations | docs/session notes; denied on `tests/`, `scripts/`, `src/`, control plane (D-40) |
-| **EM** (mid-tier LLM) | OpenCode subagent `em` | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) | `tasks/**` only |
-| **Coder** (local LLM) | OpenCode subagent `coder` | one file per task | that one file only (gate-enforced) |
+| **Conductor** | any chat agent the CEO chooses (Claude Code, OpenCode's Build, or a plain shell) | status reports, script invocations | docs/session notes; denied on `tests/`, `scripts/`, `src/`, control plane (D-40) |
+| **EM** (mid-tier LLM) | one HTTP completion via `scripts/llm-call.sh` (D-53) | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) — the shell writes both, not the model | `tasks/**` only |
+| **Coder** (local LLM) | one HTTP completion via `scripts/llm-call.sh` (D-53) | one file per task, sentinel-wrapped in the reply | that one file only (gate-enforced) |
 
-Which actual LLM backs each OpenCode agent is never recorded in this repo:
-the CEO maps models to agents in the global `~/.config/opencode/opencode.json`
-(D-41). The blueprint constrains model *class* only (frontier / mid / local
-non-thinking), never model identity.
+Which actual model backs EM/coder is never recorded in this repo: the CEO
+maps roles to models in `~/.config/sw-dev-blueprint/models.env` (D-53,
+succeeding D-41's `opencode.json` mapping). The blueprint constrains model
+*class* only (frontier / mid / local non-thinking), never model identity.
+No mapping for a role is a hard halt, never a silent substitution.
 
 Tests are **run by the shell** (`pytest --json-report`, parsed by
 `scripts/orchestrate.sh`) — there is no test agent. The shell orchestrator is
 the only actor with procedural authority: it validates the plan, walks the
 DAG, runs gates and acceptance, owns all state and escalation counters
 (D-26). The EM advises at exactly two shell-initiated points; it never drives.
+Neither EM nor coder has any tool or filesystem access — the orchestrator
+gathers whatever context a call needs into the prompt and writes the reply to
+disk itself (D-53); there is no agent harness in the execution loop at all,
+only in the CEO-facing conductor seat, which never touches trusted state.
 
 **The loop (all steps conductor-driven; the CEO only talks and approves):**
 TPM spec frozen (`refreeze.sh` — terminal y/N, or conductor `--diff` /
-`--approve <hash>` behind the OpenCode ask-prompt, D-42) → `scripts/orchestrate.sh`
-→ EM emits plan → validated → coder executes one task at a time → mapped
-frozen tests + gate after each → full frozen suite green = done. Failures
-climb the escalation ladder (`docs/ESCALATION.md`); spec problems come back
-as a batched bundle for the TPM web chat and re-enter via `refreeze.sh`.
+`--approve <hash>` behind the conductor's own ask-prompt, D-42) →
+`scripts/orchestrate.sh` → EM emits plan → validated → coder executes one
+task at a time → mapped frozen tests + gate after each → full frozen suite
+green = done. Failures climb the escalation ladder (`docs/ESCALATION.md`);
+spec problems come back as a batched bundle for the TPM web chat and
+re-enter via `refreeze.sh`.
 
 ---
 

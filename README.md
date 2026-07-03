@@ -18,7 +18,7 @@ sw-dev-blueprint/
 ├── CLAUDE.md                  # 🧠 Master LLM context (auto-read by OpenCode + Claude Code)
 ├── AGENTS.md                  # Symlink → CLAUDE.md (OpenCode's preferred filename)
 ├── CONVENTIONS.md             # Code style rules
-├── opencode.json              # OpenCode model + agent config (em/coder)
+├── opencode.json              # OPTIONAL — only if using OpenCode as your conductor (D-53)
 ├── .env.example               # Environment variable template
 ├── .gitignore                 # Python + OpenCode gitignore
 │
@@ -35,10 +35,11 @@ sw-dev-blueprint/
 │   └── BACKLOG.md             # Prioritized work queue
 │
 ├── .opencode/
-│   └── prompts/               # Agent role definitions (em/coder)
+│   └── prompts/               # EM/coder system prompts — read directly by llm-call.sh
 ├── scripts/
 │   ├── bootstrap.sh           # One-time project setup script
 │   ├── phase-gate.sh          # INV-2 boundary enforcement
+│   ├── llm-call.sh            # ONE bare HTTP completion per call — no harness (D-53)
 │   └── orchestrate.sh         # Code-driven build→test loop conductor
 │
 └── .github/
@@ -72,7 +73,7 @@ cd my-new-project
 ## The working loop — capability ladder (D-27)
 
 ```
-CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside OpenCode)
+CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside the conductor)
                           │  writes PRD + ERD/contracts + the test suite
                           ▼
             scripts/refreeze.sh  ← human approves the diff (THE approval gate)
@@ -80,10 +81,12 @@ CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside OpenCode)
                           ▼
             scripts/orchestrate.sh (shell owns ALL procedure)
                           │
-              EM (mid-tier, OpenCode) ──► tasks/plan.json ──► validate-plan.py gate
+              EM (one HTTP completion, no tools, D-53) ──► shell writes
+              tasks/plan.json ──► validate-plan.py gate
                           │
               per task, in DAG order:
-                Coder (local) writes ONE file ──► phase-gate task ──► mapped frozen tests
+                Coder (one HTTP completion, no tools, D-53) replies with the
+                file ──► shell writes it ──► phase-gate task ──► mapped frozen tests
                           │
               all tasks done ──► FULL frozen suite green = done
                 fail → escalation ladder (retry → EM consult → bounded revisions
@@ -122,32 +125,33 @@ run the orchestrator, and answer escalation batches by carrying
    escalation batch is waiting in `.pipeline-state/escalations/BATCH.md` —
    paste it into the TPM chat, stage the returned delta, refreeze, re-run.
 
-You never talk to `em` or `coder` directly — the orchestrator calls them at
-shell-chosen points, and everything they produce is schema-validated.
+Neither EM nor coder has any tool or filesystem access at all (D-53) — the
+orchestrator reads whatever context a call needs, sends ONE HTTP completion
+via `scripts/llm-call.sh`, and writes the reply to disk itself. There is no
+agent harness anywhere in this path.
 
 ---
 
 ## Model configuration
 
-OpenCode config lives in `~/.config/opencode/opencode.json` (global) or
-`opencode.json` at the project root.
+EM and coder are mapped to models in `~/.config/sw-dev-blueprint/models.env`
+(CEO-owned, global, never committed to any repo):
 
-The repo's `opencode.json` is deliberately **model-free**: it defines the
-agents' roles, prompts, and write lanes only. Which actual LLM backs each
-agent is the CEO's local choice — set the provider block and per-agent
-`model` overrides in your **global** `~/.config/opencode/opencode.json`
-(OpenCode merges global + project config). Load whatever you like in
-LM Studio; the blueprint never names a model.
+```bash
+SWBP_EM_MODEL=<id as served by LM Studio>
+SWBP_CODER_MODEL=<id as served by LM Studio>
+```
 
-> ⚠️ **Critical:** for LM Studio use provider key `lms` NOT `lmstudio` — the
-> name `lmstudio` collides with OpenCode's built-in catalog and loads wrong
-> model names.
+The repo never names a model. Load whatever you like in LM Studio;
+`scripts/llm-call.sh` hard-halts rather than silently substituting a model
+if a role has no mapping.
 
 > ⚠️ **Rule 1:** Do NOT use a thinking model for any agent tier.
 > Verify with Pre-Flight Step 0 that `content` is populated and
 > `reasoning_content` is empty.
 
-To escalate to a frontier model inside OpenCode: `/models` → select Claude or GPT.
+`opencode.json` at the project root is unrelated to model mapping — it only
+configures OpenCode if you happen to use it as your conductor.
 
 ---
 

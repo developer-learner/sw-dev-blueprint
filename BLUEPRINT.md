@@ -26,9 +26,9 @@ the scope its capability class can carry, and the shell owns all procedure.
 |------|---------------|----------|
 | **CEO** (human) | conversation | business intent; approvals |
 | **TPM** (frontier LLM) | **web chat** (D-38) or scoped repo agent via `tpm-agent.sh` (D-39) | PRD, ERD + `contracts.json`, the test suite |
-| **Conductor** (any capable LLM) | OpenCode **Build** agent (built-in) | no artifacts — runs the scripts, shuttles TPM I/O, reports to the CEO (D-40) |
-| **EM** (mid-tier LLM) | OpenCode subagent `em` | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) |
-| **Coder** (local LLM) | OpenCode subagent `coder` | one file per task |
+| **Conductor** (any capable LLM) | whatever chat agent the CEO chooses (Claude Code, OpenCode, a plain shell) | no artifacts — runs the scripts, shuttles TPM I/O, reports to the CEO (D-40) |
+| **EM** (mid-tier LLM) | one HTTP completion, no tools (`scripts/llm-call.sh`, D-53) | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) — shell writes both |
+| **Coder** (local LLM) | one HTTP completion, no tools (`scripts/llm-call.sh`, D-53) | one file per task, sentinel-wrapped in the reply |
 
 Tests are **run by the shell** (`scripts/orchestrate.sh` → pytest) — there is
 no test agent. The TPM's spec enters the repo only through
@@ -38,6 +38,14 @@ hash-pinned. The orchestrator validates the EM's plan mechanically
 time inside a read-only-repo sandbox, and gates every step. A feature is done
 when the FULL frozen suite is green. See `docs/TPM-ROLE.md` for the top tier's
 job description and `docs/ESCALATION.md` for how failures climb.
+
+**No agent harness sits in the execution path (D-53).** EM and coder have no
+filesystem or tool access at all — the orchestrator reads whatever context a
+call needs, sends one completion, and writes the reply to disk itself. The
+conductor is the only agent-shaped seat in the whole system, and it never
+touches trusted state (denied on `tests/`, `scripts/`, `src/`, the control
+plane); which chat tool plays that seat is a preference, not an architecture
+decision.
 
 ---
 
@@ -62,14 +70,15 @@ The full stack this system runs on. Know every object before operating it.
 | **GitHub** | The remote. Off-machine backup, host for `gh repo create --template`, and the fleet's drift-check CI (D-33). |
 | **venv** | Per-project dependency isolation. NOT a security sandbox — it stops dependency collisions, not destructive commands. |
 | **podman** | The actual sandbox. `scripts/sandbox-run.sh` mounts the repo read-only and grants each agent only its write lane (D-30). `SANDBOX=1` is mandatory for the orchestrator. |
-| **LM Studio** | The local inference server (`localhost:1234`) for the coder tier. Most common failure point — verify the correct non-thinking model is loaded (Pre-Flight Step 0). |
-| **OpenCode** | The agent harness AND the CEO's single interface (D-40). The built-in **Build** agent is the conductor: the CEO talks to it, it runs the scripts and reports back — the CEO runs no commands. `em` and `coder` are subagents (`mode: subagent`); the orchestrator still invokes them at shell-chosen points via `opencode run --agent`. Install: `brew install sst/tap/opencode`. |
-| **TPM (frontier LLM)** | Runs in a web chat the human operates, outside OpenCode. Authors the spec and the test suite; answers escalation batches. Never touches the repo — its output enters via `scripts/refreeze.sh`. |
-| **EM (mid-tier LLM)** | OpenCode agent `em`. Decomposes the frozen spec into `tasks/plan.json`; diagnoses failures on consult. Writes `tasks/` only. Advisory — the shell decides. |
-| **Coder (local LLM)** | OpenCode agent `coder`. MUST be non-thinking; the CEO picks which loaded LM Studio model backs it (global OpenCode config — the repo never names a model). Writes exactly the one file its task names. |
+| **LM Studio** | The local inference server (`localhost:1234`) for the coder tier (and, typically, the EM tier). Most common failure point — verify the correct non-thinking model is loaded (Pre-Flight Step 0). |
+| **scripts/llm-call.sh** | The ONLY way the pipeline talks to a model (D-53): one bare HTTP completion per call, no harness, no tools, no memory between calls. Reads the CEO's role→model mapping and hard-halts rather than silently substituting a model if a role is unmapped. |
+| **A conductor (any chat agent)** | The CEO's single interface (D-40) — Claude Code, OpenCode, or anything similar. Runs the scripts and reports back; the CEO runs no commands. Never in the trust-critical path: EM/coder don't go through it (D-53), so the choice of conductor is a preference, not an architecture decision. |
+| **TPM (frontier LLM)** | Runs in a web chat the human operates, outside the conductor. Authors the spec and the test suite; answers escalation batches. Never touches the repo — its output enters via `scripts/refreeze.sh`. |
+| **EM (mid-tier LLM)** | One `scripts/llm-call.sh` completion, no tools. Decomposes the frozen spec into `tasks/plan.json`; diagnoses failures on consult. The shell writes `tasks/plan.json` / `diagnosis.json` from its reply — the model never touches the filesystem. Advisory — the shell decides. |
+| **Coder (local LLM)** | One `scripts/llm-call.sh` completion, no tools. MUST be non-thinking; the CEO picks which loaded LM Studio model backs it in `~/.config/sw-dev-blueprint/models.env` — the repo never names a model. Replies with the one file its task names, sentinel-wrapped; the shell writes it to disk. |
 | **pytest / CI** | The test harness = **ground truth**, machine-readable via `.cache/test-report.json`. The suite is TPM-authored and frozen; the shell runs it. |
 | **The docs** | The memory layer for stateless LLMs (this file + CLAUDE.md + CONVENTIONS.md + docs/ + tasks/). |
-| **AGENTS.md** | Symlink to CLAUDE.md. OpenCode's preferred filename; symlink keeps content in sync with no duplication. |
+| **AGENTS.md** | Symlink to CLAUDE.md. OpenCode's preferred filename, kept for CEOs who use OpenCode as their conductor; symlink keeps content in sync with no duplication. |
 | **phase-gate.sh** | Mechanical lane + integrity enforcement — per-phase write whitelists, control-plane manifests, frozen-spec hashes. Fail-closed. |
 | **.template-version** | This project's link to the template it was born from (D-33). `scripts/check-drift.sh` compares against it; `scripts/update-template.sh` pulls upstream control-plane fixes. |
 
@@ -84,8 +93,8 @@ Read these files from the repository in this exact order:
 | 1 | `README.md` | System overview + working loop | Always — first |
 | 2 | `CLAUDE.md` | Project identity, stack, guardrails, capability ladder | Always — every session |
 | 3 | `CONVENTIONS.md` | Code style and patterns | Always — every session |
-| 4 | `opencode.json` | OpenCode agent configuration — roles, lanes, modes; model-free by design (D-41) | Setup + agent changes |
-| 5 | `.opencode/prompts/*.md` | Agent role prompts (em/coder) | Agent setup |
+| 4 | `opencode.json` | OPTIONAL — only if the CEO uses OpenCode as their conductor; not part of the EM/coder execution path (D-53) | Setup, if using OpenCode as conductor |
+| 5 | `.opencode/prompts/*.md` | EM/coder system prompts, read directly by `scripts/llm-call.sh` — model-free by design (D-41/D-53) | Agent setup |
 | 6 | `docs/PRODUCT.md` | What we're building and why | New features |
 | 7 | `docs/ARCHITECTURE.md` | Data models, API, key flows | Any code change |
 | 8 | `docs/DECISIONS.md` | Why choices were made (the ladder: D-26..D-35) | Before suggesting alternatives |
@@ -112,9 +121,10 @@ A thinking model emits its output into `reasoning_content` and leaves `content`
 empty, which breaks agent parsing (empty/invalid response → silent failure or
 JSON error).
 
-- The active coder model in OpenCode MUST be non-thinking.
+- The active coder model MUST be non-thinking.
 - Which specific model that is, is the CEO's choice — never hardcoded in
-  this blueprint or in the repo's `opencode.json`. Avoid any model with
+  this blueprint or anywhere in the repo; it lives in the CEO's own
+  `~/.config/sw-dev-blueprint/models.env` (D-53). Avoid any model with
   "thinking" or "reasoner" in the name.
 - Frontier models (Claude, GPT) are safe — they are not thinking models.
 - Verify before relying: see Pre-Flight Step 0 — confirm `content` is
@@ -269,10 +279,10 @@ python3 --version
 gh auth status
 ```
 
-**5. OpenCode installed:**
-```bash
-opencode --version
-```
+**5. Conductor available (whatever chat agent the CEO is using):**
+Not the pipeline's dependency — EM/coder never go through it (D-53). Only
+relevant if the CEO's chosen conductor needs its own check, e.g.
+`opencode --version` if using OpenCode.
 
 **6. podman available (the orchestrator refuses to run unsandboxed):**
 ```bash
@@ -291,16 +301,20 @@ CEO business intent ──► TPM (frontier LLM — web chat D-38 or scoped repo
                           ▼
             scripts/refreeze.sh  ← CEO approves the diff (THE approval gate:
                           │        terminal y/N, or conductor-driven
-                          │        --diff / --approve <hash> via the OpenCode
-                          │        ask-prompt, D-42 — CEO reads, then approves)
+                          │        --diff / --approve <hash> via the
+                          │        conductor's own ask-prompt, D-42 — CEO
+                          │        reads, then approves)
                           │  spec frozen: scripts/.approved/ + tests/, hash-pinned
                           ▼
             scripts/orchestrate.sh (shell owns ALL procedure)
                           │
-              EM (mid-tier, OpenCode) ──► tasks/plan.json ──► validate-plan.py gate
+              EM (one HTTP completion, no tools, D-53) ──► shell writes
+              tasks/plan.json ──► validate-plan.py gate
                           │
               per task, in DAG order:
-                Coder (local) writes ONE file ──► phase-gate task ──► mapped frozen tests
+                Coder (one HTTP completion, no tools, D-53) replies with the
+                file, sentinel-wrapped ──► shell writes it ──► phase-gate task
+                ──► mapped frozen tests
                           │
               all tasks done ──► FULL frozen suite green = done
                 fail → escalation ladder (retry → EM consult → bounded revisions
@@ -473,12 +487,26 @@ Children do not hand-port fixes — that is how control planes silently fork.
 
 ---
 
-## OpenCode Configuration
+## Model Configuration (D-53)
 
-See `opencode.json` at the project root for the working config (agents `em`
-and `coder`).
+EM and coder are mapped to models in `~/.config/sw-dev-blueprint/models.env`
+(CEO-owned, never committed to any repo — same spirit as D-41, successor to
+the `opencode.json` agent mapping):
 
-**Naming gotcha:** use provider key `lms`, NOT `lmstudio` — the latter collides with OpenCode's built-in catalog and silently loads cloud model names instead of your local model. Known issue as of OpenCode 1.15.x.
+```bash
+SWBP_EM_MODEL=<id as served by the local endpoint>
+SWBP_CODER_MODEL=<id as served by the local endpoint>
+```
+
+`scripts/llm-call.sh` reads this file (environment variables of the same
+name override it) and hard-halts if a role has no mapping — never a silent
+substitution. There is no model-naming collision to work around: the pipeline
+talks to LM Studio's `/v1/chat/completions` directly, with no intermediate
+provider catalog.
+
+`opencode.json` at the project root is unrelated to this — it only configures
+OpenCode if the CEO happens to use it as their conductor (see Component
+Inventory above).
 
 ---
 

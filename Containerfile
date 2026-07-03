@@ -1,13 +1,13 @@
 FROM python:3.12-slim
 
-# System dependencies
+# System dependencies. D-53: no OpenCode here — nothing in this container
+# calls an LLM anymore (that happens on the host via scripts/llm-call.sh
+# before the container ever starts); this image runs pytest/smoke_check
+# against untrusted generated code only, hence --network none in
+# sandbox-run.sh and no curl/agent-runtime install here either.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl ca-certificates tar \
+    git ca-certificates tar \
     && rm -rf /var/lib/apt/lists/*
-
-# OpenCode (pinned to host version) — make globally available for `agent` user
-RUN curl -fsSL https://opencode.ai/install | bash -s -- --version 1.17.12 \
-    && cp /root/.opencode/bin/opencode /usr/local/bin/opencode
 
 # Pytest toolchain + app deps (always installed)
 RUN pip install --no-cache-dir \

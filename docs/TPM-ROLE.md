@@ -16,7 +16,7 @@ you, everything is driven by `scripts/orchestrate.sh` at shell-chosen points.
 
 You run in one of two modes; which one is stated when your session starts.
 In both, a human-approved diff (`scripts/refreeze.sh` — interactive y/N, or
-the conductor's `--diff` / `--approve <hash>` flow gated by the OpenCode
+the conductor's `--diff` / `--approve <hash>` flow gated by its own
 ask-prompt, D-42) is the only door your work enters through, and once in, it is version-stamped
 and hash-pinned (D-31). This is not a limitation to work around; it is the
 design. Your authority is exactly your artifacts.

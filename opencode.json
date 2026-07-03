@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "_comment": "D-53: this file configures OpenCode ONLY if the CEO chooses it as their conductor chat interface — it is no longer part of the pipeline itself. em/coder are called directly over HTTP by orchestrate.sh (scripts/llm-call.sh), so there is nothing left here for them to configure; any conductor (this, Claude Code, a plain shell) works identically since none of them sit in the trust-critical path.",
   "permission": {
     "edit": {
       "tests/**": "deny",
@@ -40,51 +41,6 @@
     "build": {
       "tools": {
         "task": false
-      }
-    },
-    "em": {
-      "mode": "primary",
-      "description": "Engineering manager: decomposes the frozen spec into tasks/plan.json and answers shell-initiated consults with tasks/diagnosis.json. Writes tasks/** only. Never spawns agents \u2014 the shell invokes the coder from the plan (D-26/D-43).",
-      "prompt": "{file:./.opencode/prompts/em.md}",
-      "tools": {
-        "task": false
-      },
-      "permission": {
-        "edit": {
-          "src/**": "deny",
-          "tests/**": "deny",
-          "docs/**": "deny",
-          "scripts/**": "deny",
-          "tasks/**": "allow",
-          "**": "deny"
-        }
-      }
-    },
-    "coder": {
-      "mode": "primary",
-      "description": "Implements exactly the one source file its task brief names, then runs the brief's self-verify step. Never touches tests, tasks, docs, or scripts, and never spawns agents (D-43).",
-      "prompt": "{file:./.opencode/prompts/coder.md}",
-      "tools": {
-        "task": false
-      },
-      "permission": {
-        "edit": {
-          "tests/**": "deny",
-          "tasks/**": "deny",
-          "docs/**": "deny",
-          "scripts/**": "deny",
-          ".githooks/**": "deny",
-          ".opencode/**": "deny",
-          "opencode.json": "deny",
-          ".gate-paths": "deny",
-          ".template-version": "deny",
-          "conftest.py": "deny",
-          "pytest.ini": "deny",
-          "pyproject.toml": "deny",
-          "setup.cfg": "deny",
-          "tox.ini": "deny",
-          "**": "allow"
-        }
       }
     }
   }
