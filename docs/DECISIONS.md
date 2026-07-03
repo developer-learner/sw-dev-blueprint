@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-50 — 2026-07-02 — Stack drift killed mechanically: content-hashed sandbox image, podman preflight, honest collection errors
+
+**Decision:** Three fixes for the sparkv2-Issue-9 failure family (TPM picks a stack at spec time; the sandbox doesn't have it; the gate reports a misleading "pytest collected no tests"). (1) `sandbox-run.sh` tags the image with a hash of `Containerfile`+`requirements.txt` — any stack change produces a new tag and an automatic rebuild; a stale image is now structurally impossible, and manual `podman image rm` ceremony is retired. (2) `sandbox-run.sh` checks podman is actually running before anything else and says exactly what to do if not — previously it failed downstream with unrelated-looking errors. (3) `refreeze.sh` captures collection stderr instead of discarding it (`2>/dev/null` was hiding `ModuleNotFoundError` since the beginning), prints it on failure, and names the requirements.txt fix when the cause is an import error. Plus a conductor guardrail in CLAUDE.md: check staged test imports against `requirements.txt` before every freeze.
+
+**Found by:** the second live run — the TPM chose FastAPI+httpx while the sandbox carried the previous project's stack, re-creating sparkv2's Issue 9 exactly. The first occurrence was hand-fixed in the instance and logged but never ported to the template as machinery; recurrence was guaranteed.
+
+**Reason:** An error message that misdescribes the failure ("no tests" when the truth is "can't import") costs a debugging session per occurrence. Discarded stderr is the root sin. And rebuild-on-change must be mechanical because the actor who changes the stack (TPM, via spec) is not the actor who maintains the image (operator) — a handoff that relied on someone remembering.
+
+**Do not suggest:** Pinning the stack in the template to avoid drift (the TPM must be free to choose per project, D-41 spirit); pruning old image tags aggressively (cheap disk, and old tags let an interrupted migration fall back).
+
+---
+
 ## D-49 — 2026-07-02 — tpm-pack.sh defaults to stdout; conductor must relay the bundle verbatim (first live-run bug)
 
 **Decision:** `tpm-pack.sh` now writes the bundle to stdout by default; clipboard copy is opt-in via `--clipboard` (`--stdout` kept as a no-op for compatibility). CLAUDE.md gains a conductor guardrail: when the CEO asks for the TPM briefing, run the script and reproduce its entire stdout verbatim — no summarizing, no pointing at repo files (the bundle is assembled, not hand-collectable), no "it's in the clipboard"; TPM replies pasted back go to a temp file unmodified, then `tpm-unpack.sh <file>`.
