@@ -21,6 +21,20 @@
 
 ## Decisions
 
+## D-51 — 2026-07-02 — Initial freeze collects node-ids statically: the v1 suite cannot import src/ that doesn't exist yet
+
+**Decision:** `refreeze.sh` falls back to static AST-based node-id derivation (module-level `test*` functions and `Test*` class methods in `tests/**/test_*.py` / `*_test.py`) when dynamic collection yields nothing AND the failure is `No module named 'src…'`. Parametrized ids are not expanded by the fallback; the first refreeze after `src/` exists re-collects dynamically. Additionally, collection diagnostics now capture and grep BOTH streams — pytest reports collection errors on stdout, which D-50's stderr-only capture missed, leaving the exact misleading "no tests" message D-50 claimed to have retired.
+
+**Found by:** the first supervised POC run (wordcount instance): the very first v1 freeze in template history failed at collection. This is structural, not incidental — INV-1 requires the TPM suite to exist before any implementation, so at v1 every test module's `import src.…` must fail. The initial-freeze path could never have worked; every prior instance was either migrated mid-history or hand-patched.
+
+**Alternatives considered:** stub `src/` files at freeze time (violates lanes — no actor may write src/ outside a coder task); deferring node-id collection until after the first build (the EM's plan gate needs the ids before any coder runs); having the TPM hand-author the node-id list (unverifiable, drifts from the actual suite).
+
+**Reason:** Static derivation is exact for the accident class the template constrains anyway (frontier-TPM-authored plain pytest functions), and self-heals to dynamic collection at the next freeze. Known limit: a v1 suite relying on parametrize-expanded ids maps them unexpanded until the v2 freeze.
+
+**Do not suggest:** Making the AST fallback the primary collector (dynamic collection is ground truth whenever imports resolve); relaxing the "no nodeids = fail" rule — a freeze without a suite still cannot gate anything.
+
+---
+
 ## D-50 — 2026-07-02 — Stack drift killed mechanically: content-hashed sandbox image, podman preflight, honest collection errors
 
 **Decision:** Three fixes for the sparkv2-Issue-9 failure family (TPM picks a stack at spec time; the sandbox doesn't have it; the gate reports a misleading "pytest collected no tests"). (1) `sandbox-run.sh` tags the image with a hash of `Containerfile`+`requirements.txt` — any stack change produces a new tag and an automatic rebuild; a stale image is now structurally impossible, and manual `podman image rm` ceremony is retired. (2) `sandbox-run.sh` checks podman is actually running before anything else and says exactly what to do if not — previously it failed downstream with unrelated-looking errors. (3) `refreeze.sh` captures collection stderr instead of discarding it (`2>/dev/null` was hiding `ModuleNotFoundError` since the beginning), prints it on failure, and names the requirements.txt fix when the cause is an import error. Plus a conductor guardrail in CLAUDE.md: check staged test imports against `requirements.txt` before every freeze.
