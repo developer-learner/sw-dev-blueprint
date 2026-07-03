@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-52 — 2026-07-02 — em/coder back to primary mode; model mapping mounted into the sandbox; no silent agent/model substitution
+
+**Decision:** Three coupled fixes from the first orchestrate run. (1) `em`/`coder` return to `mode: "primary"` in `opencode.json` — `opencode run --agent <name>` refuses subagent-mode agents ("not a primary agent"), so D-40's flip broke the orchestrator's only invocation path. Impersonation protection does not regress: the sandbox lane mounts (D-30) physically bound what each agent can write regardless of mode, and both agents keep `task: false` (D-43/D-48). (2) `sandbox-run.sh` mounts the host's global `~/.config/opencode/opencode.json` (the D-41 agent→model mapping) read-only into the container HOME, rewriting `localhost`/`127.0.0.1` to `$SANDBOX_LLM_HOST` so a mapping that points at the host LLM still resolves from inside the container; auth.json rides along if present. (3) `orchestrate.sh` hard-halts if the run log shows OpenCode substituted the default agent — before this, it silently proceeded as `build` on a default REMOTE free-tier model.
+
+**Found by:** the first supervised POC run (wordcount): the plan phase logged `agent "em" is a subagent, not a primary agent. Falling back to default agent` and ran as `build · mimo-v2.5-free`. Nothing was running on the CEO's mapped local models; the CEO noticed and aborted.
+
+**Reason:** The silent fallback is the worst half: pipeline work left the machine on an unchosen remote model with no actor deciding that. Halting is the only honest behavior when the invoked agent is not the one that runs.
+
+**Do not suggest:** Re-flipping em/coder to subagent mode to hide them from the CEO's TUI (cosmetic benefit, breaks the pipeline); baking a model ID into the repo to avoid the mount (violates D-41); downgrading the substitution halt to a warning.
+
+---
+
 ## D-51 — 2026-07-02 — Initial freeze collects node-ids statically: the v1 suite cannot import src/ that doesn't exist yet
 
 **Decision:** `refreeze.sh` falls back to static AST-based node-id derivation (module-level `test*` functions and `Test*` class methods in `tests/**/test_*.py` / `*_test.py`) when dynamic collection yields nothing AND the failure is `No module named 'src…'`. Parametrized ids are not expanded by the fallback; the first refreeze after `src/` exists re-collects dynamically. Additionally, collection diagnostics now capture and grep BOTH streams — pytest reports collection errors on stdout, which D-50's stderr-only capture missed, leaving the exact misleading "no tests" message D-50 claimed to have retired.

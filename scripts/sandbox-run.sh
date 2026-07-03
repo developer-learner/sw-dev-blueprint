@@ -49,6 +49,25 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# D-52: the CEO's agent→model mapping (D-41) lives in the HOST global config;
+# the container's ephemeral HOME (/tmp) would otherwise lose it, and OpenCode
+# silently substitutes a remote default model — pipeline work leaving the
+# machine with nobody deciding that. Mount the mapping (and auth, if present)
+# read-only into the container HOME, rewriting localhost to the address that
+# reaches the host from inside the container. The no-silent-fallback halt
+# itself lives in orchestrate.sh, which verifies the agent ran as invoked.
+GLOBAL_MOUNTS=()
+OC_CONFIG_TMP=""
+trap '[ -n "$OC_CONFIG_TMP" ] && rm -f "$OC_CONFIG_TMP"' EXIT
+if [ -f "$HOME/.config/opencode/opencode.json" ]; then
+  OC_CONFIG_TMP="$(mktemp)"
+  sed -e "s/127\.0\.0\.1/$SANDBOX_LLM_HOST/g" -e "s/localhost/$SANDBOX_LLM_HOST/g" \
+    "$HOME/.config/opencode/opencode.json" > "$OC_CONFIG_TMP"
+  GLOBAL_MOUNTS+=(-v "$OC_CONFIG_TMP:/tmp/.config/opencode/opencode.json:ro,Z")
+fi
+[ -f "$HOME/.local/share/opencode/auth.json" ] \
+  && GLOBAL_MOUNTS+=(-v "$HOME/.local/share/opencode/auth.json:/tmp/.local/share/opencode/auth.json:ro,Z")
+
 podman info >/dev/null 2>&1 \
   || { echo "sandbox-run: podman is not running — start it (podman machine start). The sandbox is mandatory (D-30); there is no unsandboxed fallback." >&2; exit 1; }
 podman image exists "$IMAGE" || {
@@ -63,6 +82,7 @@ podman run --rm --timeout "$TIMEOUT" \
   -v "$REPO:/work:ro,Z" \
   ${RW_MOUNTS[@]+"${RW_MOUNTS[@]}"} \
   --tmpfs /tmp:rw,size=256m \
+  ${GLOBAL_MOUNTS[@]+"${GLOBAL_MOUNTS[@]}"} \
   --env HOME=/tmp \
   -w /work \
   --network slirp4netns \

@@ -92,12 +92,22 @@ sleep 2
 # Sandbox lanes (D-30): repo mounted read-only, ONLY the phase's lane mounted
 # rw — violations are physically impossible in-loop; phase-gate remains the
 # backstop for the interactive/human path.
+# D-52: OpenCode substitutes its default agent (and a default, possibly
+# REMOTE model) when the named agent can't run as invoked. Work leaving the
+# machine on an unintended model is never acceptable silently — hard halt.
+assert_agent_ran() {  # $1 agent  $2 log
+  if grep -q "not a primary agent\|Falling back to default agent" "$2" 2>/dev/null; then
+    die "OpenCode substituted the default agent for '$1' (see $2) — agent mode/model mapping misconfigured; refusing to proceed on an unintended agent or model (D-52)"
+  fi
+}
+
 run_em() {  # $1 prompt
   local phase_start; phase_start=$(git rev-parse HEAD)
   write_state phase em
   scripts/sandbox-run.sh --rw tasks -- timeout "$AGENT_TIMEOUT" opencode run \
     --attach "http://${SANDBOX_LLM_HOST}:$PORT" --agent em "$1" \
     2>&1 | tee "$LOG_DIR/em-last.log" || true
+  assert_agent_ran em "$LOG_DIR/em-last.log"
   bash scripts/phase-gate.sh em "$phase_start"
   write_state phase ""
 }
@@ -109,6 +119,7 @@ run_coder() {  # $1 task-id  $2 file  $3 brief  $4 attempt
   scripts/sandbox-run.sh --rw "${build_dir%/}" -- timeout "$AGENT_TIMEOUT" opencode run \
     --attach "http://${SANDBOX_LLM_HOST}:$PORT" --agent coder "$3" \
     2>&1 | tee "$LOG_DIR/$1-a$4.log" || true
+  assert_agent_ran coder "$LOG_DIR/$1-a$4.log"
   bash scripts/phase-gate.sh task "$phase_start" "$2"   # violation = hard halt (D-15/D-22)
   write_state phase ""
   write_state task_target ""
