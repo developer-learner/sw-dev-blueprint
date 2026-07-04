@@ -91,6 +91,12 @@ body = {
     ],
     "temperature": 0.2,
     "stream": False,
+    # qwen3.x chat templates require this (else HTTP 400 "No user query found
+    # in messages"); LM Studio forwards it to the template and models that
+    # don't reference it ignore it. A non-LM-Studio backend that rejects
+    # unknown body fields would need this dropped in the handler below —
+    # harden then, not now (no second backend to exercise it against yet).
+    "enable_thinking": False,
 }
 if schema_path:
     body["response_format"] = {
