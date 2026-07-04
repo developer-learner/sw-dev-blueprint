@@ -216,21 +216,17 @@ for f in $CHANGED_TEST_FILES; do
   cp "$IN/$f" "$f"
 done
 
-# --- Re-collect the frozen test node-ids (inside the sandbox, read-only) ---
+# --- Re-collect the frozen test node-ids ---
+# D-51 revised: AST extraction is the PRIMARY method, not a fallback.
+# INV-1 means tests are written before the code they import — pytest
+# --collect-only can fail partially (symbols not yet created) or fully
+# (modules not yet created), producing incomplete node-id sets that corrupt
+# the manifest. AST extraction finds every def test_* without importing
+# anything. pytest is tried second as a SUPPLEMENT: if it succeeds and
+# finds MORE node-ids (parametrized tests expand at collect time), its set
+# replaces the AST set. If it fails or finds fewer, AST wins.
 echo "collecting test node-ids..."
-COLLECT_OUT=".pipeline-state/refreeze-collect.out"
-COLLECT_ERR=".pipeline-state/refreeze-collect.err"
-scripts/sandbox-run.sh -- pytest --collect-only -q -p no:cacheprovider \
-  >"$COLLECT_OUT" 2>"$COLLECT_ERR" || true
-NODEIDS=$(grep '::' "$COLLECT_OUT" || true)
-if [ -z "$NODEIDS" ] && grep -q "No module named 'src" "$COLLECT_OUT" "$COLLECT_ERR" 2>/dev/null; then
-  # D-51: at the initial freeze the suite imports src/* that by design does
-  # not exist yet (INV-1: tests before code) — dynamic collection is
-  # structurally impossible. Derive node-ids statically from the AST.
-  # Parametrized ids are not expanded here; the first refreeze after src/
-  # exists re-collects dynamically and replaces them.
-  echo "  src/ not built yet — deriving node-ids statically from the AST (D-51)"
-  NODEIDS=$(python3 - <<'PYEOF'
+AST_NODEIDS=$(python3 - <<'PYEOF'
 import ast
 from pathlib import Path
 out = []
@@ -248,19 +244,29 @@ for f in sorted(Path("tests").rglob("*.py")):
                     out.append(f"{f}::{node.name}::{m.name}")
 print("\n".join(out))
 PYEOF
-  )
+)
+AST_COUNT=$(printf '%s\n' "$AST_NODEIDS" | grep -c '::' || true)
+if [ "$AST_COUNT" -eq 0 ]; then
+  die "AST found no test functions in tests/ — a frozen spec without a suite cannot gate anything"
 fi
-if [ -z "$NODEIDS" ]; then
-  # pytest reports collection errors on STDOUT; stderr carries podman/build
-  # noise — show and grep both (D-51 closes D-50's wrong-stream diagnostic).
-  echo "--- collection stdout (last 15 lines) ---" >&2
-  tail -15 "$COLLECT_OUT" >&2 || true
-  echo "--- collection stderr (last 15 lines) ---" >&2
-  tail -15 "$COLLECT_ERR" >&2 || true
-  if grep -q "ModuleNotFoundError\|ImportError" "$COLLECT_OUT" "$COLLECT_ERR" 2>/dev/null; then
-    die "pytest could not IMPORT the suite (see output above) — the TPM's stack is missing from the sandbox. Fix: add the packages to requirements.txt; the image rebuilds automatically on the next run (D-50)."
-  fi
-  die "pytest collected no tests — a frozen spec without a suite cannot gate anything (see output above)"
+echo "  AST: $AST_COUNT node-ids"
+
+COLLECT_OUT=".pipeline-state/refreeze-collect.out"
+COLLECT_ERR=".pipeline-state/refreeze-collect.err"
+scripts/sandbox-run.sh -- pytest --collect-only -q -p no:cacheprovider \
+  >"$COLLECT_OUT" 2>"$COLLECT_ERR" || true
+PYTEST_NODEIDS=$(grep '::' "$COLLECT_OUT" || true)
+PYTEST_COUNT=$(printf '%s\n' "$PYTEST_NODEIDS" | grep -c '::' || true)
+
+if [ "$PYTEST_COUNT" -gt "$AST_COUNT" ]; then
+  echo "  pytest: $PYTEST_COUNT node-ids (>AST, using pytest — parametrized expansion)"
+  NODEIDS="$PYTEST_NODEIDS"
+elif [ "$PYTEST_COUNT" -eq "$AST_COUNT" ]; then
+  echo "  pytest: $PYTEST_COUNT node-ids (matches AST, using pytest)"
+  NODEIDS="$PYTEST_NODEIDS"
+else
+  echo "  pytest: $PYTEST_COUNT node-ids (<AST — import errors likely, using AST)"
+  NODEIDS="$AST_NODEIDS"
 fi
 rm -f "$COLLECT_OUT" "$COLLECT_ERR"
 printf '%s\n' "$NODEIDS" > "$APPROVED/test-nodeids"
