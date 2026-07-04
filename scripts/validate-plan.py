@@ -39,6 +39,7 @@ VERSION = APPROVED / "VERSION"
 
 TASK_REQUIRED = {"id", "file", "depends_on", "brief", "contracts", "tests"}
 TASK_ALLOWED = TASK_REQUIRED
+MAX_BRIEF_CHARS = 2000
 VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
 
 
@@ -163,6 +164,11 @@ def validate():
         files.append(f)
         if not isinstance(t["brief"], str) or not t["brief"].strip():
             errs.append(f"{where}: brief must be a non-empty string")
+        elif len(t["brief"]) > MAX_BRIEF_CHARS:
+            errs.append(
+                f"{where}: brief is {len(t['brief'])} chars (max {MAX_BRIEF_CHARS}) "
+                f"— split the task or tighten the brief (Rule 8)"
+            )
         for key in ("depends_on", "contracts", "tests"):
             if not isinstance(t[key], list) or not all(isinstance(x, str) for x in t[key]):
                 errs.append(f"{where}: {key} must be an array of strings")

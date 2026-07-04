@@ -220,6 +220,24 @@ def test_smoke_check_valid_command_passes(repo):
     assert "not a valid shell command" not in r.stderr
 
 
+def test_brief_over_max_chars_rejected(repo):
+    """A brief exceeding MAX_BRIEF_CHARS is rejected."""
+    plan = good_plan()
+    plan["tasks"][0]["brief"] = "x" * 2001
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "2001 chars" in r.stderr
+    assert "Rule 8" in r.stderr
+
+
+def test_brief_at_max_chars_passes(repo):
+    """A brief exactly at MAX_BRIEF_CHARS passes."""
+    plan = good_plan()
+    plan["tasks"][0]["brief"] = "x" * 2000
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
 # --- check-test-surface.py (INV-4) ------------------------------------------
 
 def test_clean_surface_passes(tmp_path):
