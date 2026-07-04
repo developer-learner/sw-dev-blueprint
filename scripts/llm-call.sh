@@ -102,15 +102,20 @@ if schema_path:
 try:
     resp = call(body)
 except urllib.error.HTTPError as e:
+    err_body = e.read()[:500].decode(errors='replace')
     if schema_path:
         print(f"llm-call: schema-constrained request rejected by server "
-              f"({e.code}); retrying unconstrained — downstream gate still "
-              f"validates", file=sys.stderr)
+              f"({e.code}: {err_body}); retrying unconstrained — downstream "
+              f"gate still validates", file=sys.stderr)
         body.pop("response_format", None)
-        resp = call(body)
+        try:
+            resp = call(body)
+        except urllib.error.HTTPError as e2:
+            sys.exit(f"llm-call FAIL: unconstrained retry also rejected — "
+                     f"HTTP {e2.code} from {url}: "
+                     f"{e2.read()[:500].decode(errors='replace')}")
     else:
-        sys.exit(f"llm-call FAIL: HTTP {e.code} from {url}: "
-                 f"{e.read()[:500].decode(errors='replace')}")
+        sys.exit(f"llm-call FAIL: HTTP {e.code} from {url}: {err_body}")
 except urllib.error.URLError as e:
     sys.exit(f"llm-call FAIL: cannot reach {url} ({e.reason}) — is the local "
              f"LLM server running? Halting, not proceeding (Hard Rule 4).")
