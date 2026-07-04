@@ -70,7 +70,7 @@ Testing:      pytest
 
 - Always use type hints on function signatures
 - Prefer functions over classes unless persistent state is needed
-- Use `loguru` for logging — never `print()`
+- Use `logging` from the standard library — never `print()`
 - One responsibility per function — if it needs a comment explaining what it does, split it
 - Tests live in `tests/` mirroring `src/` structure (e.g. `src/services/user.py` → `tests/services/test_user.py`)
 - Tests are TPM-authored and land via `scripts/refreeze.sh` BEFORE the code they gate — never written after the fact to match an implementation
