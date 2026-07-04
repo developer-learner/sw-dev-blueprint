@@ -20,12 +20,14 @@ Modes:
   validate-plan.py --topo                   validate; print task ids in topological order
   validate-plan.py --task ID --field F      print field F of task ID
                                             (F: file|brief|tests|contracts|smoke_check|fingerprint)
+                                            smoke_check reads from contracts.json, not the plan
   validate-plan.py --affected DELTA.json    print ids of tasks invalidated by a re-freeze
                                             delta, including transitive dependents
   validate-plan.py --diagnosis FILE         validate an EM diagnosis; print its verdict
 """
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -36,7 +38,7 @@ NODEIDS = APPROVED / "test-nodeids"
 VERSION = APPROVED / "VERSION"
 
 TASK_REQUIRED = {"id", "file", "depends_on", "brief", "contracts", "tests"}
-TASK_ALLOWED = TASK_REQUIRED | {"smoke_check"}
+TASK_ALLOWED = TASK_REQUIRED
 VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
 
 
@@ -164,15 +166,13 @@ def validate():
         for key in ("depends_on", "contracts", "tests"):
             if not isinstance(t[key], list) or not all(isinstance(x, str) for x in t[key]):
                 errs.append(f"{where}: {key} must be an array of strings")
-        if "smoke_check" in t and (
-            not isinstance(t["smoke_check"], str) or not t["smoke_check"].strip()
-        ):
-            errs.append(f"{where}: smoke_check, when present, must be a non-empty string")
-        if isinstance(t.get("tests"), list) and not t["tests"] and not t.get("smoke_check"):
-            errs.append(
-                f"{where}: no mapped tests and no smoke_check — every task needs "
-                "an acceptance signal, even a non-oracular one"
-            )
+        if isinstance(t.get("tests"), list) and not t["tests"]:
+            smoke_checks = contracts.get("smoke_checks", {})
+            if f not in smoke_checks:
+                errs.append(
+                    f"{where}: no mapped tests and no smoke_check in contracts for "
+                    f"{f!r} — every task needs an acceptance signal"
+                )
 
     if errs:
         fail(errs)
@@ -199,6 +199,38 @@ def validate():
         errs.append(f"ERD inventory files with no task: {missing_tasks}")
     if extra_files:
         errs.append(f"tasks target files not in the ERD inventory: {extra_files}")
+
+    # smoke_check executability — every value in contracts.smoke_checks must be
+    # a real shell command, not prose. bash -n only checks syntax (prose is
+    # syntactically valid), so we also verify the first token resolves to an
+    # executable via `command -v`.
+    for sc_file, sc_cmd in contracts.get("smoke_checks", {}).items():
+        if sc_file not in inventory:
+            errs.append(
+                f"smoke_checks key '{sc_file}' is not in contracts.files"
+            )
+        result = subprocess.run(
+            ["bash", "-n", "-c", sc_cmd],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            errs.append(
+                f"smoke_checks['{sc_file}'] is not valid shell syntax: "
+                f"{sc_cmd!r} — bash -n says: {result.stderr.strip()}"
+            )
+        else:
+            first_token = sc_cmd.split()[0] if sc_cmd.strip() else ""
+            if first_token:
+                cv = subprocess.run(
+                    ["bash", "-c", f"command -v {first_token}"],
+                    capture_output=True, text=True
+                )
+                if cv.returncode != 0:
+                    errs.append(
+                        f"smoke_checks['{sc_file}'] is not a valid shell command: "
+                        f"first token '{first_token}' is not an executable "
+                        f"(command -v fails). Value: {sc_cmd!r}"
+                    )
 
     # contract references exist
     known = contract_ids(contracts)
@@ -228,6 +260,37 @@ def validate():
     order = toposort(tasks)
     if order is None:
         fail(["dependency cycle detected — the plan must be a DAG"])
+
+    # DAG-brief consistency: a brief must not reference a file created by a
+    # downstream task. If T3 depends on T4's output, T4 must be in T3's
+    # depends_on — otherwise the brief has a forward dependency the DAG can't
+    # satisfy. This is mechanically checkable and prevents the class of error
+    # where the EM writes a brief that assumes a file exists but schedules its
+    # creation after the task that needs it.
+    task_by_file = {t["file"]: t["id"] for t in tasks}
+    deps_of = {t["id"]: set(t["depends_on"]) for t in tasks}
+    def ancestors(tid, cache={}):
+        if tid in cache:
+            return cache[tid]
+        result = set(deps_of[tid])
+        for d in list(result):
+            result |= ancestors(d, cache)
+        cache[tid] = result
+        return result
+    for t in tasks:
+        for other_file, other_id in task_by_file.items():
+            if other_id == t["id"]:
+                continue
+            if other_file in t["brief"] and other_id not in ancestors(t["id"]):
+                errs.append(
+                    f"task {t['id']} brief references '{other_file}' which is "
+                    f"created by {other_id} — but {other_id} is not an ancestor "
+                    f"of {t['id']} in the DAG. Either add it to depends_on or "
+                    f"rewrite the brief to not assume that file exists."
+                )
+    if errs:
+        fail(errs)
+
     return plan, order
 
 
@@ -299,7 +362,8 @@ def main(argv):
         elif field in ("file", "brief"):
             print(task[field])
         elif field == "smoke_check":
-            print(task.get("smoke_check", ""))
+            c = load_json(CONTRACTS, "frozen contracts")
+            print(c.get("smoke_checks", {}).get(task["file"], ""))
         else:
             fail([f"unknown field: {field}"])
         return

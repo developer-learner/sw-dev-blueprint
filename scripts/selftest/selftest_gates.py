@@ -131,7 +131,10 @@ def test_stale_erd_version_fails(repo):
 def test_unmapped_frozen_nodeid_fails(repo):
     plan = good_plan()
     plan["tasks"][1]["tests"] = []
-    plan["tasks"][1]["smoke_check"] = "python -c 'import src.b'"
+    # smoke_check now lives in contracts, not in the plan
+    contracts = CONTRACTS.copy()
+    contracts["smoke_checks"] = {"src/b.py": "python -c 'import src.b'"}
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(json.dumps(contracts))
     r = run_validate(repo, plan)
     assert r.returncode == 1
     assert "mapped to no task" in r.stderr
@@ -177,6 +180,44 @@ def test_gate_paths_overrides_build_lane(repo):
     plan["tasks"][1]["file"] = "app/b.py"
     r = run_validate(repo, plan)
     assert r.returncode == 0, r.stderr
+
+
+def test_dag_brief_forward_dependency_fails(repo):
+    """A brief that references a file created by a downstream task is rejected."""
+    plan = good_plan()
+    # T1 brief references src/b.py, which T2 creates — but T2 is not an ancestor of T1
+    plan["tasks"][0]["brief"] = "implement a, load config from src/b.py"
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "src/b.py" in r.stderr
+    assert "not an ancestor" in r.stderr
+
+
+def test_smoke_check_prose_rejected(repo):
+    """A contracts.smoke_checks value that is prose (not a shell command) is rejected."""
+    contracts = CONTRACTS.copy()
+    contracts["smoke_checks"] = {"src/b.py": "Verify that src/b.py contains a handler function"}
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(json.dumps(contracts))
+    # remove the node-id for T2 so it doesn't fail on "unmapped" before reaching smoke check
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text("tests/test_a.py::test_one\n")
+    plan = good_plan()
+    plan["tasks"][1]["tests"] = []
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "not a valid shell command" in r.stderr
+
+
+def test_smoke_check_valid_command_passes(repo):
+    """A valid shell command in contracts.smoke_checks passes the gate."""
+    contracts = CONTRACTS.copy()
+    contracts["smoke_checks"] = {"src/b.py": "grep -q 'handler' src/b.py"}
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(json.dumps(contracts))
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text("tests/test_a.py::test_one\n")
+    plan = good_plan()
+    plan["tasks"][1]["tests"] = []
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "not a valid shell command" not in r.stderr
 
 
 # --- check-test-surface.py (INV-4) ------------------------------------------

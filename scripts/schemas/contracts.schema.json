@@ -60,6 +60,11 @@
         }
       },
       "description": "Locked error responses."
+    },
+    "smoke_checks": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "TPM-authored shell commands keyed by file path (from the files array). Used for files with no covering frozen test — the orchestrator runs them in the sandbox after the coder writes the file. An oracle: authored by the TPM (frontier), installed via refreeze.sh, never by the EM. Each value must be a valid shell command, not prose."
     }
   }
 }

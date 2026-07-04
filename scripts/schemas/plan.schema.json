@@ -51,11 +51,7 @@
           "tests": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Frozen TPM test node-ids expected to pass once this task and its dependencies are done. This is the oracle PROJECTION (D-28): the EM schedules the TPM's tests onto tasks; it never authors acceptance. Across the whole plan, every frozen node-id must appear exactly once."
-          },
-          "smoke_check": {
-            "type": "string",
-            "description": "OPTIONAL shell command for tasks with no covering frozen test (internal plumbing). Explicitly non-oracular: a passing smoke_check proves the file loads/runs, never that the feature is correct."
+            "description": "Frozen TPM test node-ids expected to pass once this task and its dependencies are done. This is the oracle PROJECTION (D-28): the EM schedules the TPM's tests onto tasks; it never authors acceptance. Across the whole plan, every frozen node-id must appear exactly once. Tasks with no covering test must have a smoke_check in contracts.json (TPM-authored)."
           }
         }
       }

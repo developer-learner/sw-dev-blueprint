@@ -242,7 +242,7 @@ ensure_plan() {
     write_state plan_revisions $((revs + 1))
     echo "=== EM: emit/revise plan (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
     em_call tasks/plan.json scripts/schemas/plan.schema.json \
-      "Decompose the frozen ERD into atomic ONE-FILE tasks and reply with ONLY the plan as JSON matching the schema you were given — no prose, no markdown fence. Requirements: exactly one task per file in contracts.json's files array; every test node-id in test-nodeids mapped to exactly one task (the task after which it should pass, given its depends_on); every task's contracts list uses ids that exist in contracts.json; every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance) — the coder sees only the brief; tasks with no covering test need a smoke_check. Set erd_version to $FROZEN_V. NO status fields.${verrs:+ The previous plan failed validation with these errors — fix all of them: $verrs}" \
+      "Decompose the frozen ERD into atomic ONE-FILE tasks and reply with ONLY the plan as JSON matching the schema you were given — no prose, no markdown fence. Requirements: exactly one task per file in contracts.json's files array; every test node-id in test-nodeids mapped to exactly one task (the task after which it should pass, given its depends_on); every task's contracts list uses ids that exist in contracts.json; every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance) — the coder sees only the brief. Do NOT include a smoke_check field — smoke checks are TPM-authored and live in contracts.json. Set erd_version to $FROZEN_V. NO status fields.${verrs:+ The previous plan failed validation with these errors — fix all of them: $verrs}" \
       "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
   done
 }
@@ -428,7 +428,7 @@ while :; do
   id="$NEXT"
   file=$(python3 scripts/validate-plan.py --task "$id" --field file)
   mapped=$(python3 scripts/validate-plan.py --task "$id" --field tests)
-  smoke=$(python3 scripts/validate-plan.py --task "$id" --field smoke_check)
+  smoke=$(python3 -c "import json; cs=json.load(open('scripts/.approved/contracts.json')).get('smoke_checks',{}); print(cs.get('$file',''))")
   brief=$(cat "$BRIEF_DIR/$id" 2>/dev/null || python3 scripts/validate-plan.py --task "$id" --field brief)
   strikes=$(counter "$id" strikes)
   echo "--- Task $id -> $file (strike $((strikes + 1))/$MAX_TASK_STRIKES) ---"
