@@ -53,8 +53,13 @@ MODEL="${!VAR:-}"
 : "${SANDBOX_LLM_PORT:=1234}"
 URL="http://localhost:$SANDBOX_LLM_PORT/v1/chat/completions"
 
+# Read user prompt from stdin BEFORE the heredoc — stdin and heredoc both
+# compete for fd 0, so the piped content must be captured first.
+SWBP_LLM_USER="$(cat)"
+
 SWBP_LLM_URL="$URL" SWBP_LLM_MODEL="$MODEL" SWBP_LLM_SYS="$SYS_FILE" \
 SWBP_LLM_SCHEMA="$SCHEMA" SWBP_LLM_MAXTIME="$MAX_TIME" SWBP_LLM_ROLE="$ROLE" \
+SWBP_LLM_USER="$SWBP_LLM_USER" \
 python3 - <<'PYEOF'
 import json
 import os
@@ -69,7 +74,7 @@ role = os.environ["SWBP_LLM_ROLE"]
 max_time = int(os.environ["SWBP_LLM_MAXTIME"])
 system = open(os.environ["SWBP_LLM_SYS"]).read()
 schema_path = os.environ.get("SWBP_LLM_SCHEMA") or ""
-user = sys.stdin.read()
+user = os.environ["SWBP_LLM_USER"]
 
 def call(body: dict) -> dict:
     req = urllib.request.Request(
