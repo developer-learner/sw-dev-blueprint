@@ -171,6 +171,7 @@ if got_path != path:
     sys.exit(f"coder wrote to '{got_path}', task named '{path}'")
 if not content.strip():
     sys.exit("coder reply block was empty")
+import os; os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
 open(path, "w").write(content)
 PYEOF
   ); then
