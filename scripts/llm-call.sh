@@ -135,6 +135,12 @@ if not content and reasoning:
 if not content:
     sys.exit(f"llm-call FAIL: empty content from model '{model}'.")
 
+# Strip inline <think>...</think> blocks (qwen3.5 etc. emit these even with
+# enable_thinking:false — the thinking ends up in content, not reasoning_content).
+content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+if not content:
+    sys.exit(f"llm-call FAIL: content was only a <think> block from model '{model}'.")
+
 # Strip a single wrapping markdown fence if present (local models add them).
 m = re.match(r"^```[a-zA-Z0-9_-]*\n(.*)\n```$", content, re.DOTALL)
 if m:
