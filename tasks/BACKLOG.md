@@ -30,12 +30,6 @@
 
 ## Later
 
-### Spec-drift policy (CEO decision)
-**Priority:** P2
-**Why:** M3/M4 shipped code contradicting frozen ERD prose (httpx→urllib, think-streaming) and nothing could catch it — the tests only observe the locked surface. Decide: either "only the test surface is real; ERD prose is advisory" (document it) or add a post-success conformance review step. This is a policy call, not a script fix.
-**Rough size:** Small (once decided)
-**Depends on:** CEO decision
-
 ### Escalation-ladder validation run
 **Priority:** P2
 **Why:** The retry → EM consult → brief/plan revision → TPM ladder has never been allowed to complete (M4 bypassed it at strike 1). Per Operating Rule 6, an untriggered safeguard is inconclusive — one honest run where a stuck task climbs the full ladder is needed before trusting it.
@@ -68,3 +62,4 @@
 | orchestrate: pre-flight clean-tree check | 2026-07-05 | `e4b5b7a` — dirty host tree no longer misattributed to the first tier |
 | refreeze: REMOVED manifest for retiring test files | 2026-07-05 | `338f4a3` — removals are a first-class, human-approved part of the delta |
 | validate-plan: regression bucket for carried-forward tests | 2026-07-05 | `c111442` — chosen semantics: plan-level `regression` array, accepted by the final full-suite pass; 24/24 selftests |
+| Spec-drift policy decided | 2026-07-05 | D-54: test surface is binding, ERD prose is advisory; deviations must be reported, refreeze re-trues drifted prose. CEO delegated the call. |
