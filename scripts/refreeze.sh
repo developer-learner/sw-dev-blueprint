@@ -33,6 +33,9 @@
 # Staging layout — ONLY the changed files, full new content, paths preserved:
 #   PRD.md  ERD.md  contracts.json          -> installed to scripts/.approved/
 #   tests/<file>.py ...                     -> installed to tests/
+#   REMOVED                                 -> repo paths to retire (one per
+#                                              line, tests/*.py only), deleted
+#                                              on apply as part of the delta
 set -euo pipefail
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -59,9 +62,9 @@ mkdir -p "$APPROVED" tests
 # --- Validate staging contents: only known artifact paths ---
 BAD=$(cd "$IN" && find . -type f \
   ! -path "./PRD.md" ! -path "./ERD.md" ! -path "./contracts.json" \
-  ! -path "./tests/*" | sed 's|^\./||')
+  ! -path "./REMOVED" ! -path "./tests/*" | sed 's|^\./||')
 if [ -n "$BAD" ]; then
-  die "staging contains unexpected files (only PRD.md, ERD.md, contracts.json, tests/* are frozen artifacts):
+  die "staging contains unexpected files (only PRD.md, ERD.md, contracts.json, REMOVED, tests/* are frozen artifacts):
 $BAD"
 fi
 
@@ -70,7 +73,26 @@ for f in PRD.md ERD.md contracts.json; do
   [ -f "$IN/$f" ] && CHANGED_DOCS="$CHANGED_DOCS $f"
 done
 CHANGED_TEST_FILES=$(cd "$IN" && find tests -type f 2>/dev/null | sed 's|^\./||' || true)
-[ -n "$CHANGED_DOCS$CHANGED_TEST_FILES" ] || die "staging dir is empty — nothing to freeze"
+
+# --- Test-file removals: staging may carry a REMOVED file listing repo
+# paths (one per line, tests/*.py only) to retire as part of this delta.
+# Retiring a test is a spec change like any other — it goes through the
+# same human-approved diff, never a hand-delete in the frozen lane
+# (testchat M2: stale echo tests had to be hand-deleted, a conductor
+# lane-cross forced by the tool).
+REMOVED_FILES=""
+if [ -f "$IN/REMOVED" ]; then
+  REMOVED_FILES=$(grep -vE '^\s*(#|$)' "$IN/REMOVED" || true)
+  for f in $REMOVED_FILES; do
+    case "$f" in
+      tests/*.py) ;;
+      *) die "REMOVED entries must be tests/*.py paths, got: $f" ;;
+    esac
+    [ -f "$f" ] || die "REMOVED lists a file that does not exist in the repo: $f"
+    [ ! -f "$IN/$f" ] || die "REMOVED lists a file also present in staging (conflict — pick one): $f"
+  done
+fi
+[ -n "$CHANGED_DOCS$CHANGED_TEST_FILES$REMOVED_FILES" ] || die "staging dir is empty — nothing to freeze"
 
 # --- Staged tests must at least parse (testchat M4: TPM shipped tests with
 # broken indentation and bare `---` lines; discovering it post-freeze cost a
@@ -134,6 +156,7 @@ trap 'rm -rf "$PREVIEW"' EXIT
 mkdir -p "$PREVIEW/tests"
 [ -d tests ] && cp -R tests/. "$PREVIEW/tests/" 2>/dev/null || true
 [ -d "$IN/tests" ] && cp -R "$IN/tests/." "$PREVIEW/tests/"
+for f in $REMOVED_FILES; do rm -f "$PREVIEW/$f"; done   # preview reflects the post-delta suite
 INV4_CONTRACTS="$APPROVED/contracts.json"
 [ -f "$IN/contracts.json" ] && INV4_CONTRACTS="$IN/contracts.json"
 python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
@@ -160,6 +183,11 @@ show_diff() {  # $1 current-path  $2 incoming-path
     echo ""
     echo "--- $f ---"
     show_diff "$f" "$IN/$f"
+  done
+  for f in $REMOVED_FILES; do
+    echo ""
+    echo "--- $f (REMOVED) ---"
+    diff -u "$f" /dev/null || true   # full current content shown as deletions
   done
 } > "$DIFF_FILE"
 DIFF_SHA=$(sha256sum "$DIFF_FILE" | awk '{print $1}')
@@ -233,6 +261,9 @@ done
 for f in $CHANGED_TEST_FILES; do
   mkdir -p "$(dirname "$f")"
   cp "$IN/$f" "$f"
+done
+for f in $REMOVED_FILES; do
+  rm -f "$f"    # `git add tests/` below stages the deletion
 done
 
 # --- Re-collect the frozen test node-ids ---
