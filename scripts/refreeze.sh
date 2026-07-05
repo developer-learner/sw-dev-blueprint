@@ -72,6 +72,25 @@ done
 CHANGED_TEST_FILES=$(cd "$IN" && find tests -type f 2>/dev/null | sed 's|^\./||' || true)
 [ -n "$CHANGED_DOCS$CHANGED_TEST_FILES" ] || die "staging dir is empty — nothing to freeze"
 
+# --- Staged tests must at least parse (testchat M4: TPM shipped tests with
+# broken indentation and bare `---` lines; discovering it post-freeze cost a
+# full refreeze cycle v4->v5). ast.parse is the cheapest possible gate and
+# needs none of the suite's imports to exist.
+for f in $CHANGED_TEST_FILES; do
+  case "$f" in
+    *.py)
+      SWBP_STAGED="$IN/$f" python3 - <<'PYEOF' || exit 1
+import ast, os, sys
+p = os.environ["SWBP_STAGED"]
+try:
+    ast.parse(open(p).read(), filename=p)
+except SyntaxError as e:
+    sys.exit(f"REFREEZE FAIL: staged test does not parse: {p}:{e.lineno}: {e.msg} — fix the TPM output and restage")
+PYEOF
+      ;;
+  esac
+done
+
 # --- First freeze must be a complete spec ---
 if [ "$V" -eq 0 ]; then
   for f in PRD.md ERD.md contracts.json; do
