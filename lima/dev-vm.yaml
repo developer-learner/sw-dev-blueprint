@@ -1,0 +1,65 @@
+# Lima VM config for sw-dev-blueprint zero-prompt agent operation.
+# Usage: limactl create --name=dev-vm lima/dev-vm.yaml && limactl start dev-vm
+#
+# Design: see tasks/HANDOFF-dev-vm.md constraints 1-6.
+# - Persistent, headless Linux guest.
+# - Native Podman (replaces host podman-machine; same nesting depth).
+# - virtiofs mount of the dev directory (primary working-tree home).
+# - Host-gateway networking so the VM reaches LM Studio on the Mac.
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+
+cpus: 4
+memory: "8GiB"
+disk: "50GiB"
+
+mountType: "virtiofs"
+mounts:
+  - location: "~/dev"
+    writable: true
+
+hostResolver:
+  enabled: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+
+      # Core packages
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        podman buildah slirp4netns fuse-overlayfs uidmap \
+        python3 python3-pip python3-venv \
+        git curl jq ca-certificates
+
+      # Enable lingering for the default user so rootless podman works
+      loginctl enable-linger "$(id -nu 1000)"
+
+      # Set SANDBOX_LLM_HOST system-wide so non-interactive shells (agents,
+      # ssh command) see it — Ubuntu's .bashrc returns early for non-interactive.
+      grep -q SANDBOX_LLM_HOST /etc/environment 2>/dev/null || \
+        echo 'SANDBOX_LLM_HOST=host.lima.internal' >> /etc/environment
+
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux
+
+      # Rootless podman storage config
+      mkdir -p ~/.config/containers
+      cat > ~/.config/containers/storage.conf <<'EOF'
+      [storage]
+      driver = "overlay"
+
+      [storage.options.overlay]
+      mount_program = "/usr/bin/fuse-overlayfs"
+      EOF
+
+      # Verify podman works
+      podman info --format '{{.Host.OS}}'
