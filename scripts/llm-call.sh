@@ -50,8 +50,9 @@ MODEL="${!VAR:-}"
   exit 1
 }
 
+: "${SANDBOX_LLM_HOST:=localhost}"
 : "${SANDBOX_LLM_PORT:=1234}"
-URL="http://localhost:$SANDBOX_LLM_PORT/v1/chat/completions"
+URL="http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/chat/completions"
 
 # Read user prompt from stdin BEFORE the heredoc — stdin and heredoc both
 # compete for fd 0, so the piped content must be captured first.

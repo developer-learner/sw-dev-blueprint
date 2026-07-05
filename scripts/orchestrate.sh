@@ -66,6 +66,11 @@ set_counter() { printf '%s\n' "$3" > "$TASK_STATE/$1.$2"; }
 
 # --- Pre-flight ---
 echo "=== Pre-flight ==="
+
+# Constraint 3: conductors live inside the VM; running on macOS is a structural error.
+[ "$(uname -s)" != "Darwin" ] \
+  || die "orchestrate.sh must run inside the Linux dev VM, not on the macOS host — see tasks/HANDOFF-dev-vm.md constraint 3"
+
 python3 --version >/dev/null 2>&1 || die "python3 required"
 git --version >/dev/null 2>&1    || die "git required"
 [ -x scripts/llm-call.sh ]       || die "scripts/llm-call.sh missing or not executable"
@@ -79,9 +84,10 @@ fi
 # Fail fast on an unreachable local LLM (Hard Rule 4) rather than deep inside
 # the first EM call. Model calls happen directly against this endpoint now —
 # no attach protocol, no harness in between (D-53).
+: "${SANDBOX_LLM_HOST:=localhost}"
 : "${SANDBOX_LLM_PORT:=1234}"
-curl -s --max-time 5 -o /dev/null "http://localhost:$SANDBOX_LLM_PORT/v1/models" \
-  || die "no local LLM reachable at http://localhost:$SANDBOX_LLM_PORT/v1/models — start it and retry"
+curl -s --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models" \
+  || die "no LLM reachable at http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models — start it and retry (in the VM, set SANDBOX_LLM_HOST=host.lima.internal)"
 # The interactive/human commit path is only gated if bootstrap.sh ran. The
 # testchat M4 run proved this can be silently absent for an entire project
 # lifetime — a conductor hand-committed src/ changes with no gate firing.
@@ -101,6 +107,17 @@ bash scripts/phase-gate.sh manifest HEAD
 [ -f "$APPROVED/frozen-manifest" ] || die "no frozen TPM spec — install PRD/ERD/contracts/tests via scripts/refreeze.sh"
 [ -f "$APPROVED/VERSION" ]         || die "$APPROVED/VERSION missing — run scripts/refreeze.sh"
 FROZEN_V=$(cat "$APPROVED/VERSION")
+# D-55 round-trip smoke test: a bug in the model-call path is invisible to
+# static review — only a real round-trip catches it (correction log 2026-07-03).
+# Runs last in pre-flight: all free checks (hooksPath, clean tree, manifest)
+# pass before we spend a model call.
+echo "  LLM round-trip smoke test..."
+_smoke_sys=$(mktemp)
+printf 'You are a test probe. Reply with exactly the text the user sends.' > "$_smoke_sys"
+SMOKE_REPLY=$(printf 'SMOKE_OK' | scripts/llm-call.sh em "$_smoke_sys" --max-time 30 2>/dev/null || true)
+rm -f "$_smoke_sys"
+[ -n "$SMOKE_REPLY" ] \
+  || die "LLM smoke test failed — llm-call.sh returned empty output for a trivial prompt (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server)"
 echo "OK (frozen spec v$FROZEN_V)"
 
 # --- Parse .gate-paths for the build lane ---

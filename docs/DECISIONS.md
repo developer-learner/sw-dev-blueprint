@@ -21,6 +21,20 @@
 
 ## Decisions
 
+## D-55 — 2026-07-05 — Linux dev VM boundary; D-53 partial reversal for cross-boundary model access
+
+**Decision:** Conductors move inside a persistent Lima VM (Ubuntu 24.04, virtiofs mount of `~/dev`). The VM is the structural boundary that replaces advisory conductor constraints; agents run with permissions bypassed because the VM is the containment. `orchestrate.sh` refuses to run on macOS (`uname -s` check, hard halt). D-30 Podman lanes run unchanged inside the VM as native rootless containers — same nesting depth as the previous `podman machine` arrangement on the host.
+
+**D-53 partial reversal (cross-boundary model access):** D-53 moved LLM calls host-local precisely because cross-boundary port wiring caused the failures of the first three supervised runs. The VM boundary reintroduces cross-boundary access: `SANDBOX_LLM_HOST` (default `localhost`, set to `host.lima.internal` in the VM) parameterizes the endpoint in `llm-call.sh` and `orchestrate.sh`. This is accepted as the cost of the VM boundary. A round-trip smoke test (`llm-call.sh` with a trivial prompt, assert non-empty reply) runs in `orchestrate.sh` pre-flight to catch plumbing bugs — the class of failure that was invisible to static review and caused the misdiagnosed "model hallucinations" in early runs (correction log 2026-07-03).
+
+**Alternatives considered:** keeping conductors on the host with advisory constraints (failed — testchat M4 proved frontier conductors cross every advisory lane under goal pressure); Docker/devcontainer (rejected — Docker-in-Docker conflicts with D-30 Podman lanes); OrbStack (rejected — shared-kernel model, insufficient isolation for skip-permissions agents); ephemeral VMs per session (rejected — destroys `.pipeline-state` crash checkpointing D-24 and git continuity).
+
+**Deferred:** a coder sentinel-format micro-check (send a prompt that should produce `=== FILE: ... === END FILE ===` wrapping and verify the format parses) — the current smoke test only asserts non-empty reply, which catches plumbing failures but not format mismatches between llm-call.sh and the coder extraction logic. Low urgency: the extraction already hard-fails on bad format during real tasks, so it's caught one call later.
+
+**Do not suggest:** Running `orchestrate.sh` directly on the macOS host. Removing the `uname` pre-flight check. Using Docker instead of Podman inside the VM. Hardcoding `localhost` instead of `SANDBOX_LLM_HOST`. Skipping the round-trip smoke test.
+
+---
+
 ## D-54 — 2026-07-05 — Spec-drift policy: the test surface is the binding spec; ERD prose is advisory design intent
 
 **Decision:** Only what is mechanically checkable at freeze or run time is binding: the frozen test suite, `contracts.json` (entry points, routes, schemas, smoke_checks), and the gates that enforce them. ERD prose — implementation constraints, library choices, internal design notes — is advisory design intent. Code that passes the full frozen suite is conformant by definition, even where it deviates from ERD prose. Consequences: (1) the TPM must express every MUST-HOLD constraint as something observable at the locked surface — a test, a contracts entry, or a smoke_check — or accept that it is guidance, not law; (2) deviating from advisory ERD prose is not a violation, but it MUST be reported to the CEO in the run summary (silent drift is still a reporting defect under Operating Rule 4); (3) when drift accumulates enough that the ERD misleads the next milestone's TPM, the fix is a refreeze that re-trues the prose — bookkeeping, not rollback.
