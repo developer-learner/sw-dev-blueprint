@@ -34,6 +34,18 @@ AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
+# .pipeline-state/ layout (orchestrator-owned, gitignored; delete only as a
+# whole — partial deletes desync counters). Documented because a conductor
+# once guessed "task-state/" and burned 30 minutes (testchat M4):
+#   phase                current phase (em|task|"") — crash checkpoint (D-24)
+#   task_target          file the in-flight coder task writes
+#   spec_version         frozen VERSION last seen (re-freeze detection)
+#   plan_revisions       EM plan re-emit counter (cap: MAX_PLAN_REVISIONS)
+#   tasks/<id>.status    pending|done|escalated|blocked
+#   tasks/<id>.strikes|.revisions|.fp|.lastfail   per-task counters/fingerprint
+#   briefs/<id>          EM-revised brief overriding the plan's brief
+#   logs/<id>-a<n>.raw|.log   coder attempt transcripts; em-last.raw|.err
+#   escalations/<id>/bundle.md, escalations/BATCH.md   TPM bundles (D-29)
 STATE_DIR=".pipeline-state"
 TASK_STATE="$STATE_DIR/tasks"
 BRIEF_DIR="$STATE_DIR/briefs"
