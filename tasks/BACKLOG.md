@@ -2,6 +2,7 @@
 
 > Ordered by priority. Top = next up.
 > When starting a task, move it to CURRENT.md and expand it into a full spec.
+> Source: testchat M1–M4 supervised-run retrospective (2026-07-05).
 
 ---
 
@@ -19,28 +20,59 @@
 
 ## Up Next
 
-### [TASK_NAME]
+### Linux Dev VM for zero-prompt agent operation
+**Priority:** P0
+**Why:** testchat M4 proved conductor constraints must be structural (a frontier conductor crossed every advisory lane under goal pressure); the VM boundary also eliminates permission-prompt babysitting entirely. Absorbs two retrospective items: the llm-call.sh round-trip smoke test (owed since 2026-07-03) and the sandbox directive.
+**Rough size:** Large
+**Depends on:** Nothing — full spec in `tasks/HANDOFF-dev-vm.md`
+
+### refreeze: syntax-check staged tests before the diff
 **Priority:** P1
-**Why:** [Value statement]
+**Why:** The M4 TPM shipped test files with broken indentation and bare `---` lines; discovering it post-freeze cost a full refreeze cycle (v4→v5). An `ast.parse` over every staged `tests/*.py` before the diff is shown catches it for free.
+**Rough size:** Small
+**Depends on:** Nothing
+
+### orchestrate: pre-flight clean-tree check
+**Priority:** P1
+**Why:** M2's first EM call was blamed by the lane gate for pre-existing uncommitted host changes — the gate diffs against HEAD, so a dirty tree produces false accusations against whichever tier runs first.
+**Rough size:** Small
+**Depends on:** Nothing
+
+### refreeze: support test-file removal in staging
+**Priority:** P1
+**Why:** M2's stale echo tests had to be hand-deleted from the frozen lane before staging (a conductor lane-cross forced by the tool). Staging needs an explicit removals manifest (e.g. a `REMOVED` file listing paths) so retiring a test is a first-class, human-approved part of the delta.
 **Rough size:** Medium
 **Depends on:** Nothing
+
+### validate-plan: mapping rule for carried-forward tests
+**Priority:** P1
+**Why:** M2's EM structurally could not emit a valid plan — frozen node-ids for carried-forward files (the page tests) must map to exactly one task, but their files are not in the build inventory, and tasks may only target inventory files. Needs a regression-bucket rule (e.g. tests of unchanged files map to a designated task or a plan-level `regression` list that runs after all tasks).
+**Rough size:** Medium
+**Depends on:** Small design decision (bucket semantics) — decide at implementation, PM sign-off per Rule 3
 
 ---
 
 ## Later
 
-### [TASK_NAME]
+### Spec-drift policy (CEO decision)
 **Priority:** P2
-**Why:** [Value statement]
-**Rough size:** Large
-**Depends on:** [Other task]
+**Why:** M3/M4 shipped code contradicting frozen ERD prose (httpx→urllib, think-streaming) and nothing could catch it — the tests only observe the locked surface. Decide: either "only the test surface is real; ERD prose is advisory" (document it) or add a post-success conformance review step. This is a policy call, not a script fix.
+**Rough size:** Small (once decided)
+**Depends on:** CEO decision
+
+### Escalation-ladder validation run
+**Priority:** P2
+**Why:** The retry → EM consult → brief/plan revision → TPM ladder has never been allowed to complete (M4 bypassed it at strike 1). Per Operating Rule 6, an untriggered safeguard is inconclusive — one honest run where a stuck task climbs the full ladder is needed before trusting it.
+**Rough size:** Medium (process, not code)
+**Depends on:** Next derived-project milestone; Dev VM recommended first (removes the conductor's incentive to take over)
 
 ---
 
 ## Icebox (someday/maybe)
 
-- [Vague idea 1]
-- [Vague idea 2]
+- EM-tier collapse experiment: M1–M4 showed EM is strong at decomposition, weak at diagnosis — test whether a frontier TPM emitting the plan directly (skipping EM) changes outcomes.
+- Coder model upgrade pass: the coder was the weakest link in every milestone; re-run a milestone with a stronger local model (models.env change only) and compare strike rates.
+- mlx-serve as LM Studio alternative (OpenAI+Anthropic+Ollama endpoints, ~35% faster decode on Apple Silicon) — revisit when model-serving friction matters.
 
 ---
 
@@ -48,4 +80,11 @@
 
 | Task | Completed | Notes |
 |------|-----------|-------|
-| [Task] | [Date] | [Any learnings] |
+| 6 plumbing fixes ported from testchat M1 (fd-0, enable_thinking, error body, think-strip, mkdir, loguru) | 2026-07-03 | Commits `b73c2b7`..`5f4a59e` |
+| 3 structural gates: DAG-brief consistency, smoke_check executability, smoke_check→TPM tier | 2026-07-04 | `9b4e379` |
+| AST-first node-id collection (D-51 revised) | 2026-07-05 | `83073f2` — fixes M3's 8/19 partial collection |
+| Brief length gate (2000 chars, Rule 8) | 2026-07-05 | `459ff25` |
+| Constraints-first EM briefs | 2026-07-05 | `cae402a` |
+| Model profiles (`model-profiles.toml`, consulted by llm-call.sh) | 2026-07-05 | `3f5e397` — context 67K→8K/16K was the biggest EM quality lever |
+| orchestrate pre-flight fails closed on missing hooksPath | 2026-07-05 | `8b92e09` — bootstrap.sh had silently never run on testchat |
+| Correction-log entry: conductor compliance is never a safety mechanism | 2026-07-05 | `c0f4a38` |
