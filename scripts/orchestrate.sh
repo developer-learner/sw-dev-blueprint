@@ -70,6 +70,12 @@ fi
 : "${SANDBOX_LLM_PORT:=1234}"
 curl -s --max-time 5 -o /dev/null "http://localhost:$SANDBOX_LLM_PORT/v1/models" \
   || die "no local LLM reachable at http://localhost:$SANDBOX_LLM_PORT/v1/models — start it and retry"
+# The interactive/human commit path is only gated if bootstrap.sh ran. The
+# testchat M4 run proved this can be silently absent for an entire project
+# lifetime — a conductor hand-committed src/ changes with no gate firing.
+# Fail closed here, same as the manifest check below.
+[ "$(git config core.hooksPath || true)" = ".githooks" ] \
+  || die "core.hooksPath is not '.githooks' — run scripts/bootstrap.sh first (the pre-commit lane gate is mandatory, not optional)"
 # Control-plane + frozen-artifact integrity (phase-gate verifies both, fail-closed)
 bash scripts/phase-gate.sh manifest HEAD
 # The frozen spec IS the human approval: it only exists via scripts/refreeze.sh,
