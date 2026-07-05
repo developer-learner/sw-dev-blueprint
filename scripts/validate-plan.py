@@ -8,7 +8,10 @@ integration:
   - structural: schema shape, no unknown keys, no status field, id format
   - atomicity:  exactly one file per task, unique, under the build lane
   - coverage:   every file in the frozen ERD inventory has exactly one task
-  - oracle:     every frozen TPM test node-id mapped to exactly one task
+  - oracle:     every frozen TPM test node-id mapped to exactly one task, or
+                listed once in plan.regression (carried-forward tests whose
+                files are not in this delta's build inventory; the final
+                full-suite run is their acceptance point)
   - contracts:  every referenced contract id exists in the frozen contracts
   - DAG:        dependencies exist, no self-deps, acyclic (Kahn)
   - freshness:  plan.erd_version == scripts/.approved/VERSION
@@ -116,8 +119,12 @@ def validate():
     if not isinstance(plan, dict):
         fail(["plan must be a JSON object"])
     for key in list(plan):
-        if key not in ("version", "erd_version", "tasks"):
+        if key not in ("version", "erd_version", "tasks", "regression"):
             errs.append(f"unknown top-level key: {key}")
+    regression = plan.get("regression", [])
+    if not isinstance(regression, list) or not all(isinstance(x, str) for x in regression):
+        errs.append("plan.regression must be an array of frozen test node-id strings")
+        regression = []
     for key in ("version", "erd_version"):
         if not isinstance(plan.get(key), int) or plan.get(key, 0) < 1:
             errs.append(f"plan.{key} must be an integer >= 1")
@@ -245,13 +252,26 @@ def validate():
         if bad:
             errs.append(f"task {t['id']} references unknown contract id(s): {bad}")
 
-    # oracle projection — every frozen node-id mapped to EXACTLY one task
+    # oracle projection — every frozen node-id mapped to EXACTLY one task,
+    # or listed once in plan.regression (carried-forward tests: their files
+    # are not in this delta's build inventory, so no task can own them; the
+    # final full-suite run is their acceptance point — testchat M2 proved
+    # the EM structurally cannot emit a valid plan without this bucket).
     mapped = [n for t in tasks for n in t["tests"]]
     frozen_set = set(frozen_nodeids)
     unknown_map = sorted(set(mapped) - frozen_set)
     if unknown_map:
         errs.append(f"mapped test node-id(s) not in the frozen suite: {unknown_map}")
-    unmapped = sorted(frozen_set - set(mapped))
+    unknown_reg = sorted(set(regression) - frozen_set)
+    if unknown_reg:
+        errs.append(f"regression node-id(s) not in the frozen suite: {unknown_reg}")
+    dup_reg = sorted({n for n in regression if regression.count(n) > 1})
+    if dup_reg:
+        errs.append(f"regression node-id(s) listed more than once: {dup_reg}")
+    overlap = sorted(set(regression) & set(mapped))
+    if overlap:
+        errs.append(f"node-id(s) both in regression and mapped to a task: {overlap}")
+    unmapped = sorted(frozen_set - set(mapped) - set(regression))
     if unmapped:
         errs.append(
             f"frozen test node-id(s) mapped to no task (decomposition incomplete): {unmapped}"

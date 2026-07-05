@@ -16,6 +16,11 @@
       "minimum": 1,
       "description": "The scripts/.approved/VERSION this plan was derived from. A plan whose erd_version lags the frozen VERSION is stale and fails validation."
     },
+    "regression": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "OPTIONAL. Frozen test node-ids for carried-forward behavior — tests whose files are NOT in this delta's build inventory (contracts.files) and therefore belong to no task. They gate the run only via the final full-suite pass, never per-task. Each frozen node-id must appear exactly once across all tasks' tests arrays and this list combined."
+    },
     "tasks": {
       "type": "array",
       "minItems": 1,

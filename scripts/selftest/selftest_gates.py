@@ -238,6 +238,34 @@ def test_brief_at_max_chars_passes(repo):
     assert r.returncode == 0, r.stderr
 
 
+def test_regression_bucket_passes(repo):
+    """Carried-forward node-ids in plan.regression need no task mapping."""
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
+        "\n".join(NODEIDS + ["tests/test_page.py::test_carried"]) + "\n")
+    plan = good_plan()
+    plan["regression"] = ["tests/test_page.py::test_carried"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
+def test_regression_overlap_with_task_fails(repo):
+    """A node-id cannot be both in regression and mapped to a task."""
+    plan = good_plan()
+    plan["regression"] = ["tests/test_a.py::test_one"]  # already mapped to T1
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "both in regression" in r.stderr
+
+
+def test_regression_unknown_nodeid_fails(repo):
+    """regression entries must exist in the frozen suite."""
+    plan = good_plan()
+    plan["regression"] = ["tests/test_ghost.py::test_nope"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "not in the frozen suite" in r.stderr
+
+
 # --- check-test-surface.py (INV-4) ------------------------------------------
 
 def test_clean_surface_passes(tmp_path):
