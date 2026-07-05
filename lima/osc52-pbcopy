@@ -1,0 +1,11 @@
+#!/bin/sh
+# pbcopy shim for headless Lima VM — uses OSC 52 to write to the host
+# terminal's clipboard. Works with iTerm2, Terminal.app (macOS 13+),
+# tmux (with set -g set-clipboard on), and most modern terminal emulators.
+#
+# Usage: echo "text" | pbcopy   (drop-in replacement)
+data=$(cat)
+encoded=$(printf '%s' "$data" | base64 | tr -d '\n')
+# OSC 52: \033]52;c;<base64>\a  — 'c' = clipboard selection
+printf '\033]52;c;%s\a' "$encoded" > /dev/tty 2>/dev/null || \
+  printf '\033]52;c;%s\a' "$encoded"

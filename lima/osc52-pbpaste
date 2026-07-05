@@ -1,0 +1,39 @@
+#!/bin/sh
+# pbpaste shim for headless Lima VM — uses OSC 52 to read from the host
+# terminal's clipboard. Requires terminal support (iTerm2 with "Allow
+# clipboard access to terminal apps" enabled; not all terminals support
+# the read direction of OSC 52).
+#
+# Fallback: if the terminal doesn't respond within 1 second, prints an
+# error and exits 1. In that case, use file-based input instead:
+#   tpm-unpack.sh <file>
+#
+# Usage: pbpaste   (drop-in replacement)
+
+# Request clipboard contents: OSC 52 with '?' as data
+printf '\033]52;c;?\a' > /dev/tty 2>/dev/null || printf '\033]52;c;?\a'
+
+# Read the terminal's response: \033]52;c;<base64>\a
+# Use a 1-second timeout — if the terminal doesn't support OSC 52 read,
+# we won't hang forever.
+response=""
+if command -v stty >/dev/null 2>&1; then
+  old_settings=$(stty -g < /dev/tty 2>/dev/null)
+  stty -echo -icanon min 0 time 10 < /dev/tty 2>/dev/null
+  response=$(dd bs=1 count=65536 < /dev/tty 2>/dev/null)
+  stty "$old_settings" < /dev/tty 2>/dev/null
+fi
+
+if [ -z "$response" ]; then
+  echo "pbpaste: terminal did not respond to OSC 52 read — use file input instead (tpm-unpack.sh <file>)" >&2
+  exit 1
+fi
+
+# Extract base64 between ;c; and the ST (\a or \033\\)
+payload=$(printf '%s' "$response" | sed -n 's/.*52;c;\([A-Za-z0-9+/=]*\).*/\1/p')
+if [ -z "$payload" ]; then
+  echo "pbpaste: could not parse OSC 52 response" >&2
+  exit 1
+fi
+
+printf '%s' "$payload" | base64 -d

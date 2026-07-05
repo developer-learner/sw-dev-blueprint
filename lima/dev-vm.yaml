@@ -46,6 +46,46 @@ provision:
       grep -q SANDBOX_LLM_HOST /etc/environment 2>/dev/null || \
         echo 'SANDBOX_LLM_HOST=host.lima.internal' >> /etc/environment
 
+      # OSC 52 clipboard shims — pbcopy/pbpaste for the headless VM.
+      # Lima preserves the host path for virtiofs mounts; find the shims
+      # by looking for the blueprint repo under any mounted ~/dev.
+      SHIM_SRC=$(find /Users /home -path "*/sw-dev-blueprint/lima/osc52-pbcopy" -print -quit 2>/dev/null || true)
+      if [ -n "$SHIM_SRC" ]; then
+        SHIM_DIR=$(dirname "$SHIM_SRC")
+        install -m 755 "$SHIM_DIR/osc52-pbcopy" /usr/local/bin/pbcopy
+        install -m 755 "$SHIM_DIR/osc52-pbpaste" /usr/local/bin/pbpaste
+      fi
+
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+
+      # Node.js (for Claude Code)
+      if ! command -v node >/dev/null 2>&1; then
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+        apt-get install -y nodejs
+      fi
+
+      # Claude Code CLI
+      if ! command -v claude >/dev/null 2>&1; then
+        npm install -g @anthropic-ai/claude-code
+      fi
+
+      # OpenCode — latest release binary
+      if ! command -v opencode >/dev/null 2>&1; then
+        ARCH=$(dpkg --print-architecture)
+        OC_URL=$(curl -fsSL https://api.github.com/repos/opencode-ai/opencode/releases/latest \
+          | jq -r ".assets[] | select(.name | test(\"linux.*${ARCH}\")) | .browser_download_url" \
+          | head -1)
+        if [ -n "$OC_URL" ]; then
+          curl -fsSL "$OC_URL" -o /tmp/opencode.tar.gz
+          tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin opencode 2>/dev/null \
+            || tar -xzf /tmp/opencode.tar.gz -C /tmp && install -m 755 /tmp/opencode /usr/local/bin/
+          rm -f /tmp/opencode.tar.gz /tmp/opencode
+        fi
+      fi
+
   - mode: user
     script: |
       #!/bin/bash
@@ -63,3 +103,14 @@ provision:
 
       # Verify podman works
       podman info --format '{{.Host.OS}}'
+
+      # Claude Code: skip-permissions mode (the VM IS the boundary)
+      mkdir -p ~/.claude
+      cat > ~/.claude/settings.json <<'CEOF'
+      {
+        "permissions": {
+          "allow": ["*"],
+          "deny": []
+        }
+      }
+      CEOF
