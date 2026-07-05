@@ -30,6 +30,12 @@
 
 ## Later
 
+### Fast path: skip the coder when mapped tests already pass
+**Priority:** P2
+**Why:** M4 observation — the loop calls the coder even when the task's file already passes its mapped tests. Deliberately NOT implemented pre-VM: accepting pre-existing code means accepting code of unknown provenance, which legitimizes conductor lane-crossing. Once conductors live inside the VM (lanes structural), pre-passing code can only be previously-accepted state, and the skip becomes safe and saves the slowest step in the pipeline.
+**Rough size:** Small
+**Depends on:** Linux Dev VM landed
+
 ### Escalation-ladder validation run
 **Priority:** P2
 **Why:** The retry → EM consult → brief/plan revision → TPM ladder has never been allowed to complete (M4 bypassed it at strike 1). Per Operating Rule 6, an untriggered safeguard is inconclusive — one honest run where a stuck task climbs the full ladder is needed before trusting it.

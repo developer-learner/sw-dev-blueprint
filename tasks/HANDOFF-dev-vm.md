@@ -93,6 +93,12 @@ Podman becomes native.
 2. Podman inside the VM + constraint-2 verification.
 3. `llm-call.sh`/`orchestrate.sh` endpoint-host parameterization +
    round-trip smoke pre-flight + DECISIONS.md entry (constraints 4–5).
+   The smoke test has two parts: (a) trivial prompt, assert non-empty
+   reply (plumbing); (b) for the coder role, a sentinel-format
+   micro-task — assert the reply contains a well-formed
+   `=== FILE: ... === / === END FILE ===` block (M4: a coder model that
+   cannot comply with the output convention burns both strikes before
+   anyone learns it; catch that before the pipeline starts).
 4. `orchestrate.sh` host-refusal pre-flight (constraint 3).
 5. OSC 52 clipboard shim (`pbcopy`/`pbpaste` equivalents in the guest)
    so the TPM shuttle scripts (`tpm-pack.sh` copy-paste flow) work from
