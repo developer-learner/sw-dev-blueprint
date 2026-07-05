@@ -26,30 +26,6 @@
 **Rough size:** Large
 **Depends on:** Nothing — full spec in `tasks/HANDOFF-dev-vm.md`
 
-### refreeze: syntax-check staged tests before the diff
-**Priority:** P1
-**Why:** The M4 TPM shipped test files with broken indentation and bare `---` lines; discovering it post-freeze cost a full refreeze cycle (v4→v5). An `ast.parse` over every staged `tests/*.py` before the diff is shown catches it for free.
-**Rough size:** Small
-**Depends on:** Nothing
-
-### orchestrate: pre-flight clean-tree check
-**Priority:** P1
-**Why:** M2's first EM call was blamed by the lane gate for pre-existing uncommitted host changes — the gate diffs against HEAD, so a dirty tree produces false accusations against whichever tier runs first.
-**Rough size:** Small
-**Depends on:** Nothing
-
-### refreeze: support test-file removal in staging
-**Priority:** P1
-**Why:** M2's stale echo tests had to be hand-deleted from the frozen lane before staging (a conductor lane-cross forced by the tool). Staging needs an explicit removals manifest (e.g. a `REMOVED` file listing paths) so retiring a test is a first-class, human-approved part of the delta.
-**Rough size:** Medium
-**Depends on:** Nothing
-
-### validate-plan: mapping rule for carried-forward tests
-**Priority:** P1
-**Why:** M2's EM structurally could not emit a valid plan — frozen node-ids for carried-forward files (the page tests) must map to exactly one task, but their files are not in the build inventory, and tasks may only target inventory files. Needs a regression-bucket rule (e.g. tests of unchanged files map to a designated task or a plan-level `regression` list that runs after all tasks).
-**Rough size:** Medium
-**Depends on:** Small design decision (bucket semantics) — decide at implementation, PM sign-off per Rule 3
-
 ---
 
 ## Later
@@ -88,3 +64,7 @@
 | Model profiles (`model-profiles.toml`, consulted by llm-call.sh) | 2026-07-05 | `3f5e397` — context 67K→8K/16K was the biggest EM quality lever |
 | orchestrate pre-flight fails closed on missing hooksPath | 2026-07-05 | `8b92e09` — bootstrap.sh had silently never run on testchat |
 | Correction-log entry: conductor compliance is never a safety mechanism | 2026-07-05 | `c0f4a38` |
+| refreeze: ast.parse staged tests before the diff | 2026-07-05 | `3114eee` — M4's broken TPM test syntax now caught pre-approval |
+| orchestrate: pre-flight clean-tree check | 2026-07-05 | `e4b5b7a` — dirty host tree no longer misattributed to the first tier |
+| refreeze: REMOVED manifest for retiring test files | 2026-07-05 | `338f4a3` — removals are a first-class, human-approved part of the delta |
+| validate-plan: regression bucket for carried-forward tests | 2026-07-05 | `c111442` — chosen semantics: plan-level `regression` array, accepted by the final full-suite pass; 24/24 selftests |
