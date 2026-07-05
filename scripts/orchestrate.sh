@@ -76,6 +76,12 @@ curl -s --max-time 5 -o /dev/null "http://localhost:$SANDBOX_LLM_PORT/v1/models"
 # Fail closed here, same as the manifest check below.
 [ "$(git config core.hooksPath || true)" = ".githooks" ] \
   || die "core.hooksPath is not '.githooks' — run scripts/bootstrap.sh first (the pre-commit lane gate is mandatory, not optional)"
+# A dirty tree poisons the lane gate: phase-gate diffs the working tree
+# against a phase-start ref, so pre-existing uncommitted changes get blamed
+# on whichever tier runs first (testchat M2: the EM was accused of touching
+# requirements.txt and src/ it never saw).
+[ -z "$(git status --porcelain)" ] \
+  || die "working tree not clean — commit or stash first (uncommitted changes would be misattributed to the first tier the lane gate checks): $(git status --porcelain | head -5 | tr '\n' ' ')"
 # Control-plane + frozen-artifact integrity (phase-gate verifies both, fail-closed)
 bash scripts/phase-gate.sh manifest HEAD
 # The frozen spec IS the human approval: it only exists via scripts/refreeze.sh,
