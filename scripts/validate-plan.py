@@ -14,6 +14,10 @@ integration:
                 full-suite run is their acceptance point)
   - contracts:  every referenced contract id exists in the frozen contracts
   - DAG:        dependencies exist, no self-deps, acyclic (Kahn)
+  - routing:    a mapped test that exercises an HTTP route (AST-visible
+                client.<method>("<path>") literal) must not be scheduled
+                before the task claiming that route contract — the route
+                must be claimed inside the task's dependency closure
   - freshness:  plan.erd_version == scripts/.approved/VERSION
 
 Stdlib only (json/hashlib), matching the orchestrator's pre-flight contract.
@@ -28,6 +32,7 @@ Modes:
                                             delta, including transitive dependents
   validate-plan.py --diagnosis FILE         validate an EM diagnosis; print its verdict
 """
+import ast
 import hashlib
 import json
 import subprocess
@@ -314,6 +319,91 @@ def validate():
                     f"of {t['id']} in the DAG. Either add it to depends_on or "
                     f"rewrite the brief to not assume that file exists."
                 )
+
+    # Route reachability (testchat M5): a mapped test that exercises an HTTP
+    # route can only pass once the task claiming that route contract has run.
+    # AST-scan each mapped test for client.<method>("<literal path>") calls;
+    # if the matched route is claimed by a task outside this task's dependency
+    # closure, the mapping is wrong — the test is scheduled before the route
+    # exists, and no coder attempt can ever make it pass. Fail-open on
+    # detection: dynamic paths, request helpers, routes without a method
+    # field, or routes no task claims do not fire.
+    HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "options"}
+    route_by_key = {}
+    for r in contracts.get("routes", []):
+        if isinstance(r, dict) and "id" in r and "method" in r and "path" in r:
+            route_by_key[(r["method"].upper(), r["path"])] = r["id"]
+
+    def match_route(method, path):
+        rid = route_by_key.get((method, path))
+        if rid:
+            return rid
+        p_segs = path.strip("/").split("/")
+        for (m, template), rid in route_by_key.items():
+            if m != method:
+                continue
+            t_segs = template.strip("/").split("/")
+            if len(t_segs) == len(p_segs) and all(
+                (ts.startswith("{") and ts.endswith("}")) or ts == ps
+                for ts, ps in zip(t_segs, p_segs)
+            ):
+                return rid
+        return None
+
+    claimers = {}  # route contract id -> task ids claiming it
+    for t in tasks:
+        for cid in t["contracts"]:
+            claimers.setdefault(cid, set()).add(t["id"])
+
+    ast_cache = {}
+
+    def test_routes(nodeid):
+        """Route contract ids exercised via client.<method>('<path>') literals."""
+        parts = nodeid.split("::")
+        path, func = parts[0], parts[-1].split("[")[0]
+        if path not in ast_cache:
+            try:
+                ast_cache[path] = ast.parse(Path(path).read_text(), filename=path)
+            except (OSError, SyntaxError):
+                ast_cache[path] = None
+        tree = ast_cache[path]
+        if tree is None:
+            return set()
+        fn = next((n for n in ast.walk(tree)
+                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and n.name == func), None)
+        if fn is None:
+            return set()
+        hit = set()
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in HTTP_METHODS
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)):
+                rid = match_route(node.func.attr.upper(), node.args[0].value)
+                if rid:
+                    hit.add(rid)
+        return hit
+
+    if route_by_key:
+        for t in tasks:
+            closure = {t["id"]} | ancestors(t["id"])
+            for nodeid in t["tests"]:
+                for rid in sorted(test_routes(nodeid)):
+                    owners = claimers.get(rid, set())
+                    if owners and not owners & closure:
+                        owner_str = "/".join(sorted(owners))
+                        errs.append(
+                            f"task {t['id']}: mapped test {nodeid} exercises "
+                            f"{rid}, claimed by {owner_str} which is not in "
+                            f"{t['id']}'s dependency closure — the test hits a "
+                            f"route that does not exist yet at this point in "
+                            f"the DAG. Map this test to {owner_str} or a task "
+                            f"that depends on it."
+                        )
+
     if errs:
         fail(errs)
 

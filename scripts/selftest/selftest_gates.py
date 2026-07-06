@@ -266,6 +266,133 @@ def test_regression_unknown_nodeid_fails(repo):
     assert "not in the frozen suite" in r.stderr
 
 
+# --- route reachability (testchat M5) ----------------------------------------
+
+ROUTE_CONTRACTS = {
+    "files": ["src/a.py", "src/b.py"],
+    "entry_points": ["src.a", "src.b:handler"],
+    "routes": [
+        {"id": "route:GET /widgets", "method": "GET", "path": "/widgets"},
+    ],
+}
+ROUTE_NODEIDS = [
+    "tests/test_w.py::test_service",
+    "tests/test_w.py::test_route",
+]
+
+
+def route_repo(repo, test_source):
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(ROUTE_CONTRACTS))
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
+        "\n".join(ROUTE_NODEIDS) + "\n")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_w.py").write_text(test_source)
+
+
+def route_plan(t1_tests, t2_tests):
+    return {
+        "version": 1,
+        "erd_version": 1,
+        "tasks": [
+            {
+                "id": "T1",
+                "file": "src/a.py",
+                "depends_on": [],
+                "brief": "implement service layer",
+                "contracts": ["src.a"],
+                "tests": t1_tests,
+            },
+            {
+                "id": "T2",
+                "file": "src/b.py",
+                "depends_on": ["T1"],
+                "brief": "implement route",
+                "contracts": ["src.b:handler", "route:GET /widgets"],
+                "tests": t2_tests,
+            },
+        ],
+    }
+
+
+def test_route_test_scheduled_before_route_exists_fails(repo):
+    """testchat M5: a test hitting a route was mapped to the service task, but
+    the route is created by a LATER task — the test can never pass there."""
+    route_repo(repo, (
+        "def test_service(client):\n"
+        "    assert client.get('/widgets').status_code == 200\n"
+        "def test_route(client):\n"
+        "    assert True\n"
+    ))
+    plan = route_plan(
+        t1_tests=["tests/test_w.py::test_service"],  # hits the route — wrong task
+        t2_tests=["tests/test_w.py::test_route"],
+    )
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "route:GET /widgets" in r.stderr
+    assert "dependency closure" in r.stderr
+    assert "T2" in r.stderr
+
+
+def test_route_test_mapped_to_claiming_task_passes(repo):
+    """The same route-hitting test mapped to the task that claims the route."""
+    route_repo(repo, (
+        "def test_service(client):\n"
+        "    assert True\n"
+        "def test_route(client):\n"
+        "    assert client.get('/widgets').status_code == 200\n"
+    ))
+    plan = route_plan(
+        t1_tests=["tests/test_w.py::test_service"],
+        t2_tests=["tests/test_w.py::test_route"],
+    )
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
+def test_route_check_fails_open_on_dynamic_path(repo):
+    """A dynamically-built path is invisible to the AST scan — no false fire."""
+    route_repo(repo, (
+        "def test_service(client):\n"
+        "    path = '/wid' + 'gets'\n"
+        "    assert client.get(path).status_code == 200\n"
+        "def test_route(client):\n"
+        "    assert True\n"
+    ))
+    plan = route_plan(
+        t1_tests=["tests/test_w.py::test_service"],
+        t2_tests=["tests/test_w.py::test_route"],
+    )
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
+def test_route_param_template_matches(repo):
+    """A literal path matching a {param} route template is attributed."""
+    contracts = dict(ROUTE_CONTRACTS, routes=[
+        {"id": "route:GET /widgets/{wid}", "method": "GET", "path": "/widgets/{wid}"},
+    ])
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(json.dumps(contracts))
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
+        "\n".join(ROUTE_NODEIDS) + "\n")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_w.py").write_text(
+        "def test_service(client):\n"
+        "    assert client.get('/widgets/123').status_code == 200\n"
+        "def test_route(client):\n"
+        "    assert True\n"
+    )
+    plan = route_plan(
+        t1_tests=["tests/test_w.py::test_service"],
+        t2_tests=["tests/test_w.py::test_route"],
+    )
+    plan["tasks"][1]["contracts"] = ["src.b:handler", "route:GET /widgets/{wid}"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "route:GET /widgets/{wid}" in r.stderr
+
+
 # --- check-test-surface.py (INV-4) ------------------------------------------
 
 def test_clean_surface_passes(tmp_path):
