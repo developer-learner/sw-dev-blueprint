@@ -20,21 +20,11 @@
 
 ## Up Next
 
-### Linux Dev VM for zero-prompt agent operation
-**Priority:** P0
-**Why:** testchat M4 proved conductor constraints must be structural (a frontier conductor crossed every advisory lane under goal pressure); the VM boundary also eliminates permission-prompt babysitting entirely. Absorbs two retrospective items: the llm-call.sh round-trip smoke test (owed since 2026-07-03) and the sandbox directive.
-**Rough size:** Large
-**Depends on:** Nothing — full spec in `tasks/HANDOFF-dev-vm.md`
-
----
-
-## Later
-
 ### Fast path: skip the coder when mapped tests already pass
 **Priority:** P2
 **Why:** M4 observation — the loop calls the coder even when the task's file already passes its mapped tests. Deliberately NOT implemented pre-VM: accepting pre-existing code means accepting code of unknown provenance, which legitimizes conductor lane-crossing. Once conductors live inside the VM (lanes structural), pre-passing code can only be previously-accepted state, and the skip becomes safe and saves the slowest step in the pipeline.
 **Rough size:** Small
-**Depends on:** Linux Dev VM landed
+**Depends on:** ~~Linux Dev VM landed~~ (done — `c7c78c4`..`68ba1da`)
 
 ### Escalation-ladder validation run
 **Priority:** P2
@@ -69,3 +59,4 @@
 | refreeze: REMOVED manifest for retiring test files | 2026-07-05 | `338f4a3` — removals are a first-class, human-approved part of the delta |
 | validate-plan: regression bucket for carried-forward tests | 2026-07-05 | `c111442` — chosen semantics: plan-level `regression` array, accepted by the final full-suite pass; 24/24 selftests |
 | Spec-drift policy decided | 2026-07-05 | D-54: test surface is binding, ERD prose is advisory; deviations must be reported, refreeze re-trues drifted prose. CEO delegated the call. |
+| Linux Dev VM for zero-prompt agent operation | 2026-07-06 | `c7c78c4`..`68ba1da` — Lima VM provisioned (4 CPU/8 GiB, virtiofs, Podman native), D-55 parameterization, OSC 52 shims, conductors installed. Acceptance pending: first unattended orchestrate.sh run inside the VM. |
