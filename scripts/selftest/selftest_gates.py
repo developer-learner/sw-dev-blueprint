@@ -445,3 +445,34 @@ def test_missing_contracts_is_usage_error(tmp_path):
         capture_output=True, text=True,
     )
     assert r.returncode == 2
+
+
+# --- diagnosis: Rule 8 applies to revised briefs ------------------------------
+
+def run_diagnosis(repo, diag):
+    p = repo / "diag.json"
+    p.write_text(json.dumps(diag))
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--diagnosis", str(p)],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_diagnosis_oversized_revised_brief_rejected(repo):
+    """The revision path must not bypass the plan gate's brief-length cap."""
+    r = run_diagnosis(repo, {
+        "task_id": "T1", "verdict": "brief_wrong",
+        "reason": "brief was wrong", "revised_brief": "y" * 2001,
+    })
+    assert r.returncode == 1
+    assert "2001 chars" in r.stderr
+    assert "Rule 8" in r.stderr
+
+
+def test_diagnosis_valid_brief_wrong_passes(repo):
+    r = run_diagnosis(repo, {
+        "task_id": "T1", "verdict": "brief_wrong",
+        "reason": "brief was wrong", "revised_brief": "implement a correctly",
+    })
+    assert r.returncode == 0, r.stderr
+    assert "brief_wrong" in r.stdout

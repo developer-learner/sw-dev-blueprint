@@ -451,6 +451,13 @@ def cmd_diagnosis(path):
         errs.append(f"diagnosis.verdict must be one of {sorted(VERDICTS)}")
     if d.get("verdict") == "brief_wrong" and not str(d.get("revised_brief", "")).strip():
         errs.append("verdict brief_wrong requires a non-empty revised_brief")
+    rb = d.get("revised_brief", "")
+    if isinstance(rb, str) and len(rb) > MAX_BRIEF_CHARS:
+        errs.append(
+            f"diagnosis.revised_brief is {len(rb)} chars (max {MAX_BRIEF_CHARS}) "
+            f"— Rule 8 applies to revised briefs too; a revised brief must not "
+            f"reintroduce the overload the plan gate rejects"
+        )
     if errs:
         fail(errs)
     print(d["verdict"])
