@@ -393,6 +393,96 @@ def test_route_param_template_matches(repo):
     assert "route:GET /widgets/{wid}" in r.stderr
 
 
+# --- import reachability ------------------------------------------------------
+
+def test_import_of_downstream_module_fails(repo):
+    """A test file importing a module created by a downstream task cannot even
+    be collected — mapping any of its tests to an earlier task is rejected."""
+    route_repo(repo, (
+        "from src.b import handler\n"
+        "def test_service(client):\n"
+        "    assert True\n"
+        "def test_route(client):\n"
+        "    assert True\n"
+    ))
+    plan = route_plan(
+        t1_tests=["tests/test_w.py::test_service"],  # file imports T2's module
+        t2_tests=["tests/test_w.py::test_route"],
+    )
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "src.b" in r.stderr
+    assert "cannot even collect" in r.stderr
+
+
+def test_import_of_own_or_ancestor_module_passes(repo):
+    """Imports of the mapped task's own module (or an ancestor's) are fine."""
+    route_repo(repo, (
+        "import src.a\n"
+        "from src.b import handler\n"
+        "def test_service(client):\n"
+        "    assert True\n"
+        "def test_route(client):\n"
+        "    assert True\n"
+    ))
+    plan = route_plan(
+        t1_tests=[],  # T1 covered by smoke_check instead
+        t2_tests=["tests/test_w.py::test_service", "tests/test_w.py::test_route"],
+    )
+    contracts = dict(ROUTE_CONTRACTS, smoke_checks={"src/a.py": "grep -q . src/a.py"})
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(json.dumps(contracts))
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
+def test_import_outside_inventory_ignored(repo):
+    """Imports of pre-existing modules (not in the build inventory) never fire."""
+    route_repo(repo, (
+        "from src.main import app\n"
+        "def test_service(client):\n"
+        "    assert True\n"
+        "def test_route(client):\n"
+        "    assert True\n"
+    ))
+    plan = route_plan(
+        t1_tests=["tests/test_w.py::test_service"],
+        t2_tests=["tests/test_w.py::test_route"],
+    )
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
+# --- diagnosis: Rule 8 applies to revised briefs ------------------------------
+
+def run_diagnosis(repo, diag):
+    p = repo / "diag.json"
+    p.write_text(json.dumps(diag))
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--diagnosis", str(p)],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_diagnosis_oversized_revised_brief_rejected(repo):
+    """The revision path must not bypass the plan gate's brief-length cap."""
+    r = run_diagnosis(repo, {
+        "task_id": "T1", "verdict": "brief_wrong",
+        "reason": "brief was wrong", "revised_brief": "y" * 2001,
+    })
+    assert r.returncode == 1
+    assert "2001 chars" in r.stderr
+    assert "Rule 8" in r.stderr
+
+
+def test_diagnosis_valid_brief_wrong_passes(repo):
+    r = run_diagnosis(repo, {
+        "task_id": "T1", "verdict": "brief_wrong",
+        "reason": "brief was wrong", "revised_brief": "implement a correctly",
+    })
+    assert r.returncode == 0, r.stderr
+    assert "brief_wrong" in r.stdout
+
+
 # --- check-test-surface.py (INV-4) ------------------------------------------
 
 def test_clean_surface_passes(tmp_path):
@@ -445,34 +535,3 @@ def test_missing_contracts_is_usage_error(tmp_path):
         capture_output=True, text=True,
     )
     assert r.returncode == 2
-
-
-# --- diagnosis: Rule 8 applies to revised briefs ------------------------------
-
-def run_diagnosis(repo, diag):
-    p = repo / "diag.json"
-    p.write_text(json.dumps(diag))
-    return subprocess.run(
-        [sys.executable, str(VALIDATE_PLAN), "--diagnosis", str(p)],
-        cwd=repo, capture_output=True, text=True,
-    )
-
-
-def test_diagnosis_oversized_revised_brief_rejected(repo):
-    """The revision path must not bypass the plan gate's brief-length cap."""
-    r = run_diagnosis(repo, {
-        "task_id": "T1", "verdict": "brief_wrong",
-        "reason": "brief was wrong", "revised_brief": "y" * 2001,
-    })
-    assert r.returncode == 1
-    assert "2001 chars" in r.stderr
-    assert "Rule 8" in r.stderr
-
-
-def test_diagnosis_valid_brief_wrong_passes(repo):
-    r = run_diagnosis(repo, {
-        "task_id": "T1", "verdict": "brief_wrong",
-        "reason": "brief was wrong", "revised_brief": "implement a correctly",
-    })
-    assert r.returncode == 0, r.stderr
-    assert "brief_wrong" in r.stdout

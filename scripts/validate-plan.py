@@ -404,6 +404,59 @@ def validate():
                             f"that depends on it."
                         )
 
+    # Import reachability (same class as the route check, one artifact over):
+    # pytest imports the whole test FILE at collection time, so a module-level
+    # import of a module created by a downstream task fails EVERY test in the
+    # file — collection error, before any test runs. Granularity is therefore
+    # the file: every module a test file imports that maps onto an inventory
+    # file must be owned by a task in the mapped task's dependency closure.
+    # Fail-open: imports of modules outside the inventory (pre-existing code)
+    # and dynamic imports are ignored.
+    module_owner = {}  # dotted module -> owning task id
+    for t in tasks:
+        if t["file"].endswith(".py"):
+            module_owner[t["file"][:-3].replace("/", ".")] = t["id"]
+
+    def file_imports(path):
+        """Inventory-owned modules imported at module level of a test file."""
+        if path not in ast_cache:
+            try:
+                ast_cache[path] = ast.parse(Path(path).read_text(), filename=path)
+            except (OSError, SyntaxError):
+                ast_cache[path] = None
+        tree = ast_cache[path]
+        if tree is None:
+            return set()
+        found = set()
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name in module_owner:
+                        found.add(a.name)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module in module_owner:
+                    found.add(node.module)
+                for a in node.names:
+                    cand = f"{node.module}.{a.name}"
+                    if cand in module_owner:
+                        found.add(cand)
+        return found
+
+    for t in tasks:
+        closure = {t["id"]} | ancestors(t["id"])
+        for tf in sorted({n.split("::")[0] for n in t["tests"]}):
+            for mod in sorted(file_imports(tf)):
+                owner = module_owner[mod]
+                if owner not in closure:
+                    errs.append(
+                        f"task {t['id']}: mapped test file {tf} imports {mod} "
+                        f"at module level, created by {owner} which is not in "
+                        f"{t['id']}'s dependency closure — pytest cannot even "
+                        f"collect the file before {owner} runs. Map this "
+                        f"file's tests to {owner} or later, or add {owner} to "
+                        f"{t['id']}'s depends_on."
+                    )
+
     if errs:
         fail(errs)
 
