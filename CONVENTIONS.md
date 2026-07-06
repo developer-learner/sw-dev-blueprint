@@ -16,9 +16,10 @@ class CreateProjectRequest(BaseModel):
     name: str
     description: str | None = None
 
-# ✅ Loguru for logging
-from loguru import logger
-logger.info("User {user_id} created project {project_id}", user_id=1, project_id=2)
+# ✅ Stdlib logging (never loguru — no logging dependencies; M1 correction log)
+import logging
+logger = logging.getLogger(__name__)
+logger.info("User %s created project %s", user_id, project_id)
 
 # ❌ Never print()
 print("something happened")  # NO
@@ -33,7 +34,7 @@ except:             # NO — catch specific exceptions
 try:
     do_something()
 except ValueError as e:
-    logger.error("Validation failed: {e}", e=e)
+    logger.error("Validation failed: %s", e)
     raise
 ```
 
