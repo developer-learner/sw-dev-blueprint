@@ -63,6 +63,16 @@ This is what moved up the ladder and why the role exists at frontier tier:
   inventory), `entry_points`, `routes`, `schemas`, `errors`, each with an
   `id`, plus `erd_version` matching the version being frozen. This is what
   the plan validator and the INV-4 test-surface check enforce against.
+- **Externals are captured, never imagined (D-56).** If the spec touches any
+  external interface — a third-party API, a model's streaming format, a wire
+  protocol — you do not get to assume its shape. Declare it in
+  `contracts.externals` (`id`, `probe`, `capture`), ask the operator to run
+  the probe against the *real* dependency, and build your mocks and tests
+  from the pasted raw output, which is staged as `captures/<file>` and
+  frozen with the spec. `refreeze.sh` rejects a freeze that declares an
+  external without its capture. This exists because testchat M5 froze green
+  against an imagined LM Studio API (`/v1/models` + OpenAI shapes) and an
+  imagined thinking-token format — the suite passed and the app didn't work.
 - **The test suite** (`tests/*.py`): you write it, from the PRD and the
   contracts, **before any implementation exists**. That is INV-1 made
   structural — the oracle cannot be derived from the code because the code

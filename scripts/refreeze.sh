@@ -62,9 +62,9 @@ mkdir -p "$APPROVED" tests
 # --- Validate staging contents: only known artifact paths ---
 BAD=$(cd "$IN" && find . -type f \
   ! -path "./PRD.md" ! -path "./ERD.md" ! -path "./contracts.json" \
-  ! -path "./REMOVED" ! -path "./tests/*" | sed 's|^\./||')
+  ! -path "./REMOVED" ! -path "./tests/*" ! -path "./captures/*" | sed 's|^\./||')
 if [ -n "$BAD" ]; then
-  die "staging contains unexpected files (only PRD.md, ERD.md, contracts.json, REMOVED, tests/* are frozen artifacts):
+  die "staging contains unexpected files (only PRD.md, ERD.md, contracts.json, REMOVED, tests/*, captures/* are frozen artifacts):
 $BAD"
 fi
 
@@ -73,6 +73,7 @@ for f in PRD.md ERD.md contracts.json; do
   [ -f "$IN/$f" ] && CHANGED_DOCS="$CHANGED_DOCS $f"
 done
 CHANGED_TEST_FILES=$(cd "$IN" && find tests -type f 2>/dev/null | sed 's|^\./||' || true)
+CHANGED_CAPTURES=$(cd "$IN" && find captures -type f 2>/dev/null | sed 's|^\./||' || true)
 
 # --- Test-file removals: staging may carry a REMOVED file listing repo
 # paths (one per line, tests/*.py only) to retire as part of this delta.
@@ -92,7 +93,7 @@ if [ -f "$IN/REMOVED" ]; then
     [ ! -f "$IN/$f" ] || die "REMOVED lists a file also present in staging (conflict — pick one): $f"
   done
 fi
-[ -n "$CHANGED_DOCS$CHANGED_TEST_FILES$REMOVED_FILES" ] || die "staging dir is empty — nothing to freeze"
+[ -n "$CHANGED_DOCS$CHANGED_TEST_FILES$CHANGED_CAPTURES$REMOVED_FILES" ] || die "staging dir is empty — nothing to freeze"
 
 # --- Staged tests must at least parse (testchat M4: TPM shipped tests with
 # broken indentation and bare `---` lines; discovering it post-freeze cost a
@@ -147,6 +148,49 @@ if errs:
 PYEOF
 fi
 
+# --- D-56: declared externals must carry captured reality ---
+# Every contracts.externals entry names a capture (raw probe output recorded
+# from the REAL dependency). A freeze that declares an external without its
+# capture is the v6/M5 failure mode — mocks built from the TPM's imagination
+# — and is rejected here. Staged captures nobody references are also
+# rejected (dead weight in the frozen spec).
+EXT_CONTRACTS="$APPROVED/contracts.json"
+[ -f "$IN/contracts.json" ] && EXT_CONTRACTS="$IN/contracts.json"
+if [ -f "$EXT_CONTRACTS" ]; then
+  SWBP_IN="$IN" SWBP_APPROVED="$APPROVED" python3 - "$EXT_CONTRACTS" <<'PYD56' || exit 1
+import json, os, sys
+from pathlib import Path
+c = json.load(open(sys.argv[1]))
+staging, approved = os.environ["SWBP_IN"], os.environ["SWBP_APPROVED"]
+errs, referenced = [], set()
+for e in c.get("externals", []):
+    if not (isinstance(e, dict) and e.get("id") and e.get("probe") and e.get("capture")):
+        errs.append("every contracts.externals entry needs id, probe and capture"); break
+    cap = e["capture"]
+    if not cap.startswith("captures/") or ".." in cap:
+        errs.append(f"{e['id']}: capture must be a captures/ path, got {cap!r}"); continue
+    referenced.add(cap)
+    src = Path(staging, cap) if Path(staging, cap).is_file() else Path(approved, cap)
+    if not src.is_file():
+        errs.append(f"{e['id']}: capture not found in staging or {approved}: {cap} "
+                    f"(run the probe against the real dependency and stage its raw output)")
+    elif cap.endswith(".json"):
+        try:
+            json.load(open(src))
+        except json.JSONDecodeError as ex:
+            errs.append(f"{e['id']}: capture is not valid JSON: {cap}: {ex}")
+cap_dir = Path(staging, "captures")
+staged = {str(p.relative_to(staging)) for p in cap_dir.rglob("*") if p.is_file()} if cap_dir.is_dir() else set()
+orphans = sorted(staged - referenced)
+if orphans:
+    errs.append("staged captures not referenced by any contracts.externals entry: " + ", ".join(orphans))
+if errs:
+    sys.exit("REFREEZE FAIL (D-56): " + "; ".join(errs))
+PYD56
+elif [ -n "$CHANGED_CAPTURES" ]; then
+  die "staging has captures/ but no contracts.json declares them (D-56: captures enter only via contracts.externals)"
+fi
+
 # --- INV-4: test-visible surface ⊆ locked surface, checked on the MERGED
 # preview (current frozen state + incoming overlay) BEFORE the human sees the
 # approval prompt. A TPM test that reaches past the contracts is rejected
@@ -183,6 +227,11 @@ show_diff() {  # $1 current-path  $2 incoming-path
     echo ""
     echo "--- $f ---"
     show_diff "$f" "$IN/$f"
+  done
+  for f in $CHANGED_CAPTURES; do
+    echo ""
+    echo "--- $APPROVED/$f ---"
+    show_diff "$APPROVED/$f" "$IN/$f"
   done
   for f in $REMOVED_FILES; do
     echo ""
@@ -264,6 +313,10 @@ for f in $CHANGED_TEST_FILES; do
 done
 for f in $REMOVED_FILES; do
   rm -f "$f"    # `git add tests/` below stages the deletion
+done
+for f in $CHANGED_CAPTURES; do
+  mkdir -p "$APPROVED/$(dirname "$f")"
+  cp "$IN/$f" "$APPROVED/$f"
 done
 
 # --- Re-collect the frozen test node-ids ---
@@ -356,6 +409,9 @@ rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-c
     [ -f "$APPROVED/$f" ] && sha256sum "$APPROVED/$f"
   done
   find tests -type f -name "*.py" | sort | while read -r f; do sha256sum "$f"; done
+  if [ -d "$APPROVED/captures" ]; then
+    find "$APPROVED/captures" -type f | sort | while read -r f; do sha256sum "$f"; done
+  fi
 } > "$APPROVED/frozen-manifest"
 echo "$NEW" > "$APPROVED/VERSION"
 
@@ -363,6 +419,7 @@ echo "$NEW" > "$APPROVED/VERSION"
 git add tests/ "$APPROVED/frozen-manifest" "$APPROVED/VERSION" \
   "$APPROVED/test-nodeids" "$APPROVED/DELTA-v$NEW.json"
 for f in $CHANGED_DOCS; do git add "$APPROVED/$f"; done
+for f in $CHANGED_CAPTURES; do git add "$APPROVED/$f"; done
 git commit -m "[refreeze v$NEW]"
 rm -rf "$IN"
 

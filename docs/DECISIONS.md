@@ -21,6 +21,20 @@
 
 ## Decisions
 
+## D-56 — 2026-07-06 — External interfaces enter the spec only as captured reality (contracts.externals + frozen captures)
+
+**Decision:** `contracts.json` gains an optional `externals` array: every external interface the spec makes assumptions about (third-party APIs, model output/streaming formats, wire protocols) is declared as `{id, probe, capture}`. The `probe` is the exact command the operator ran against the real dependency; the `capture` is its raw recorded output, staged under `captures/` and installed to `scripts/.approved/captures/`, hash-pinned in the frozen manifest like every other frozen artifact. `refreeze.sh` fails closed if a declared capture is missing (or is invalid JSON for `.json` captures), and rejects staged captures no external references. The TPM authors mocks and tests from captures, never from memory of how the dependency probably behaves; the probe-first loop (TPM requests probes → operator runs them → pastes raw output) happens before spec authoring.
+
+**Reason:** testchat M5 shipped a fully green frozen suite over an app that didn't work. Every post-success hand-fix was a spec-vs-reality mismatch: the real LM Studio models endpoint is `/api/v1/models` returning `{"models":[{"key":...}]}` (spec assumed OpenAI-style `/v1/models` + `data[].id`), and the real model streams thinking as `delta.reasoning_content` (spec assumed inline `<think>` tags). Mocked tests are a fixed-point check — they verify code-matches-spec, and cannot verify spec-matches-world. The gap was structural: no gate required the TPM's external-interface assumptions to be grounded in anything. Same failure tier as the v6 no-oracle incident: TPM, not EM/coder.
+
+**Alternatives considered:** live integration tests in the frozen suite (rejected — the sandbox is offline by design, and live tests make the gate flaky and environment-dependent); prose-only rule in TPM-ROLE.md (rejected — advisory rules on LLM tiers are suggestions; every hard-won guard here is mechanical); a separate contract-check script in the run loop (rejected — heavier, and the run loop is the wrong place: the error is made at freeze time, so the gate belongs at freeze time).
+
+**Cost accepted:** one extra loop at spec time (probe → paste → author). Captures can go stale when the upstream changes; the recorded `probe` makes re-verification a one-liner, and staleness surfaces at CEO acceptance (D-44) exactly as before — this narrows the gap, it does not claim to close it.
+
+**Do not suggest:** letting the TPM skip captures for "well-known" APIs (the M5 miss WAS a well-known API shape); making captures advisory; running probes from inside the sandbox at test time.
+
+---
+
 ## D-55 — 2026-07-05 — Linux dev VM boundary; D-53 partial reversal for cross-boundary model access
 
 **Decision:** Conductors move inside a persistent Lima VM (Ubuntu 24.04, virtiofs mount of `~/dev`). The VM is the structural boundary that replaces advisory conductor constraints; agents run with permissions bypassed because the VM is the containment. `orchestrate.sh` refuses to run on macOS (`uname -s` check, hard halt). D-30 Podman lanes run unchanged inside the VM as native rootless containers — same nesting depth as the previous `podman machine` arrangement on the host.
