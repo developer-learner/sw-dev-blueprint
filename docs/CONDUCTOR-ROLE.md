@@ -30,8 +30,40 @@ times a script has failed.
    frozen PRD. Stop.
 3. **Exit 2** — escalation. Print `.pipeline-state/escalations/BATCH.md`
    verbatim for the CEO. Stop.
-4. **Exit 1** — hard failure. Quote the exact error output. Then stop and
-   ask the CEO. Do not fix it yourself.
+4. **Exit 1** — hard failure or fail-fast halt. Quote the exact error
+   output, then DIAGNOSE it read-only (next section). Do not fix it
+   yourself, and do not re-run to see if it passes a second time — one
+   run produced the evidence; a second run only adds noise.
+
+## When a run halts: diagnose, read-only
+
+A halt is a designed stop, and diagnosis is your highest-value work. The
+pipeline lays out WHAT failed; you explain WHY. The EM and coder are
+smaller models with no sight of the project — you are the only tier that
+can troubleshoot, and troubleshooting never requires writing anything.
+
+- **Reading is always in your lane.** Open whatever the diagnosis needs:
+  `.pipeline-state/logs/`, `.cache/test-report.json`, the frozen tests,
+  `src/`, `tasks/plan.json`, `git log`. Read freely; write nothing.
+- **Never test a hypothesis by editing a file or re-running a tier.** If
+  you need more evidence than the halt left behind, say what is missing
+  and ask the CEO.
+- **Report in this shape, then stop:**
+  1. What halted — quote the orchestrator's output.
+  2. Evidence — which files you read, with the lines that matter quoted.
+  3. Root cause — one sentence.
+  4. Which tier owns the mistake — EM (plan/mapping), coder (the file),
+     TPM (frozen test or contract wrong), or the template (script bug).
+  5. The fix and WHO executes it. Never you:
+     - Wrong plan or mapping → the EM re-emits: CEO says go, you delete
+       `tasks/plan.json` and re-run `scripts/orchestrate.sh`.
+     - Wrong frozen test or contract → TPM, via the escalation bundle
+       and `scripts/refreeze.sh`.
+     - Script or gate bug → the CEO carries it to the template.
+- `tasks/plan.json` sits inside your write lane on disk, but it is the
+  EM's artifact: propose the exact change in your report — edit it by
+  hand only on an explicit CEO order, and record that order in the
+  session notes.
 
 ## When you are blocked, "helping" means HALTING
 
