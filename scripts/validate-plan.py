@@ -47,7 +47,7 @@ VERSION = APPROVED / "VERSION"
 
 TASK_REQUIRED = {"id", "file", "depends_on", "brief", "contracts", "tests"}
 TASK_ALLOWED = TASK_REQUIRED
-MAX_BRIEF_CHARS = 2000
+MAX_BRIEF_CHARS = 2500
 VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
 
 
