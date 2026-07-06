@@ -17,6 +17,7 @@ CI runs this in its own `selftest` job, unconditionally — the skeleton guard
 does not apply because these tests need no project src/ or requirements.
 """
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,12 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent
 VALIDATE_PLAN = SCRIPTS / "validate-plan.py"
 CHECK_SURFACE = SCRIPTS / "check-test-surface.py"
+
+# Derived from the script under test, never hardcoded: a cap bump must not
+# break these tests (it did once — 2000→2500 left two tests asserting the
+# old boundary).
+MAX_BRIEF = int(re.search(
+    r"^MAX_BRIEF_CHARS = (\d+)", VALIDATE_PLAN.read_text(), re.M).group(1))
 
 CONTRACTS = {
     "files": ["src/a.py", "src/b.py"],
@@ -223,17 +230,17 @@ def test_smoke_check_valid_command_passes(repo):
 def test_brief_over_max_chars_rejected(repo):
     """A brief exceeding MAX_BRIEF_CHARS is rejected."""
     plan = good_plan()
-    plan["tasks"][0]["brief"] = "x" * 2001
+    plan["tasks"][0]["brief"] = "x" * (MAX_BRIEF + 1)
     r = run_validate(repo, plan)
     assert r.returncode == 1
-    assert "2001 chars" in r.stderr
+    assert f"{MAX_BRIEF + 1} chars" in r.stderr
     assert "Rule 8" in r.stderr
 
 
 def test_brief_at_max_chars_passes(repo):
     """A brief exactly at MAX_BRIEF_CHARS passes."""
     plan = good_plan()
-    plan["tasks"][0]["brief"] = "x" * 2000
+    plan["tasks"][0]["brief"] = "x" * MAX_BRIEF
     r = run_validate(repo, plan)
     assert r.returncode == 0, r.stderr
 
@@ -467,10 +474,10 @@ def test_diagnosis_oversized_revised_brief_rejected(repo):
     """The revision path must not bypass the plan gate's brief-length cap."""
     r = run_diagnosis(repo, {
         "task_id": "T1", "verdict": "brief_wrong",
-        "reason": "brief was wrong", "revised_brief": "y" * 2001,
+        "reason": "brief was wrong", "revised_brief": "y" * (MAX_BRIEF + 1),
     })
     assert r.returncode == 1
-    assert "2001 chars" in r.stderr
+    assert f"{MAX_BRIEF + 1} chars" in r.stderr
     assert "Rule 8" in r.stderr
 
 
