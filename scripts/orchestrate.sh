@@ -27,9 +27,9 @@
 # gate violation · 2 halted awaiting TPM (escalation batch written).
 set -euo pipefail
 
-MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-2}"      # coder attempts per brief before EM consult
-MAX_BRIEF_REVISIONS="${MAX_BRIEF_REVISIONS:-2}" # EM brief_wrong rewrites per task
-MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"   # EM plan re-emits per run (validation retries + decomposition_wrong)
+MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-1}"      # coder attempts per brief (default: 1 = fail-fast)
+MAX_BRIEF_REVISIONS="${MAX_BRIEF_REVISIONS:-1}" # EM brief_wrong rewrites per task
+MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-1}"   # EM plan re-emits per run (validation retries + decomposition_wrong)
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -521,7 +521,25 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
   set_counter "$id" strikes "$strikes"
   [ "$strikes" -lt "$MAX_TASK_STRIKES" ] && continue   # plain retry with failure appended
 
-  # two strikes -> EM consult, route on schema-bound verdict (D-29)
+  # --- Fail-fast (default: MAX_TASK_STRIKES=1) ---
+  # Halt and lay out the failure for human review. The EM consult +
+  # escalation ladder below only fires when MAX_TASK_STRIKES > 1 (opt-in).
+  if [ "$MAX_TASK_STRIKES" -le 1 ]; then
+    echo ""
+    echo "=========================================="
+    echo "  HALT: task $id failed"
+    echo "=========================================="
+    echo "  File:     $file"
+    echo "  Evidence: $evidence"
+    echo ""
+    echo "  Logs:"
+    for _lf in "$LOG_DIR/$id"-a*.raw "$LOG_DIR/$id"-a*.log; do
+      [ -f "$_lf" ] && echo "    $_lf"
+    done
+    die "task $id failed on first attempt — review the logs, fix the plan or spec, and re-run"
+  fi
+
+  # EM consult (only when MAX_TASK_STRIKES > 1)
   echo "=== Task $id failed $strikes times -> EM consult ==="
   consult_em "$id" "failed $strikes attempts on $file. $evidence. Coder log tail: $(tail -5 "$LOG_DIR/$id-a$strikes.log" 2>/dev/null | tr '\n' ' ')"
   case "$DIAG_VERDICT" in
@@ -591,6 +609,16 @@ fi
 # tasks green but suite red = SPEC DRIFT: routes EM -> TPM, never coder retries (D-28)
 echo "=== SPEC DRIFT: every task passed its projection but the full suite is red ==="
 drift_evidence="all tasks done and individually green; full suite failing: ${FAILING:-no verdict (rc=$TESTS_RC)}"
+
+if [ "$MAX_TASK_STRIKES" -le 1 ]; then
+  echo ""
+  echo "=========================================="
+  echo "  HALT: spec drift — full suite red"
+  echo "=========================================="
+  echo "  $drift_evidence"
+  die "spec drift detected — review failing tests, fix the plan or spec, and re-run"
+fi
+
 consult_em "DRIFT" "$drift_evidence"
 if [ "$DIAG_VERDICT" = "decomposition_wrong" ] && [ "$(plan_revisions_used)" -lt "$MAX_PLAN_REVISIONS" ]; then
   write_state plan_revisions $(( $(plan_revisions_used) + 1 ))
