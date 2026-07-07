@@ -110,14 +110,18 @@ FROZEN_V=$(cat "$APPROVED/VERSION")
 # D-55 round-trip smoke test: a bug in the model-call path is invisible to
 # static review — only a real round-trip catches it (correction log 2026-07-03).
 # Runs last in pre-flight: all free checks (hooksPath, clean tree, manifest)
-# pass before we spend a model call.
-echo "  LLM round-trip smoke test..."
+# pass before we spend a model call. The budget must absorb a COLD model
+# start — LM Studio loads the mapped model on first request, and a large
+# model takes minutes, not seconds (testchat M6: 30s budget, 122B EM, false
+# pre-flight failure).
+SMOKE_MAX_TIME="${SMOKE_MAX_TIME:-240}"
+echo "  LLM round-trip smoke test (budget ${SMOKE_MAX_TIME}s — cold model start counts)..."
 _smoke_sys=$(mktemp)
 printf 'You are a test probe. Reply with exactly the text the user sends.' > "$_smoke_sys"
-SMOKE_REPLY=$(printf 'SMOKE_OK' | scripts/llm-call.sh em "$_smoke_sys" --max-time 30 2>/dev/null || true)
+SMOKE_REPLY=$(printf 'SMOKE_OK' | scripts/llm-call.sh em "$_smoke_sys" --max-time "$SMOKE_MAX_TIME" 2>/dev/null || true)
 rm -f "$_smoke_sys"
 [ -n "$SMOKE_REPLY" ] \
-  || die "LLM smoke test failed — llm-call.sh returned empty output for a trivial prompt (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server)"
+  || die "LLM smoke test failed — llm-call.sh returned empty output for a trivial prompt within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised)"
 echo "OK (frozen spec v$FROZEN_V)"
 
 # --- Parse .gate-paths for the build lane ---
