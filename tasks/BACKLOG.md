@@ -20,6 +20,12 @@
 
 ## Up Next
 
+### Browser oracle: the frozen suite learns to see the frontend
+**Priority:** P1
+**Why:** M5 and M6 both went green over a broken app; frontend ACs are invisible to pytest, so the real oracle became the CEO running post-hoc demos and hand-fixes that the next milestone regresses (think-toggle broke twice). Spec: `tasks/HANDOFF-browser-oracle.md`. Metric to drive to zero: hand-fix commits after `[success]`.
+**Rough size:** Medium-large
+**Depends on:** arm64 chromium spike in the VM (constraint 5 of the handoff)
+
 ### Fast path: skip the coder when mapped tests already pass
 **Priority:** P2
 **Why:** M4 observation — the loop calls the coder even when the task's file already passes its mapped tests. Deliberately NOT implemented pre-VM: accepting pre-existing code means accepting code of unknown provenance, which legitimizes conductor lane-crossing. Once conductors live inside the VM (lanes structural), pre-passing code can only be previously-accepted state, and the skip becomes safe and saves the slowest step in the pipeline.
@@ -60,3 +66,7 @@
 | validate-plan: regression bucket for carried-forward tests | 2026-07-05 | `c111442` — chosen semantics: plan-level `regression` array, accepted by the final full-suite pass; 24/24 selftests |
 | Spec-drift policy decided | 2026-07-05 | D-54: test surface is binding, ERD prose is advisory; deviations must be reported, refreeze re-trues drifted prose. CEO delegated the call. |
 | Linux Dev VM for zero-prompt agent operation | 2026-07-06 | `c7c78c4`..`68ba1da` — Lima VM provisioned (4 CPU/8 GiB, virtiofs, Podman native), D-55 parameterization, OSC 52 shims, conductors installed. Acceptance pending: first unattended orchestrate.sh run inside the VM. |
+| D-57: carried-forward regression bucket computed by the shell | 2026-07-07 | `c92c06f` — testchat M6: EM failed twice transcribing 58 ids; ownership signal from import/route reachability; 33/33 selftests |
+| Smoke-test budget for cold model starts (SMOKE_MAX_TIME, 240s) | 2026-07-07 | `9789c1e` — M6 false pre-flight failure on cold 122B EM |
+| MAX_PLAN_REVISIONS default 2 | 2026-07-07 | `b380326` — validator feedback loop fixes plans on second emit |
+| refreeze surfaces D-56 externals count at the approval gate | 2026-07-07 | `1705dfc` — testchat froze v8/v9 with externals undeclared; the capture gate had never fired |
