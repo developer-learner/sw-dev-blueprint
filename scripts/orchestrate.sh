@@ -29,7 +29,7 @@ set -euo pipefail
 
 MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-1}"      # coder attempts per brief (default: 1 = fail-fast)
 MAX_BRIEF_REVISIONS="${MAX_BRIEF_REVISIONS:-1}" # EM brief_wrong rewrites per task
-MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-1}"   # EM plan re-emits per run (validation retries + decomposition_wrong)
+MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"   # EM plan re-emits per run (validation retries + decomposition_wrong); default 2: the validator's error feedback demonstrably fixes plans on the second emit (testchat M6)
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
