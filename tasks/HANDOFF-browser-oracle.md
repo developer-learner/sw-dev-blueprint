@@ -1,9 +1,20 @@
 # Handoff: Browser Oracle — the frozen suite learns to see the frontend (2026-07-07)
 
-> Template milestone spec. Status: **specced, not started.** Validation
-> vehicle: testchat M7 (see Acceptance). Companion fixes already landed:
-> D-57 (mechanized regression bucket), SMOKE_MAX_TIME, MAX_PLAN_REVISIONS=2,
-> refreeze D-56 visibility.
+> Template milestone spec. Status: **spike PASSED (2026-07-07) — build can
+> proceed.** Validation vehicle: testchat M7 (see Acceptance). Companion
+> fixes already landed: D-57 (mechanized regression bucket), SMOKE_MAX_TIME,
+> MAX_PLAN_REVISIONS=2, refreeze D-56 visibility.
+>
+> **Spike results (constraint 5 discharged):** arm64 chromium + Playwright
+> ran green inside the real sandbox contract (repo RO, `--network none`,
+> `--cap-drop=ALL`, no-new-privileges, keep-id, tmpfs HOME) on first
+> attempt, no workarounds. Warm test 0.68s including uvicorn + browser
+> launch. Measured image delta: **+1.2 GB** (1.92 GB vs 717 MB base —
+> `playwright install --with-deps chromium` alone is 1.35 GB), not the
+> ~400–500 MB constraint 4 estimated. Accepted; if it ever matters,
+> `playwright install --only-shell` plus a hand-picked dep list (instead of
+> `--with-deps`, which pulls xvfb/mesa/fonts/X11 a headless run may not
+> need) would reclaim a chunk.
 
 ## Motivation (evidence, not theory)
 
@@ -119,6 +130,7 @@ Sandbox container (unchanged contract: repo RO, lanes RW, --network none)
 
 1. **Spike green:** a trivial FastAPI page + one Playwright test runs green
    via `sandbox-run.sh` inside the VM, `--network none`, repo RO.
+   ✅ DONE 2026-07-07 — see spike results in the header.
 2. **Surface gate:** `check-test-surface.py` rejects a staged UI test using
    a raw CSS selector; accepts the same test via a locked testid.
    Selftests cover both directions (same pattern as the route selftests).
