@@ -246,6 +246,31 @@ echo "  Re-freeze: spec v$V -> v$NEW"
 echo "=============================================="
 cat "$DIFF_FILE"
 
+# --- D-56 visibility: the capture gate only fires on DECLARED externals, and
+# nothing mechanical can prove a spec touches no external interface. Surface
+# the declaration count at the human gate — the one actor who knows what the
+# milestone talks to — with a heuristic upgrade when staged artifacts
+# reference URLs. (testchat froze v8 and v9 with externals undeclared; the
+# gate D-56 built never fired.)
+EXT_COUNT=$(SWBP_C="$EXT_CONTRACTS" python3 -c \
+  "import json,os; print(len(json.load(open(os.environ['SWBP_C'])).get('externals') or []))" \
+  2>/dev/null || echo 0)
+if [ "$EXT_COUNT" -eq 0 ]; then
+  echo ""
+  echo "  NOTE (D-56): this delta declares ZERO external interfaces."
+  echo "  If the spec assumes ANY third-party API, wire format, or model"
+  echo "  output shape, HALT and demand probes+captures from the TPM first —"
+  echo "  the M5 green-suite/broken-app failure entered exactly here."
+  _http_hits=$( { grep -rlE 'https?://' "$IN/tests" "$IN/contracts.json" 2>/dev/null || true; } | head -5)
+  if [ -n "$_http_hits" ]; then
+    echo "  WARNING: staged artifacts reference http(s):// URLs — likely undeclared externals:"
+    echo "$_http_hits" | sed 's/^/    /'
+  fi
+else
+  echo ""
+  echo "  D-56: $EXT_COUNT declared external interface(s); captures verified above."
+fi
+
 if [ "$MODE" = "diff" ]; then
   echo ""
   echo "DIFF-SHA: $DIFF_SHA"
