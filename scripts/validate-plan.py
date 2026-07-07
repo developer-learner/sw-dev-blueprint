@@ -8,10 +8,12 @@ integration:
   - structural: schema shape, no unknown keys, no status field, id format
   - atomicity:  exactly one file per task, unique, under the build lane
   - coverage:   every file in the frozen ERD inventory has exactly one task
-  - oracle:     every frozen TPM test node-id mapped to exactly one task, or
-                listed once in plan.regression (carried-forward tests whose
-                files are not in this delta's build inventory; the final
-                full-suite run is their acceptance point)
+  - oracle:     every frozen TPM test node-id that observably exercises this
+                delta's inventory (module-level import of a task-owned module,
+                or an AST-visible call to a route a task claims) is mapped to
+                exactly one task; the rest are carried-forward regression
+                tests, COMPUTED here — never EM-emitted (D-57) — whose
+                acceptance point is the final full-suite run
   - contracts:  every referenced contract id exists in the frozen contracts
   - DAG:        dependencies exist, no self-deps, acyclic (Kahn)
   - routing:    a mapped test that exercises an HTTP route (AST-visible
@@ -49,6 +51,10 @@ TASK_REQUIRED = {"id", "file", "depends_on", "brief", "contracts", "tests"}
 TASK_ALLOWED = TASK_REQUIRED
 MAX_BRIEF_CHARS = 2500
 VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
+
+# Carried-forward node-ids computed by the last validate() call (D-57).
+# Informational — the final full-suite run covers them regardless.
+AUTO_REGRESSION: list = []
 
 
 def fail(msgs):
@@ -124,12 +130,13 @@ def validate():
     if not isinstance(plan, dict):
         fail(["plan must be a JSON object"])
     for key in list(plan):
-        if key not in ("version", "erd_version", "tasks", "regression"):
+        if key == "regression":
+            errs.append(
+                "plan carries a 'regression' key — the shell computes the "
+                "carried-forward bucket itself; the EM never emits it (D-57)"
+            )
+        elif key not in ("version", "erd_version", "tasks"):
             errs.append(f"unknown top-level key: {key}")
-    regression = plan.get("regression", [])
-    if not isinstance(regression, list) or not all(isinstance(x, str) for x in regression):
-        errs.append("plan.regression must be an array of frozen test node-id strings")
-        regression = []
     for key in ("version", "erd_version"):
         if not isinstance(plan.get(key), int) or plan.get(key, 0) < 1:
             errs.append(f"plan.{key} must be an integer >= 1")
@@ -257,30 +264,18 @@ def validate():
         if bad:
             errs.append(f"task {t['id']} references unknown contract id(s): {bad}")
 
-    # oracle projection — every frozen node-id mapped to EXACTLY one task,
-    # or listed once in plan.regression (carried-forward tests: their files
-    # are not in this delta's build inventory, so no task can own them; the
-    # final full-suite run is their acceptance point — testchat M2 proved
-    # the EM structurally cannot emit a valid plan without this bucket).
+    # oracle projection, part 1 — mapped node-ids must exist in the frozen
+    # suite and be mapped at most once. Whether every node-id that NEEDS a
+    # task has one is checked after the reachability machinery below, which
+    # supplies the ownership signal (D-57: the carried-forward bucket is
+    # computed, never EM-emitted — testchat M6 proved transcribing 58 ids
+    # into JSON is the EM tier's dominant failure mode, and the split is
+    # mechanically derivable).
     mapped = [n for t in tasks for n in t["tests"]]
     frozen_set = set(frozen_nodeids)
     unknown_map = sorted(set(mapped) - frozen_set)
     if unknown_map:
         errs.append(f"mapped test node-id(s) not in the frozen suite: {unknown_map}")
-    unknown_reg = sorted(set(regression) - frozen_set)
-    if unknown_reg:
-        errs.append(f"regression node-id(s) not in the frozen suite: {unknown_reg}")
-    dup_reg = sorted({n for n in regression if regression.count(n) > 1})
-    if dup_reg:
-        errs.append(f"regression node-id(s) listed more than once: {dup_reg}")
-    overlap = sorted(set(regression) & set(mapped))
-    if overlap:
-        errs.append(f"node-id(s) both in regression and mapped to a task: {overlap}")
-    unmapped = sorted(frozen_set - set(mapped) - set(regression))
-    if unmapped:
-        errs.append(
-            f"frozen test node-id(s) mapped to no task (decomposition incomplete): {unmapped}"
-        )
     overmapped = sorted({n for n in mapped if mapped.count(n) > 1})
     if overmapped:
         errs.append(f"test node-id(s) mapped to more than one task: {overmapped}")
@@ -457,6 +452,34 @@ def validate():
                         f"{t['id']}'s depends_on."
                     )
 
+    # oracle projection, part 2 (D-57) — the carried-forward split, computed
+    # from the same ownership signals the reachability gates already extract:
+    # an unmapped frozen node-id whose test file imports a task-owned module,
+    # or whose test body hits a route some task claims, belongs to THIS delta
+    # and must be mapped — decomposition incomplete. Everything else is a
+    # carried-forward regression test, auto-assigned; the final full-suite
+    # run is its acceptance point. Fail-open by construction: a dynamic
+    # import or built-up path hides the signal, which can only move a test
+    # INTO regression — it still gates the run at the end, just not per-task.
+    AUTO_REGRESSION.clear()
+    for n in sorted(frozen_set - set(mapped)):
+        tf = n.split("::")[0]
+        owned = bool(file_imports(tf))
+        if not owned:
+            for rid in test_routes(n):
+                if claimers.get(rid):
+                    owned = True
+                    break
+        if owned:
+            errs.append(
+                f"frozen node-id {n} is mapped to no task, but its test "
+                f"observably exercises this delta's inventory (module import "
+                f"or claimed route) — decomposition incomplete: map it to "
+                f"the task after which it should pass"
+            )
+        else:
+            AUTO_REGRESSION.append(n)
+
     if errs:
         fail(errs)
 
@@ -520,6 +543,12 @@ def main(argv):
     if not argv:
         validate()
         print("plan ok")
+        if AUTO_REGRESSION:
+            print(
+                f"validate-plan: {len(AUTO_REGRESSION)} carried-forward "
+                f"node-id(s) auto-assigned to regression (final full-suite "
+                f"acceptance, D-57)", file=sys.stderr,
+            )
         return
     if argv[0] == "--topo":
         _, order = validate()

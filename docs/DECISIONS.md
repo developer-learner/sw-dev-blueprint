@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-57 — 2026-07-07 — The carried-forward regression bucket is computed by the shell, never emitted by the EM
+
+**Decision:** `plan.regression` is retired. `validate-plan.py` now computes the carried-forward split itself, from the ownership signals its reachability gates already extract: an unmapped frozen node-id whose test file imports a task-owned module at module level, or whose test body makes an AST-visible call to a route some task claims, belongs to this delta and MUST be mapped (decomposition incomplete, named per node-id); every other unmapped node-id is a carried-forward regression test, auto-assigned, with the final full-suite run as its acceptance point. A plan carrying a `regression` key is rejected outright (same class as status fields — orchestrator bookkeeping is never the EM's to emit). The plan schema drops the field, so schema-constrained generation cannot produce it. Fail-open by construction: a dynamic import or built-up path hides the ownership signal, which can only move a test INTO regression — it still gates the run at the end, just not per-task. Mapped-but-unownable node-ids remain legal (the EM may know a relationship the AST cannot see).
+
+**Found by:** testchat M6 (2026-07-07). The EM (a 122B model) failed twice to transcribe the 58-element regression array into valid JSON, and the conductor hand-wrote `tasks/plan.json` on CEO order — a lane violation by fiat in the first milestone where the conductor otherwise stayed in-lane. The bucket's definition ("node-ids testing files not in this delta's inventory") requires no judgment; asking the least reliable tier to do derivable bookkeeping was the pipeline outsourcing its own job.
+
+**Alternatives considered:** keeping EM-emitted regression with more revisions (rejected — bench data shows the EM task is structured output, not intelligence; the failure mode is transcription volume, which grows with every milestone as the suite accretes); auto-bucketing ALL unmapped node-ids with no ownership check (rejected — a lazy or degenerate EM could map nothing and every test would silently drift to end-of-run acceptance; the ownership signal keeps per-task early failure detection mechanically demanded exactly where it is mechanically derivable).
+
+**Do not suggest:** Re-adding a regression field to the plan schema "for EM transparency"; making mapped-but-unownable node-ids an error (the AST signal is deliberately fail-open); pre-filtering test-nodeids out of the EM's context based on ownership — the EM still needs the full list to map from.
+
+---
+
 ## D-56 — 2026-07-06 — External interfaces enter the spec only as captured reality (contracts.externals + frozen captures)
 
 **Decision:** `contracts.json` gains an optional `externals` array: every external interface the spec makes assumptions about (third-party APIs, model output/streaming formats, wire protocols) is declared as `{id, probe, capture}`. The `probe` is the exact command the operator ran against the real dependency; the `capture` is its raw recorded output, staged under `captures/` and installed to `scripts/.approved/captures/`, hash-pinned in the frozen manifest like every other frozen artifact. `refreeze.sh` fails closed if a declared capture is missing (or is invalid JSON for `.json` captures), and rejects staged captures no external references. The TPM authors mocks and tests from captures, never from memory of how the dependency probably behaves; the probe-first loop (TPM requests probes → operator runs them → pastes raw output) happens before spec authoring.

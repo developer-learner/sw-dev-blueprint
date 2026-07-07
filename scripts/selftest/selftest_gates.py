@@ -136,15 +136,24 @@ def test_stale_erd_version_fails(repo):
 
 
 def test_unmapped_frozen_nodeid_fails(repo):
+    """An unmapped node-id whose test file imports a task-owned module is a
+    decomposition hole (D-57: only observably-owned tests demand a mapping)."""
     plan = good_plan()
     plan["tasks"][1]["tests"] = []
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_b.py").write_text(
+        "import src.b\n"
+        "def test_two():\n"
+        "    assert True\n"
+    )
     # smoke_check now lives in contracts, not in the plan
     contracts = CONTRACTS.copy()
-    contracts["smoke_checks"] = {"src/b.py": "python -c 'import src.b'"}
+    contracts["smoke_checks"] = {"src/b.py": "python3 -c 'import src.b'"}
     (repo / "scripts" / ".approved" / "contracts.json").write_text(json.dumps(contracts))
     r = run_validate(repo, plan)
     assert r.returncode == 1
     assert "mapped to no task" in r.stderr
+    assert "decomposition incomplete" in r.stderr
 
 
 def test_unknown_contract_id_fails(repo):
@@ -245,32 +254,55 @@ def test_brief_at_max_chars_passes(repo):
     assert r.returncode == 0, r.stderr
 
 
-def test_regression_bucket_passes(repo):
-    """Carried-forward node-ids in plan.regression need no task mapping."""
-    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
-        "\n".join(NODEIDS + ["tests/test_page.py::test_carried"]) + "\n")
+def test_regression_key_rejected(repo):
+    """D-57: the EM never emits the carried-forward bucket — the shell
+    computes it. A plan carrying a 'regression' key is rejected outright."""
     plan = good_plan()
     plan["regression"] = ["tests/test_page.py::test_carried"]
     r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "regression" in r.stderr
+    assert "never emits" in r.stderr
+
+
+def test_carried_forward_auto_assigned(repo):
+    """D-57: an unmapped node-id with no ownership signal (no task-owned
+    import, no claimed route) is a carried-forward regression test — the
+    plan passes with it unmapped, and validate reports the auto-assignment."""
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
+        "\n".join(NODEIDS + ["tests/test_page.py::test_carried"]) + "\n")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_page.py").write_text(
+        "from src.main import app\n"  # pre-existing module, not in inventory
+        "def test_carried():\n"
+        "    assert True\n"
+    )
+    plan = good_plan()
+    r = run_validate(repo, plan)
     assert r.returncode == 0, r.stderr
+    assert "1 carried-forward" in r.stderr
 
 
-def test_regression_overlap_with_task_fails(repo):
-    """A node-id cannot be both in regression and mapped to a task."""
-    plan = good_plan()
-    plan["regression"] = ["tests/test_a.py::test_one"]  # already mapped to T1
+def test_unmapped_route_test_fails(repo):
+    """D-57 ownership via routes: an unmapped node-id whose test hits a
+    route some task claims belongs to this delta and must be mapped."""
+    contracts = dict(CONTRACTS, routes=[
+        {"id": "route-items", "method": "GET", "path": "/items"},
+    ])
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(contracts))
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
+        "\n".join(NODEIDS + ["tests/test_items.py::test_list"]) + "\n")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_items.py").write_text(
+        "def test_list(client):\n"
+        "    assert client.get('/items').status_code == 200\n"
+    )
+    plan = good_plan()  # T2 claims route-items; test_list is unmapped
     r = run_validate(repo, plan)
     assert r.returncode == 1
-    assert "both in regression" in r.stderr
-
-
-def test_regression_unknown_nodeid_fails(repo):
-    """regression entries must exist in the frozen suite."""
-    plan = good_plan()
-    plan["regression"] = ["tests/test_ghost.py::test_nope"]
-    r = run_validate(repo, plan)
-    assert r.returncode == 1
-    assert "not in the frozen suite" in r.stderr
+    assert "tests/test_items.py::test_list" in r.stderr
+    assert "decomposition incomplete" in r.stderr
 
 
 # --- route reachability (testchat M5) ----------------------------------------

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "sw-dev-blueprint task plan (tasks/plan.json)",
-  "description": "The EM's decomposition of the frozen ERD into atomic one-file tasks. This artifact is the EM's ONLY channel of authority: the shell orchestrator validates it with scripts/validate-plan.py before any coder runs, walks it in topological order, and owns all status/completion state itself. There is deliberately NO status field — the EM never marks anything done (D-26). Cross-file semantic checks (unique files, ERD-inventory coverage, exactly-once test mapping, acyclic DAG, contract-id existence) live in validate-plan.py, not in this schema.",
+  "description": "The EM's decomposition of the frozen ERD into atomic one-file tasks. This artifact is the EM's ONLY channel of authority: the shell orchestrator validates it with scripts/validate-plan.py before any coder runs, walks it in topological order, and owns all status/completion state itself. There is deliberately NO status field — the EM never marks anything done (D-26) — and NO regression field: the shell computes the carried-forward test bucket itself (D-57). Cross-file semantic checks (unique files, ERD-inventory coverage, test mapping, acyclic DAG, contract-id existence) live in validate-plan.py, not in this schema.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "erd_version", "tasks"],
@@ -15,11 +15,6 @@
       "type": "integer",
       "minimum": 1,
       "description": "The scripts/.approved/VERSION this plan was derived from. A plan whose erd_version lags the frozen VERSION is stale and fails validation."
-    },
-    "regression": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "OPTIONAL. Frozen test node-ids for carried-forward behavior — tests whose files are NOT in this delta's build inventory (contracts.files) and therefore belong to no task. They gate the run only via the final full-suite pass, never per-task. Each frozen node-id must appear exactly once across all tasks' tests arrays and this list combined."
     },
     "tasks": {
       "type": "array",
