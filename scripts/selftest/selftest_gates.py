@@ -522,6 +522,22 @@ def test_diagnosis_valid_brief_wrong_passes(repo):
     assert "brief_wrong" in r.stdout
 
 
+def test_plan_may_reference_ui_and_external_contract_ids(repo):
+    """D-58 halt (testchat M7): the EM correctly listed the ui:* contracts a
+    frontend task implements and the gate rejected them as unknown ids —
+    every id-bearing contracts array must feed the known-id set."""
+    contracts = {
+        **CONTRACTS,
+        "ui": [{"id": "ui:send", "testid": "send-btn", "description": "send"}],
+        "externals": [{"id": "external:svc", "probe": "curl x", "capture": "captures/x.json"}],
+    }
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(json.dumps(contracts))
+    plan = good_plan()
+    plan["tasks"][1]["contracts"] = ["src.b:handler", "ui:send", "external:svc"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
 # --- check-test-surface.py (INV-4) ------------------------------------------
 
 def test_clean_surface_passes(tmp_path):

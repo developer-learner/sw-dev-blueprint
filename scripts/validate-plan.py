@@ -87,7 +87,7 @@ def build_dir():
 
 def contract_ids(contracts):
     ids = set(contracts.get("entry_points", []))
-    for key in ("routes", "schemas", "errors"):
+    for key in ("routes", "schemas", "errors", "externals", "ui"):
         for entry in contracts.get(key, []):
             if isinstance(entry, dict) and "id" in entry:
                 ids.add(entry["id"])
