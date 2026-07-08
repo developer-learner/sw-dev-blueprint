@@ -223,6 +223,15 @@ path, raw_path = sys.argv[1], sys.argv[2]
 text = open(raw_path).read()
 m = re.search(r"^=== FILE: (.+?) ===\n(.*?)\n=== END FILE ===$", text, re.M | re.S)
 if not m:
+    # Tolerant pass (testchat M7): a local coder glued the opening sentinel to
+    # the tail of its own prose ('- "hello === FILE: ... ===') and a complete,
+    # well-formed file followed. Accept an opening sentinel anywhere on a line
+    # — the distinctive token cannot occur in generated file content by
+    # accident without the closing pair also parsing. Content rules unchanged.
+    m = re.search(r"=== FILE: (.+?) ===\n(.*?)\n=== END FILE ===$", text, re.M | re.S)
+    if m:
+        print("warning: opening sentinel was mid-line — accepted by tolerant pass", file=sys.stderr)
+if not m:
     sys.exit("coder reply had no '=== FILE: ... ===' block")
 got_path, content = m.group(1).strip(), m.group(2)
 if got_path != path:
