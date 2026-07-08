@@ -138,6 +138,12 @@ if [ "$FROZEN_V" != "$LAST_V" ]; then
   SPEC_ADVANCED=1
   echo "frozen spec advanced v$LAST_V -> v$FROZEN_V"
   rm -rf "$ESC_DIR"; mkdir -p "$ESC_DIR"   # bundles answered by this delta are consumed
+  # The EM plan-revision budget is per freeze; spent revisions belong to the
+  # old spec (or to a gate defect fixed alongside it — testchat M7: two
+  # revisions burned against a validator bug persisted into every later run,
+  # with no sanctioned reset path). spec_version advances only after a plan
+  # validates, so a pre-plan halt always lands back here on the next run.
+  write_state plan_revisions 0
 fi
 
 # --- Agent runners (D-53) ----------------------------------------------------
