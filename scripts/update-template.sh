@@ -8,15 +8,24 @@
 # control-plane improvements flow template -> children instead of by hand.
 #
 # Usage:
-#   update-template.sh [--from <clone-dir>] [--ref <ref>] [--dry-run]
+#   update-template.sh [--from <clone-dir>] [--ref <ref>] [--dry-run] [--review]
 #   update-template.sh --stamp [--from <clone-dir>]
 #
 #   --from     use an existing local clone of the template (else: gh repo clone
 #              into a temp dir — needs gh auth for a private template)
 #   --ref      template ref to update to (default: the clone's HEAD)
 #   --dry-run  show what would change and exit; no tty needed, nothing written
+#   --review   emit a self-contained review bundle (claims + diff + reviewer
+#              instructions) for pasting into a SECOND model before the CEO
+#              approves; no tty needed, nothing written. The CEO gate stays a
+#              human authorization — this delegates the technical reading.
 #   --stamp    only (re)write ref= in .template-version to the template's HEAD —
 #              retrofits a child created before D-33. No files are copied.
+#
+# The approval screen presents plain-language claims (the template's commit
+# messages for the update range), because the CEO's y/N is an AUTHORIZATION
+# that the control plane changed with a human aware — not a code review.
+# Correctness is carried by the template's selftests and the next run's gates.
 set -euo pipefail
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -24,12 +33,13 @@ die() { echo "UPDATE-TEMPLATE FAIL: $*" >&2; exit 1; }
 # Cross-platform sed -i (GNU vs BSD/macOS)
 sed_inplace() { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
 
-FROM=""; REF=""; DRY=0; STAMP=0
+FROM=""; REF=""; DRY=0; STAMP=0; REVIEW=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --from)    FROM="${2:?--from needs a path}"; shift 2 ;;
     --ref)     REF="${2:?--ref needs a ref}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
+    --review)  REVIEW=1; shift ;;
     --stamp)   STAMP=1; shift ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -74,21 +84,29 @@ fi
 TFILES=$(git -C "$CLONE" show "$TARGET:scripts/.manifest-template" 2>/dev/null | awk '{print $2}' | grep . ) \
   || die "template@${TARGET:0:12} has no scripts/.manifest-template — pre-D-33 ref?"
 
-# --- Diff: what would change ---
+# --- Claims: plain-language record of the update range (commit messages) ---
+BASE_REF=$(grep '^ref=' .template-version | cut -d= -f2)
+CLAIMS=$(git -C "$CLONE" log --reverse --format='— %s%n%b' "$BASE_REF..$TARGET" -- 2>/dev/null | sed -e 's/^/  /' -e 's/[[:space:]]*$//' | grep -v '^$' || true)
+[ -n "$CLAIMS" ] || CLAIMS="  (no commit-log claims available — child ref ${BASE_REF:0:12} not in this clone's history)"
+
+# --- Diff: what would change (captured, so each mode presents it its own way) ---
 CHANGED=""
+DIFF_TMP=$(mktemp)
 for f in $TFILES; do
   new_h=$(git -C "$CLONE" show "$TARGET:$f" | sha256sum | cut -d' ' -f1)
   cur_h=$([ -f "$f" ] && sha256sum "$f" | cut -d' ' -f1 || echo MISSING)
   [ "$new_h" = "$cur_h" ] && continue
   CHANGED="$CHANGED $f"
-  echo ""
-  echo "--- $f ---"
-  if [ -f "$f" ]; then
-    git -C "$CLONE" show "$TARGET:$f" | diff -u "$f" - || true
-  else
-    echo "(new file from template)"
-    git -C "$CLONE" show "$TARGET:$f" | head -40
-  fi
+  {
+    echo ""
+    echo "--- $f ---"
+    if [ -f "$f" ]; then
+      git -C "$CLONE" show "$TARGET:$f" | diff -u "$f" - || true
+    else
+      echo "(new file from template)"
+      git -C "$CLONE" show "$TARGET:$f" | head -40
+    fi
+  } >> "$DIFF_TMP"
 done
 
 # files the child tracks as template-owned that the template no longer lists
@@ -96,6 +114,30 @@ REMOVED=$(comm -23 \
   <(awk '{print $2}' scripts/.manifest-template | sort) \
   <(printf '%s\n' $TFILES | sort) )
 
+# --- Review-bundle mode: everything a second model needs, nothing written ---
+if [ "$REVIEW" = "1" ]; then
+  if [ -z "$CHANGED" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi
+  echo "=== REVIEW BUNDLE: template update -> $SLUG @ ${TARGET:0:12} ==="
+  echo ""
+  echo "You are a cold adversarial reviewer. Below are (1) CLAIMS — what the"
+  echo "author says this control-plane update does and why — and (2) the full"
+  echo "DIFF. Judge exactly two questions:"
+  echo "  1. Does the diff do what the claims say — and NOTHING else?"
+  echo "     Name any change the claims do not account for."
+  echo "  2. What is the worst plausible failure if this diff is wrong?"
+  echo "Reply with a verdict line first — CONFIRM or MISMATCH — then your"
+  echo "reasoning. Do not soften a MISMATCH; the human approves on your word."
+  echo ""
+  echo "=== CLAIMS (template commit log, ${BASE_REF:0:12}..${TARGET:0:12}) ==="
+  echo "$CLAIMS"
+  echo ""
+  echo "=== DIFF (files:$CHANGED) ==="
+  cat "$DIFF_TMP"
+  echo "=== END REVIEW BUNDLE ==="
+  exit 0
+fi
+
+cat "$DIFF_TMP"
 if [ -z "$CHANGED" ]; then
   echo "control plane already matches template@${TARGET:0:12}"
 else
@@ -104,6 +146,14 @@ else
   echo "  Template update -> $SLUG @ ${TARGET:0:12}"
   echo "  Files:$CHANGED"
   [ -n "$REMOVED" ] && { echo "  Removed upstream (delete manually if agreed):"; echo "$REMOVED" | sed 's/^/    /'; }
+  echo ""
+  echo "  What you are approving (the template's own commit messages):"
+  echo "$CLAIMS"
+  echo ""
+  echo "  Your y/N is an authorization — a human aware the pipeline's rules"
+  echo "  are changing — not a code review. Correctness is carried by the"
+  echo "  template's selftests and the next run's gates. To have a second"
+  echo "  model read the diff first:  scripts/update-template.sh --review"
   echo "=============================================="
 fi
 
