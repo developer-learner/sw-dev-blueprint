@@ -138,12 +138,19 @@ if [ "$FROZEN_V" != "$LAST_V" ]; then
   SPEC_ADVANCED=1
   echo "frozen spec advanced v$LAST_V -> v$FROZEN_V"
   rm -rf "$ESC_DIR"; mkdir -p "$ESC_DIR"   # bundles answered by this delta are consumed
-  # The EM plan-revision budget is per freeze; spent revisions belong to the
-  # old spec (or to a gate defect fixed alongside it — testchat M7: two
-  # revisions burned against a validator bug persisted into every later run,
-  # with no sanctioned reset path). spec_version advances only after a plan
-  # validates, so a pre-plan halt always lands back here on the next run.
+fi
+
+# --- Plan-revision budget is per freeze: keyed to the spec version itself.
+# NOT keyed to the spec-advance event above — spec_version is only written
+# after a plan validates, so a pre-plan halt leaves it missing and the
+# ${LAST_V:-$FROZEN_V} default masks the advance forever (testchat M7: two
+# revisions burned against a validator bug blocked every later run, twice —
+# the first fix keyed to the advance event and never fired). Same-spec
+# re-runs keep their spent budget: refreshing it needs either a re-freeze
+# or the CEO clearing .pipeline-state/plan_revisions* by hand.
+if [ "$(read_state plan_revisions_spec)" != "$FROZEN_V" ]; then
   write_state plan_revisions 0
+  write_state plan_revisions_spec "$FROZEN_V"
 fi
 
 # --- Agent runners (D-53) ----------------------------------------------------
@@ -288,7 +295,10 @@ ensure_plan() {
     revs=$(plan_revisions_used)
     [ "$revs" -lt "$MAX_PLAN_REVISIONS" ] || {
       echo "$verrs"
-      die "plan invalid after $revs EM revisions — halting for the human (Rule 4)"
+      die "plan invalid after $revs EM revisions — halting for the human (Rule 4).
+  If the halt's cause was fixed OUTSIDE the spec (e.g. a gate defect), the CEO
+  may refresh the budget: rm .pipeline-state/plan_revisions*   — otherwise the
+  fix belongs in a re-freeze, which refreshes it automatically."
     }
     write_state plan_revisions $((revs + 1))
     echo "=== EM: emit/revise plan (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
