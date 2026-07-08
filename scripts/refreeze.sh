@@ -114,6 +114,22 @@ PYEOF
   esac
 done
 
+# --- Determinism gate for staged UI tests (D-58): a flaky frozen test is a
+# spec defect, zero retries. Sleeps and timeout-tuned waits are the flake
+# factory — reject them at the door; Playwright auto-waiting is the law.
+for f in $CHANGED_TEST_FILES; do
+  case "$f" in
+    *.py)
+      if grep -qE '^\s*(import playwright|from playwright)' "$IN/$f"; then
+        BAD=$(grep -nE 'time\.sleep|wait_for_timeout' "$IN/$f" || true)
+        [ -z "$BAD" ] || die "staged UI test $f uses sleep/timeout waits (D-58 determinism gate):
+$BAD
+  -> rely on Playwright auto-waiting (expect(), locator actions); fix the TPM output and restage"
+      fi
+      ;;
+  esac
+done
+
 # --- First freeze must be a complete spec ---
 if [ "$V" -eq 0 ]; then
   for f in PRD.md ERD.md contracts.json; do

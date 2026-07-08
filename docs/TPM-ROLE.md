@@ -79,6 +79,25 @@ This is what moved up the ladder and why the role exists at frontier tier:
   is not written yet, by design. Tests may observe ONLY the locked surface:
   import from `contracts.entry_points`, call routes from `contracts.routes`
   (INV-4 — `scripts/check-test-surface.py` rejects the freeze otherwise).
+- **UI behavior is tested in the browser, through locked testids (D-58).**
+  When a milestone has user-visible behavior, you author Playwright-for-
+  Python tests as ordinary members of the frozen suite, and you lock the DOM
+  surface they observe in `contracts.ui` (`{id, testid, description}`) — the
+  implementation must carry those `data-testid` attributes (they reach the
+  coder via the contracts), and your tests locate elements ONLY by them:
+  `get_by_test_id(...)` or `[data-testid=...]` literals. Role/text/CSS/XPath
+  location is rejected at freeze time, exactly as unlocked imports are.
+  Authoring rules, mechanically enforced where cheap: rely on Playwright
+  auto-waiting — `refreeze.sh` rejects `time.sleep`/`wait_for_timeout` in UI
+  tests; no animation-dependent assertions; fixed viewport. **Zero retries:
+  a flaky UI test is a spec defect and comes back to you.** Every AC that
+  describes user-visible behavior must map to at least one frozen UI
+  node-id, or carry an explicit `manual-only:` waiver with a reason in the
+  PRD — the CEO demo remains (D-44), but it is no longer the frontend's only
+  oracle. This exists because testchat M6 froze green while the committed
+  frontend discarded think-events and locked the model selector globally —
+  pytest cannot see browser-executed JS, so the ACs were checked by no one
+  until the demo.
 
 Deliver all artifacts as complete files (never fragments) in the staging
 layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`, `contracts.json`,

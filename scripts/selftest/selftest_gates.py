@@ -565,6 +565,71 @@ def test_param_route_template_matches(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
+# --- check-test-surface.py UI extension (D-58) ------------------------------
+
+CONTRACTS_UI = {
+    **CONTRACTS,
+    "ui": [
+        {"id": "ui:send", "testid": "send-btn", "description": "send button"},
+        {"id": "ui:input", "testid": "message-input", "description": "message box"},
+    ],
+}
+
+UI_PREAMBLE = "from playwright.sync_api import Page\n"
+
+
+def test_ui_locked_testid_passes(tmp_path):
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE
+        + "def test_send(page: Page):\n"
+        + "    page.get_by_test_id('message-input').fill('hi')\n"
+        + "    page.get_by_test_id('send-btn').click()\n"
+    ))
+    assert r.returncode == 0, r.stderr
+
+
+def test_ui_unlocked_testid_fails(tmp_path):
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE + "def test_x(page):\n    page.get_by_test_id('sidebar').click()\n"
+    ))
+    assert r.returncode == 1
+    assert "sidebar" in r.stderr
+
+
+def test_ui_raw_css_selector_fails(tmp_path):
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE + "def test_x(page):\n    page.locator('.chat-bubble').click()\n"
+    ))
+    assert r.returncode == 1
+    assert ".chat-bubble" in r.stderr
+
+
+def test_ui_data_testid_selector_literal_passes(tmp_path):
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE
+        + "def test_x(page):\n"
+        + "    page.locator('[data-testid=\"send-btn\"]').click()\n"
+    ))
+    assert r.returncode == 0, r.stderr
+
+
+def test_ui_role_locator_fails(tmp_path):
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE + "def test_x(page):\n    page.get_by_role('button').click()\n"
+    ))
+    assert r.returncode == 1
+    assert "role/text/label" in r.stderr
+
+
+def test_ui_rules_ignore_non_playwright_files(tmp_path):
+    """A backend test using .locator-ish strings is untouched by the UI gate."""
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        "def test_items(client):\n"
+        "    assert client.get('/items').status_code == 200\n"
+    ))
+    assert r.returncode == 0, r.stderr
+
+
 def test_missing_contracts_is_usage_error(tmp_path):
     tests_dir = tmp_path / "frozen-tests"
     tests_dir.mkdir()

@@ -21,6 +21,11 @@ Checks:
   2. every route-shaped string passed to an HTTP-client verb call
      (.get("/x"), .post(f"/y/{id}") ...) matches a declared route path
      template, segment-by-segment ({param} segments match anything)
+  3. (D-58) a test file that imports playwright locates elements only via
+     testids locked in contracts.ui: `get_by_test_id("...")` and
+     `[data-testid=...]` selector literals must name a locked testid;
+     role/text/label/placeholder-based locators and raw CSS/XPath selection
+     are rejected — the DOM surface tests observe is locked like routes are
 
 Usage: check-test-surface.py [--tests-dir tests] [--contracts scripts/.approved/contracts.json]
 Exit: 0 clean · 1 violations (listed on stderr) · 2 usage/input error
@@ -34,6 +39,24 @@ IMPORT_FROM = re.compile(r"^\s*from\s+(src[\w.]*)\s+import\s+(.+?)\s*(?:#.*)?$")
 IMPORT_MOD = re.compile(r"^\s*import\s+(src[\w.]*)")
 ROUTE_CALL = re.compile(
     r"\.\s*(?:get|post|put|delete|patch|head|options|request)\s*\(\s*f?[\"'](/[^\"']*)[\"']"
+)
+PLAYWRIGHT_IMPORT = re.compile(r"^\s*(?:import\s+playwright|from\s+playwright[\w.]*\s+import)")
+GET_BY_TEST_ID = re.compile(r"get_by_test_id\s*\(\s*[\"']([^\"']+)[\"']")
+DATA_TESTID_SEL = re.compile(r"\[\s*data-testid\s*=\s*[\"']?([^\"'\]]+?)[\"']?\s*\]")
+# element location that bypasses testids entirely (role/text/... locators)
+NON_TESTID_LOCATOR = re.compile(
+    r"\.\s*get_by_(?:role|text|label|placeholder|title|alt_text)\s*\("
+)
+# selector-taking calls: allowed only when the selector is a
+# [data-testid=...] literal (validated against contracts.ui separately)
+SELECTOR_CALL = re.compile(
+    r"\.\s*(?:locator|query_selector(?:_all)?|wait_for_selector)\s*\(\s*(['\"])((?:(?!\1).)+)\1"
+)
+# action calls whose first arg is selector-shaped (old-style page.click(sel));
+# locator-object actions like get_by_test_id(...).fill("value") don't match
+RAW_SELECTOR_ACTION = re.compile(
+    r"\.\s*(?:click|dblclick|fill|type|press|check|uncheck|hover|tap)"
+    r"\s*\(\s*[\"'](?:#|//|css=|xpath=|text=|\.[A-Za-z_])"
 )
 
 
@@ -66,6 +89,10 @@ def allowed_imports(contracts):
 
 def route_templates(contracts):
     return [r["path"] for r in contracts.get("routes", []) if isinstance(r, dict) and "path" in r]
+
+
+def locked_testids(contracts):
+    return {u["testid"] for u in contracts.get("ui", []) if isinstance(u, dict) and "testid" in u}
 
 
 def path_matches(path, template):
@@ -103,10 +130,41 @@ def main(argv):
 
     modules, symbols = allowed_imports(contracts)
     templates = route_templates(contracts)
+    testids = locked_testids(contracts)
     violations = []
 
     for f in sorted(tests_dir.rglob("*.py")):
-        for lineno, line in enumerate(f.read_text().splitlines(), 1):
+        source_lines = f.read_text().splitlines()
+        is_ui_test = any(PLAYWRIGHT_IMPORT.match(l) for l in source_lines)
+        for lineno, line in enumerate(source_lines, 1):
+            if is_ui_test:
+                for tid in GET_BY_TEST_ID.findall(line):
+                    if tid not in testids:
+                        violations.append(
+                            f"{f}:{lineno}: locates testid `{tid}` — not in contracts.ui"
+                        )
+                for tid in DATA_TESTID_SEL.findall(line):
+                    if tid not in testids:
+                        violations.append(
+                            f"{f}:{lineno}: selector names testid `{tid}` — not in contracts.ui"
+                        )
+                if NON_TESTID_LOCATOR.search(line):
+                    violations.append(
+                        f"{f}:{lineno}: locates by role/text/label — UI tests observe only "
+                        f"contracts.ui testids (D-58)"
+                    )
+                if RAW_SELECTOR_ACTION.search(line):
+                    violations.append(
+                        f"{f}:{lineno}: action takes a raw selector — UI tests observe only "
+                        f"contracts.ui testids (D-58)"
+                    )
+                for m in SELECTOR_CALL.finditer(line):
+                    sel = m.group(2)
+                    if not DATA_TESTID_SEL.search(sel):
+                        violations.append(
+                            f"{f}:{lineno}: raw selector `{sel}` — UI tests observe only "
+                            f"contracts.ui testids (D-58)"
+                        )
             m = IMPORT_FROM.match(line)
             if m:
                 mod, names = m.group(1), m.group(2)

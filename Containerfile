@@ -14,6 +14,16 @@ RUN pip install --no-cache-dir \
     pytest pytest-json-report pytest-asyncio pytest-cov ruff mypy respx \
     fastapi uvicorn httpx pydantic
 
+# Browser oracle (D-58): chromium + playwright baked at BUILD time — the
+# sandbox runs --network none, so nothing can be fetched at test time.
+# Spike-proven on aarch64 (2026-07-07): green inside the full sandbox
+# contract, +1.2 GB accepted (constraint 4; no second "light" image).
+# Shared browsers path: HOME is tmpfs in the sandbox, so the default
+# ~/.cache location would vanish — install to a fixed root-owned path.
+RUN pip install --no-cache-dir playwright pytest-playwright && \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright playwright install --with-deps chromium
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # Project deps — only if requirements.txt exists at build time.
 # Rebuild image after bootstrap.sh generates it (see BLUEPRINT.md Rule 3).
 COPY . /tmp/ctx

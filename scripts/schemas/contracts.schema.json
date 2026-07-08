@@ -80,6 +80,20 @@
       "type": "object",
       "additionalProperties": { "type": "string" },
       "description": "TPM-authored shell commands keyed by file path (from the files array). Used for files with no covering frozen test — the orchestrator runs them in the sandbox after the coder writes the file. An oracle: authored by the TPM (frontier), installed via refreeze.sh, never by the EM. Each value must be a valid shell command, not prose."
+    },
+    "ui": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "testid", "description"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable id, e.g. 'ui:send-btn'." },
+          "testid": { "type": "string", "description": "The data-testid value the implementation must carry and UI tests locate by. The ONLY DOM surface frozen tests may observe (D-58) — check-test-surface.py rejects role/text/CSS/XPath location in playwright-importing tests." },
+          "description": { "type": "string", "description": "What the element is, so the coder knows where the testid belongs." }
+        }
+      },
+      "description": "D-58: the locked DOM surface. Same principle as routes/entry_points — tests observe only what the spec locks, so the coder is free to restructure everything else. Testids reach the coder via contracts in the brief material."
     }
   }
 }
