@@ -35,6 +35,7 @@ echo "📝 Updating docs with project name..."
 find . -type f \( -name "*.md" -o -name "*.yml" -o -name "*.yaml" \) \
   -not -path "./.git/*" \
   -not -path "./.venv/*" \
+  -not -name "BLUEPRINT.md" \
   -exec "${SED_INPLACE[@]}" "s/\[PROJECT_NAME\]/$PROJECT_NAME/g" {} +
 
 # --- AGENTS.md symlink (OpenCode reads AGENTS.md; symlink keeps one source of truth) ---
