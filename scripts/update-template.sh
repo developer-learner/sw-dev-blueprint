@@ -28,7 +28,19 @@
 # Correctness is carried by the template's selftests and the next run's gates.
 set -euo pipefail
 
-cd "$(cd "$(dirname "$0")/.." && pwd -P)"
+# Self-update safety: this script is itself template-owned, so an update can
+# overwrite the file WHILE BASH IS STILL READING IT — bash resumes at the old
+# byte offset in the new content and executes garbage (testchat, 2026-07-08:
+# died mid-apply on `ho`, the tail of an `echo`). Re-exec from a disposable
+# copy before doing anything else; the repo root travels in the env var
+# because dirname "$0" points at the temp copy after the exec.
+if [ -z "${SWBP_UT_REEXEC:-}" ]; then
+  _repo="$(cd "$(dirname "$0")/.." && pwd -P)"
+  _tmp=$(mktemp)
+  cp "$0" "$_tmp"
+  SWBP_UT_REEXEC="$_repo" exec bash "$_tmp" "$@"
+fi
+cd "$SWBP_UT_REEXEC"
 die() { echo "UPDATE-TEMPLATE FAIL: $*" >&2; exit 1; }
 # Cross-platform sed -i (GNU vs BSD/macOS)
 sed_inplace() { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
