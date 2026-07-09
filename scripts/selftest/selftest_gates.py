@@ -27,6 +27,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent
 VALIDATE_PLAN = SCRIPTS / "validate-plan.py"
 CHECK_SURFACE = SCRIPTS / "check-test-surface.py"
+APPLY_BLOCKS = SCRIPTS / "apply-edit-blocks.py"
 
 # Derived from the script under test, never hardcoded: a cap bump must not
 # break these tests (it did once — 2000→2500 left two tests asserting the
@@ -644,6 +645,72 @@ def test_ui_rules_ignore_non_playwright_files(tmp_path):
         "    assert client.get('/items').status_code == 200\n"
     ))
     assert r.returncode == 0, r.stderr
+
+
+# --- apply-edit-blocks.py (D-59) ---------------------------------------------
+
+TARGET_SRC = "line one\nline two\nline three\nline four\n"
+
+
+def run_apply(tmp_path, reply):
+    target = tmp_path / "target.py"
+    target.write_text(TARGET_SRC)
+    reply_f = tmp_path / "reply.raw"
+    reply_f.write_text(reply)
+    r = subprocess.run(
+        [sys.executable, str(APPLY_BLOCKS), str(target), str(reply_f)],
+        capture_output=True, text=True,
+    )
+    return r, target.read_text()
+
+
+def test_apply_clean_block(tmp_path):
+    r, out = run_apply(tmp_path,
+        "<<<<<<< SEARCH\nline two\n=======\nline two\nline 2.5\n>>>>>>> REPLACE\n")
+    assert r.returncode == 0, r.stderr
+    assert "line 2.5" in out
+
+
+def test_apply_missing_anchor_fails_closed(tmp_path):
+    r, out = run_apply(tmp_path,
+        "<<<<<<< SEARCH\nno such line\n=======\nx\n>>>>>>> REPLACE\n")
+    assert r.returncode == 1
+    assert "not found" in r.stderr
+    assert out == TARGET_SRC  # untouched
+
+
+def test_apply_ambiguous_anchor_fails_closed(tmp_path):
+    target = tmp_path / "target.py"
+    target.write_text("dup\nmid\ndup\n")
+    reply_f = tmp_path / "reply.raw"
+    reply_f.write_text("<<<<<<< SEARCH\ndup\n=======\nDUP\n>>>>>>> REPLACE\n")
+    r = subprocess.run(
+        [sys.executable, str(APPLY_BLOCKS), str(target), str(reply_f)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert "ambiguous" in r.stderr
+    assert target.read_text() == "dup\nmid\ndup\n"
+
+
+def test_apply_truncated_block_fails_closed(tmp_path):
+    r, out = run_apply(tmp_path, "<<<<<<< SEARCH\nline two\n=======\nline TWO\n")
+    assert r.returncode == 1
+    assert "truncated" in r.stderr or "malformed" in r.stderr
+    assert out == TARGET_SRC
+
+
+def test_apply_no_changes_is_noop(tmp_path):
+    r, out = run_apply(tmp_path, "=== NO CHANGES ===\n")
+    assert r.returncode == 0, r.stderr
+    assert out == TARGET_SRC
+    assert "no changes" in r.stdout
+
+
+def test_apply_empty_reply_fails(tmp_path):
+    r, out = run_apply(tmp_path, "I could not decide what to do.\n")
+    assert r.returncode == 1
+    assert "no edit blocks" in r.stderr
 
 
 def test_missing_contracts_is_usage_error(tmp_path):

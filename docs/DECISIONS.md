@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-59 — 2026-07-09 — The coder edits existing files through anchored blocks; it never retypes them
+
+**Decision:** For a task whose file already exists, the coder's reply contract is anchored edit blocks (`<<<<<<< SEARCH` exact-verbatim existing lines `=======` replacement `>>>>>>> REPLACE`), applied by `scripts/apply-edit-blocks.py` — fail-closed: every anchor must match the target exactly once; a missing/ambiguous anchor or truncated block writes nothing. `=== NO CHANGES ===` is a legal no-op reply (mapped tests still gate). New files keep the full-file sentinel contract. Companion rules from live corruption incidents: anchors must not include lines containing think-tag literals, new code constructs such strings by concatenation, and `llm-call.sh` strips only a LEADING think block (a global strip eats code that legitimately mentions the tags).
+
+**Found by:** testchat M5..M7. The full-file contract asked a local coder to faithfully retype hundreds of lines it wasn't changing; it deleted 99 lines (v10, 638-line file) and 119 lines (v14, 347-line file, 16K ctx) of working logic — proving the failure is the output format, not file size or context. Controlled CEO-run experiments with edit blocks on the identical tasks: 11/11 anchors verbatim-exact across three replies, both behavior fixes correct, 67/67 frozen tests green including the browser suite. The model consistently aced the thinking and flunked the typing; this contract removes the typing.
+
+**Alternatives considered:** unified diffs (rejected — line-number arithmetic is precisely what local models get wrong); rejecting edit output entirely, per the 2026-07-07 evaluation (overturned — that evaluation weighed diff-apply risk against full-file regeneration assumed safe; the deletion evidence reverses the risk comparison, and fail-closed anchoring converts apply-risk into a loud halt instead of silent corruption); larger/frontier coder models (still available via escalation, but the format fix makes the bench-chosen local coder sufficient).
+
+**Do not suggest:** "simplifying" back to full-file replies for existing files; fuzzy/whitespace-tolerant anchor matching (exactness is the safety property); letting the applier skip unmatched blocks and apply the rest (all-or-nothing, fail-closed); global think-tag stripping in llm-call.sh.
+
+---
+
 ## D-58 — 2026-07-08 — Browser oracle: the frozen suite sees the frontend; the locked surface extends to the DOM (contracts.ui)
 
 **Decision:** The TPM authors browser-level tests (Playwright for Python) as ordinary members of the frozen suite — plain pytest node-ids, entering via `refreeze.sh`, collected into `test-nodeids`, mapped by the EM, run by the shell; no second framework, runner, or gate script. Chromium + playwright are baked into the sandbox image at build time (network exists at build; the run keeps `--network none` — app and browser share the container over loopback). The locked surface extends to the DOM: `contracts.json` gains a `ui` array of `{id, testid, description}`; `check-test-surface.py` rejects, in any playwright-importing test file, element location that is not a locked `data-testid` (role/text/label locators and raw CSS/XPath selection fail at freeze time). `refreeze.sh` grep-rejects `time.sleep`/`wait_for_timeout` in staged UI tests. Flake policy: zero retries — a flaky frozen test is a spec defect and goes back to the TPM. Every AC describing user-visible behavior maps to at least one frozen UI node-id or carries an explicit `manual-only:` waiver in the PRD.

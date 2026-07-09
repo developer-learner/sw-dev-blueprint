@@ -157,7 +157,11 @@ if not content:
     sys.exit(f"llm-call FAIL: empty content from model '{model}'.")
 
 if profile.get("strip_think_tags", True):
-    content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+    # LEADING block only — that is the shape of leaked reasoning. A global
+    # strip corrupts replies whose CODE legitimately contains think-tag
+    # literals (D-59, found via testchat M7: edit blocks quoting frontend
+    # think-handling were eaten mid-anchor).
+    content = re.sub(r"\A\s*<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
     if not content:
         sys.exit(f"llm-call FAIL: content was only a <think> block from model '{model}'.")
 

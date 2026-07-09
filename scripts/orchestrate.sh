@@ -204,20 +204,47 @@ run_coder() {
   local phase_start; phase_start=$(git rev-parse HEAD)
   write_state phase task
   write_state task_target "$file"
-  local instr="$brief
+  # D-59: existing files are EDITED via anchored blocks, never retyped —
+  # full-file regeneration made local coders silently delete working logic
+  # (testchat M5..M7). New files still arrive as one sentinel-wrapped file.
+  local instr existing=""
+  if [ -f "$file" ]; then
+    existing="existing:$file"
+    instr="$brief
+
+Reply with ONLY edit blocks in this exact format, nothing else:
+<<<<<<< SEARCH
+(an EXACT, character-for-character copy of a short existing section — 3 to 10 lines)
+=======
+(that same section with the change applied)
+>>>>>>> REPLACE
+Rules:
+- Each SEARCH must appear EXACTLY ONCE in the file. Copy it verbatim — same spaces, same quotes.
+- Several small blocks, not one big one. Do not touch code outside your blocks. Do not reformat or reorder anything.
+- Never include any line containing a think tag in a SEARCH section — anchor on nearby tag-free lines instead.
+- In new code, never write the think tag as one literal string — construct it by concatenation, e.g. '<' + 'think>'.
+- If the file already satisfies the brief, reply with exactly this line and nothing else: === NO CHANGES ===
+- Verify each SEARCH against the file one more time before answering."
+  else
+    instr="$brief
 
 Reply with ONLY this, nothing before or after it:
 === FILE: $file ===
 <the complete file content>
 === END FILE ==="
-  local existing=""
-  [ -f "$file" ] && existing="existing:$file"
+  fi
   { printf '%s\n' "$instr"; build_context "contracts:$APPROVED/contracts.json" "$existing"; } \
     | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh coder .opencode/prompts/coder.md \
         --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
     || { CODER_EVIDENCE="coder call failed: $(tail -3 "$LOG_DIR/$id-a$attempt.log" | tr '\n' ' ')"; write_state phase ""; return 1; }
-  if ! CODER_EVIDENCE=$(python3 - "$file" "$LOG_DIR/$id-a$attempt.raw" "$LOG_DIR/$id-a$attempt.log" <<'PYEOF'
+  if [ -n "$existing" ]; then
+    # D-59 edit-block path: fail-closed applier; target untouched on any error
+    if ! CODER_EVIDENCE=$(python3 scripts/apply-edit-blocks.py "$file" "$LOG_DIR/$id-a$attempt.raw" 2>&1); then
+      write_state phase ""
+      return 1
+    fi
+  elif ! CODER_EVIDENCE=$(python3 - "$file" "$LOG_DIR/$id-a$attempt.raw" "$LOG_DIR/$id-a$attempt.log" <<'PYEOF'
 import re, sys
 path, raw_path, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(raw_path).read()
