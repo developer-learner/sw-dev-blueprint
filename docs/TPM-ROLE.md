@@ -139,6 +139,14 @@ the project — but the balance you are optimizing is fixed:
   milestone, not the project.
 - **Big enough** to use what the pipeline can deliver in one frozen spec —
   don't slice into fragments that burn a freeze/accept cycle on trivia.
+- **Cut for the coder (D-60).** The builder is a local model on one bare
+  completion — no tools, no retries. Your ERD file inventory is the lever:
+  prefer more, smaller files (new files well under ~150 lines); shape the
+  design so each file needs at most one or two tightly-related changes per
+  milestone. A milestone whose ERD forces any single brief to carry three
+  concerns is cut wrong — recut it (testchat M7: one overloaded brief cost
+  three freezes and a day; the identical work as small edits succeeded on
+  the first attempt).
 
 How to sequence toward those two poles is entirely your read of the
 individual project — no canonical arc, no template ordering, no unit of

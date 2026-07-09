@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-60 — 2026-07-09 — Task sizing is governed by the coder's measured bare-completion capability, encoded where the tiers read it
+
+**Decision:** The coder-capability profile (one concern per brief; new files well under ~150 lines; existing files touched via at most two tightly-related edits; brief must fit the model's working memory — no tools, no retries) is LAW in the prompts the planning tiers actually read: em.md (task decomposition) and TPM-ROLE.md (milestone/ERD cutting). External benchmark claims (SWE-bench, 256K contexts) do not transfer — they assume agent scaffolds with tools and retries, which D-53 deliberately forbids; only the project's own bench and run evidence updates this profile.
+
+**Found by:** CEO directive after M7 ("we have known from the start the 27b needs atomic tasks... the control plane seems to have drifted on this"). The knowledge lived in bench notes and conductor memory, not in any prompt a planning tier reads — so M7's ERD bundled three concerns into one brief twice, and nothing mechanical objected.
+
+**Do not suggest:** relaxing sizing because a bigger context window ships; importing external agent-benchmark numbers as capability evidence; moving the sizing law to docs the EM never sees.
+
+---
+
 ## D-59 — 2026-07-09 — The coder edits existing files through anchored blocks; it never retypes them
 
 **Decision:** For a task whose file already exists, the coder's reply contract is anchored edit blocks (`<<<<<<< SEARCH` exact-verbatim existing lines `=======` replacement `>>>>>>> REPLACE`), applied by `scripts/apply-edit-blocks.py` — fail-closed: every anchor must match the target exactly once; a missing/ambiguous anchor or truncated block writes nothing. `=== NO CHANGES ===` is a legal no-op reply (mapped tests still gate). New files keep the full-file sentinel contract. Companion rules from live corruption incidents: anchors must not include lines containing think-tag literals, new code constructs such strings by concatenation, and `llm-call.sh` strips only a LEADING think block (a global strip eats code that legitimately mentions the tags).
