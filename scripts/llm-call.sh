@@ -142,6 +142,12 @@ except urllib.error.URLError as e:
              f"LLM server running? Halting, not proceeding (Hard Rule 4).")
 
 msg = resp["choices"][0]["message"]
+# Surface WHY generation ended on stderr (lands in the caller's log file):
+# 'stop' = the model finished naturally, 'length' = cut off by the token
+# budget. Downstream parsers use this to distinguish "complete reply that
+# merely forgot a trailing sentinel" from a truncated one (testchat M7 T3).
+print(f"llm-call: finish_reason={resp['choices'][0].get('finish_reason', 'unknown')}",
+      file=sys.stderr)
 content = (msg.get("content") or "").strip()
 reasoning = (msg.get("reasoning_content") or "").strip()
 if not content and reasoning:

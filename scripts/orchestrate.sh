@@ -217,9 +217,9 @@ Reply with ONLY this, nothing before or after it:
         --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
     || { CODER_EVIDENCE="coder call failed: $(tail -3 "$LOG_DIR/$id-a$attempt.log" | tr '\n' ' ')"; write_state phase ""; return 1; }
-  if ! CODER_EVIDENCE=$(python3 - "$file" "$LOG_DIR/$id-a$attempt.raw" <<'PYEOF'
+  if ! CODER_EVIDENCE=$(python3 - "$file" "$LOG_DIR/$id-a$attempt.raw" "$LOG_DIR/$id-a$attempt.log" <<'PYEOF'
 import re, sys
-path, raw_path = sys.argv[1], sys.argv[2]
+path, raw_path, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(raw_path).read()
 m = re.search(r"^=== FILE: (.+?) ===\n(.*?)\n=== END FILE ===$", text, re.M | re.S)
 if not m:
@@ -231,6 +231,21 @@ if not m:
     m = re.search(r"=== FILE: (.+?) ===\n(.*?)\n=== END FILE ===$", text, re.M | re.S)
     if m:
         print("warning: opening sentinel was mid-line — accepted by tolerant pass", file=sys.stderr)
+if not m:
+    # Missing closing sentinel (testchat M7 T3: the coder writes the whole
+    # file then stops at end-of-code without '=== END FILE ==='). Accept an
+    # EOF-terminated block ONLY when llm-call's log proves the model stopped
+    # naturally (finish_reason=stop) — a 'length' stop means real truncation
+    # and must stay a failure. Never guess completeness from the content.
+    try:
+        log = open(log_path).read()
+    except OSError:
+        log = ""
+    if "finish_reason=stop" in log:
+        m = re.search(r"=== FILE: (.+?) ===\n(.*)\Z", text, re.S)
+        if m:
+            print("warning: no closing sentinel — accepted EOF-terminated block "
+                  "(finish_reason=stop proves natural completion)", file=sys.stderr)
 if not m:
     sys.exit("coder reply had no '=== FILE: ... ===' block")
 got_path, content = m.group(1).strip(), m.group(2)
