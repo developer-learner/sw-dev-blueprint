@@ -124,7 +124,12 @@ for f in $TFILES; do
     echo ""
     echo "--- $f ---"
     if [ -f "$f" ]; then
-      git -C "$CLONE" show "$TARGET:$f" | diff -u "$f" - || true
+      # -L labels replace diff's filename+TIMESTAMP headers: the stdin side
+      # would otherwise be stamped with the current time, making the diff
+      # text — and therefore DIFF-SHA — different on every invocation, so no
+      # --approve hash could ever match (caught by the D-61 scratch-child
+      # test, 2026-07-11). Labels carry only deterministic content.
+      git -C "$CLONE" show "$TARGET:$f" | diff -u -L "$f (child)" -L "$f (template@${TARGET:0:12})" "$f" - || true
     else
       echo "(new file from template)"
       git -C "$CLONE" show "$TARGET:$f" | head -40
