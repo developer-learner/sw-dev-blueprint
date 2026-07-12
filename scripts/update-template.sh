@@ -9,16 +9,26 @@
 #
 # Usage:
 #   update-template.sh [--from <clone-dir>] [--ref <ref>] [--dry-run] [--review]
+#   update-template.sh --approve <sha> [--from <clone-dir>] [--ref <ref>]
 #   update-template.sh --stamp [--from <clone-dir>]
 #
 #   --from     use an existing local clone of the template (else: gh repo clone
 #              into a temp dir — needs gh auth for a private template)
 #   --ref      template ref to update to (default: the clone's HEAD)
-#   --dry-run  show what would change and exit; no tty needed, nothing written
+#   --dry-run  show what would change and exit; no tty needed, nothing written.
+#              Prints the DIFF-SHA the --approve mode binds to.
 #   --review   emit a self-contained review bundle (claims + diff + reviewer
 #              instructions) for pasting into a SECOND model before the CEO
 #              approves; no tty needed, nothing written. The CEO gate stays a
 #              human authorization — this delegates the technical reading.
+#   --approve <sha>
+#              non-interactive apply, D-61 (the D-42 refreeze pattern applied
+#              here): the sha must match the recomputed diff hash, so what is
+#              applied is byte-bound to what was reviewed. If the template or
+#              the child changed since --dry-run, the hash mismatches and
+#              nothing is written. Same honest caveat as D-42: a conductor
+#              relays the diff, so the CEO's read is only as good as the relay
+#              — the raw diff is deterministic and re-printable at any time.
 #   --stamp    only (re)write ref= in .template-version to the template's HEAD —
 #              retrofits a child created before D-33. No files are copied.
 #
@@ -45,13 +55,14 @@ die() { echo "UPDATE-TEMPLATE FAIL: $*" >&2; exit 1; }
 # Cross-platform sed -i (GNU vs BSD/macOS)
 sed_inplace() { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
 
-FROM=""; REF=""; DRY=0; STAMP=0; REVIEW=0
+FROM=""; REF=""; DRY=0; STAMP=0; REVIEW=0; APPROVE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --from)    FROM="${2:?--from needs a path}"; shift 2 ;;
     --ref)     REF="${2:?--ref needs a ref}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --review)  REVIEW=1; shift ;;
+    --approve) APPROVE="${2:?--approve needs the DIFF-SHA printed by --dry-run}"; shift 2 ;;
     --stamp)   STAMP=1; shift ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -126,6 +137,11 @@ REMOVED=$(comm -23 \
   <(awk '{print $2}' scripts/.manifest-template | sort) \
   <(printf '%s\n' $TFILES | sort) )
 
+# The approval token (D-61): sha256 of the exact diff text. Recomputed on
+# every invocation, so --approve binds to what is true NOW — any change to
+# template or child between review and approval changes the hash, fail-closed.
+DIFF_SHA=$(sha256sum "$DIFF_TMP" | cut -d' ' -f1)
+
 # --- Review-bundle mode: everything a second model needs, nothing written ---
 if [ "$REVIEW" = "1" ]; then
   if [ -z "$CHANGED" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi
@@ -146,6 +162,8 @@ if [ "$REVIEW" = "1" ]; then
   echo "=== DIFF (files:$CHANGED) ==="
   cat "$DIFF_TMP"
   echo "=== END REVIEW BUNDLE ==="
+  echo ""
+  echo "DIFF-SHA: $DIFF_SHA  (on CONFIRM, the CEO applies with: scripts/update-template.sh --approve $DIFF_SHA${FROM:+ --from $FROM}${REF:+ --ref $REF})"
   exit 0
 fi
 
@@ -170,7 +188,14 @@ else
 fi
 
 if [ "$DRY" = "1" ]; then
-  echo "(dry run — nothing written)"
+  if [ -n "$CHANGED" ]; then
+    echo ""
+    echo "DIFF-SHA: $DIFF_SHA"
+    echo "(dry run — nothing written; to apply without a terminal, the CEO approves:"
+    echo "  scripts/update-template.sh --approve $DIFF_SHA${FROM:+ --from $FROM}${REF:+ --ref $REF})"
+  else
+    echo "(dry run — nothing written)"
+  fi
   exit 0
 fi
 [ -n "$CHANGED" ] || { # nothing to copy; still advance the ref stamp
@@ -181,10 +206,19 @@ fi
   exit 0
 }
 
-[ -t 0 ] || die "template updates require an interactive terminal — the human diff-approval IS the gate (use --dry-run to inspect)"
-printf 'Apply this template update? [y/N] '
-read -r ANSWER
-case "$ANSWER" in y|Y|yes|YES) ;; *) echo "aborted — nothing changed"; exit 1 ;; esac
+if [ -n "$APPROVE" ]; then
+  # D-61: the hash IS the approval — it binds this apply to the exact diff
+  # the human read after --dry-run. Any drift on either side fails closed.
+  [ "$APPROVE" = "$DIFF_SHA" ] || die "approval hash mismatch — expected current DIFF-SHA $DIFF_SHA
+  The template or this child changed since the diff was reviewed.
+  Re-run --dry-run, read the new diff, and approve its hash (D-61)."
+  echo "approval hash verified against the current diff (D-61) — applying"
+else
+  [ -t 0 ] || die "template updates require an interactive terminal — the human diff-approval IS the gate (no tty: use --dry-run, read the diff, then --approve <DIFF-SHA>, D-61)"
+  printf 'Apply this template update? [y/N] '
+  read -r ANSWER
+  case "$ANSWER" in y|Y|yes|YES) ;; *) echo "aborted — nothing changed"; exit 1 ;; esac
+fi
 
 # --- Apply: contents + exec bits, then the template's own manifest verbatim ---
 for f in $CHANGED; do

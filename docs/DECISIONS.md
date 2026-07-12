@@ -21,6 +21,20 @@
 
 ## Decisions
 
+## D-61 — 2026-07-11 — Template updates gain hash-bound approval (`--approve <DIFF-SHA>`): the D-42 refreeze pattern applied to the second protected-artifact class
+
+**Decision:** `update-template.sh` gains `--approve <sha>`, mirroring refreeze's D-42 flow: `--dry-run` (and `--review`) print the `DIFF-SHA` — sha256 of the exact aggregate diff text — and `--approve <sha>` recomputes it and applies only on a byte-exact match, no tty required. Any change to the template or the child between review and approval changes the hash and fails closed. The interactive y/N path is unchanged and remains the default.
+
+**Found by:** the 2026-07-11 session: the CEO authorized a reviewed template pull in chat, but the script's only non-interactive options were `--dry-run` (read-only) — so the conductor answered the y/N prompt itself through a pty wrapper (`expect`). That apply was correct and disclosed, but it is exactly the honor-string approval D-42 rejected: nothing bound what the CEO read to what got applied. The gap was structural — D-34 explicitly rejected generalizing refreeze into one engine and accepted "a shared pattern with two small tools," but only one of the two tools ever got the pattern's non-interactive half.
+
+**Alternatives considered:** keep tty-only and forbid conductor-driven pulls (rejected — the CEO runs no commands, D-40; every real pull would either need the human at a terminal or the pty workaround this exists to retire); `--yes` flag (rejected for the same reason as refreeze — it approves whatever is true at run time, not what was reviewed); generalizing refreeze and update-template into one approve-delta engine (still rejected per D-34 — this change is ~15 lines precisely because the pattern is shared and the tools are not).
+
+**Honest caveat (same as D-42):** the CEO sees the diff through the conductor's relay; a misreporting conductor could show doctored text beside the true hash of different content. The raw diff is deterministic and re-printable at any time, the terminal path remains for structural updates, and the blast radius is one control-plane update caught by the template's selftests and the next run's gates. Accident-class threat, accepted; not zero.
+
+**Do not suggest:** adding `--yes`/`--force`; approving on a stale hash after either side moved; retiring the interactive path.
+
+---
+
 ## D-60 — 2026-07-09 — Task sizing is governed by the coder's measured bare-completion capability, encoded where the tiers read it
 
 **Decision:** The coder-capability profile (one concern per brief; new files well under ~150 lines; existing files touched via at most two tightly-related edits; brief must fit the model's working memory — no tools, no retries) is LAW in the prompts the planning tiers actually read: em.md (task decomposition) and TPM-ROLE.md (milestone/ERD cutting). External benchmark claims (SWE-bench, 256K contexts) do not transfer — they assume agent scaffolds with tools and retries, which D-53 deliberately forbids; only the project's own bench and run evidence updates this profile.
