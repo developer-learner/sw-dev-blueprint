@@ -231,7 +231,10 @@ Rules:
 Reply with ONLY this, nothing before or after it:
 === FILE: $file ===
 <the complete file content>
-=== END FILE ==="
+=== END FILE ===
+Your reply's VERY FIRST line must be the === FILE: line. Do not analyze,
+plan, or explain anything — every design decision is already made in the
+brief; transcribe it into working code immediately."
   fi
   { printf '%s\n' "$instr"; build_context "contracts:$APPROVED/contracts.json" "$existing"; } \
     | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh coder .opencode/prompts/coder.md \
