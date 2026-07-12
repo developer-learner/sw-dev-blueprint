@@ -110,6 +110,12 @@ body = {
     "temperature": profile.get("temperature", 0.2),
     "stream": False,
     "enable_thinking": profile.get("enable_thinking", False),
+    # Output budget (found via testchat M11a): with no cap, a runaway
+    # generation's only ceiling is the context window — a 70-line file task
+    # ran 23 minutes into a 32K window. Chat users ARE the cap; the pipeline
+    # must set its own. Override per model via max_output_tokens in the
+    # profile.
+    "max_tokens": profile.get("max_output_tokens", 8192),
 }
 if profile.get("extra_body"):
     body.update(profile["extra_body"])
