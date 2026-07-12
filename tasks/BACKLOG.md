@@ -20,12 +20,6 @@
 
 ## Up Next
 
-### Browser oracle: the frozen suite learns to see the frontend
-**Priority:** P1
-**Why:** M5 and M6 both went green over a broken app; frontend ACs are invisible to pytest, so the real oracle became the CEO running post-hoc demos and hand-fixes that the next milestone regresses (think-toggle broke twice). Spec: `tasks/HANDOFF-browser-oracle.md`. Metric to drive to zero: hand-fix commits after `[success]`.
-**Rough size:** Medium-large
-**Depends on:** arm64 chromium spike in the VM (constraint 5 of the handoff)
-
 ### Fast path: skip the coder when mapped tests already pass
 **Priority:** P2
 **Why:** M4 observation — the loop calls the coder even when the task's file already passes its mapped tests. Deliberately NOT implemented pre-VM: accepting pre-existing code means accepting code of unknown provenance, which legitimizes conductor lane-crossing. Once conductors live inside the VM (lanes structural), pre-passing code can only be previously-accepted state, and the skip becomes safe and saves the slowest step in the pipeline.
@@ -34,9 +28,10 @@
 
 ### Escalation-ladder validation run
 **Priority:** P2
-**Why:** The retry → EM consult → brief/plan revision → TPM ladder has never been allowed to complete (M4 bypassed it at strike 1). Per Operating Rule 6, an untriggered safeguard is inconclusive — one honest run where a stuck task climbs the full ladder is needed before trusting it.
+**Why:** The retry → EM consult → brief/plan revision → TPM ladder has never been allowed to complete — nine milestones in, `MAX_TASK_STRIKES=1` (fail-fast default) means `consult_em` and all three verdict branches remain dead code in every default run (re-confirmed by the 2026-07-11 audit). Per Operating Rule 6, an untriggered safeguard is inconclusive. The alternative decision — commit to fail-fast as the design and prune the ladder — is equally acceptable; what is not acceptable is carrying unexercised machinery indefinitely.
+**Recipe (M10):** run the milestone with `MAX_TASK_STRIKES=2 MAX_BRIEF_REVISIONS=1`; if no task fails organically, the run costs nothing extra. Observe: does a second strike produce a schema-valid diagnosis, does a `brief_wrong` revision actually change the brief, does `caps-exhausted` package a usable TPM bundle. CEO decision point after the run: keep (validated) or prune (decided).
 **Rough size:** Medium (process, not code)
-**Depends on:** Next derived-project milestone; Dev VM recommended first (removes the conductor's incentive to take over)
+**Depends on:** M10 (next testchat milestone)
 
 ---
 
@@ -70,3 +65,10 @@
 | Smoke-test budget for cold model starts (SMOKE_MAX_TIME, 240s) | 2026-07-07 | `9789c1e` — M6 false pre-flight failure on cold 122B EM |
 | MAX_PLAN_REVISIONS default 2 | 2026-07-07 | `b380326` — validator feedback loop fixes plans on second emit |
 | refreeze surfaces D-56 externals count at the approval gate | 2026-07-07 | `1705dfc` — testchat froze v8/v9 with externals undeclared; the capture gate had never fired |
+| Browser oracle (D-58): frozen suite sees the frontend | 2026-07-08 | `568a8dd` — contracts.ui locked testids, chromium sandbox layer, determinism gate; spike `13dd6b5` measured +1.2GB image |
+| D-59: coder edits existing files via anchored blocks | 2026-07-09 | `e5d17bf` + applier `0cd9c9b`/`55ea0ec` — full-file retype deleted 99/119 lines twice; 11/11 anchors in controlled re-runs |
+| D-60: coder-capability sizing law into em.md/TPM-ROLE.md | 2026-07-09 | `b89f270` — M7 bundled three concerns per brief twice; knowledge lived in folklore |
+| Audit fix: applier validates anchors against the ORIGINAL file | 2026-07-11 | `8834ec7` — multi-block replies could sneak an ambiguous anchor past the uniqueness check (reproduced) |
+| Audit fix: D-58 UI gate page-receiver rule | 2026-07-11 | `cc19761` — `page.click("button")` froze unlocked DOM with no gate feedback (reproduced) |
+| Audit fix: refreeze determinism gate catches aliased sleeps | 2026-07-11 | `2b3671a` — literal `time\.sleep` grep missed `import time as t` / bare `sleep(` |
+| D-61: hash-bound `--approve` for update-template.sh | 2026-07-11 | D-42 pattern on the second protected-artifact class; retires the pty/expect workaround for conductor-driven pulls |
