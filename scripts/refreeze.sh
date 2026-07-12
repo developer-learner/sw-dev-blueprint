@@ -121,7 +121,13 @@ for f in $CHANGED_TEST_FILES; do
   case "$f" in
     *.py)
       if grep -qE '^\s*(import playwright|from playwright)' "$IN/$f"; then
-        BAD=$(grep -nE 'time\.sleep|wait_for_timeout' "$IN/$f" || true)
+        # Any sleep CALL, under any alias (time.sleep, t.sleep after
+        # `import time as t`, bare sleep after `from time import sleep`,
+        # asyncio.sleep) — the literal 'time\.sleep' string missed every
+        # aliased form (audit find, 2026-07-11). Crude and strict on
+        # purpose: a false positive blocks a freeze loudly; a false
+        # negative freezes a flake factory silently.
+        BAD=$(grep -nE '(^|[^a-zA-Z_])sleep[[:space:]]*\(|wait_for_timeout' "$IN/$f" || true)
         [ -z "$BAD" ] || die "staged UI test $f uses sleep/timeout waits (D-58 determinism gate):
 $BAD
   -> rely on Playwright auto-waiting (expect(), locator actions); fix the TPM output and restage"
