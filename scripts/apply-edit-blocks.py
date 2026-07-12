@@ -68,14 +68,29 @@ def main() -> None:
         fail("reply contained no edit blocks and no NO-CHANGES line")
 
     src = open(target).read()
-    out = src
-    for i, (search, replace) in enumerate(blocks, 1):
-        n = out.count(search)
+
+    # Uniqueness is validated against the ORIGINAL file — the one the coder
+    # actually saw — for every block, before anything is applied. Checking
+    # against progressively-mutated text let an anchor that was ambiguous in
+    # the original become "unique" after an earlier block in the same reply
+    # consumed one of its occurrences (audit find, 2026-07-11): the exact
+    # confident-wrong-edit class this applier exists to make impossible.
+    for i, (search, _replace) in enumerate(blocks, 1):
+        n = src.count(search)
         if n == 0:
             head = search.splitlines()[0][:60] if search.splitlines() else ""
             fail(f"block {i}: SEARCH not found in {target} (starts: {head!r})")
         if n > 1:
             fail(f"block {i}: SEARCH matches {n} places in {target} — ambiguous anchor")
+
+    out = src
+    for i, (search, replace) in enumerate(blocks, 1):
+        if out.count(search) != 1:
+            fail(
+                f"block {i}: SEARCH was unique in the original file but not "
+                f"after earlier blocks were applied — blocks overlap or "
+                f"repeat; nothing written"
+            )
         out = out.replace(search, replace, 1)
 
     open(target, "w").write(out)

@@ -693,6 +693,48 @@ def test_apply_ambiguous_anchor_fails_closed(tmp_path):
     assert target.read_text() == "dup\nmid\ndup\n"
 
 
+def test_apply_ambiguity_checked_against_original_not_mutated_text(tmp_path):
+    """Audit find 2026-07-11: an anchor ambiguous in the ORIGINAL file must
+    fail even when an earlier block in the same reply consumes one of its
+    occurrences and makes it look unique in the mutated text."""
+    target = tmp_path / "target.py"
+    original = "dup\nmid\ndup\n"
+    target.write_text(original)
+    reply_f = tmp_path / "reply.raw"
+    reply_f.write_text(
+        "<<<<<<< SEARCH\ndup\nmid\n=======\nCHANGED\n>>>>>>> REPLACE\n"
+        "<<<<<<< SEARCH\ndup\n=======\nDUP\n>>>>>>> REPLACE\n"
+    )
+    r = subprocess.run(
+        [sys.executable, str(APPLY_BLOCKS), str(target), str(reply_f)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert "ambiguous" in r.stderr
+    assert target.read_text() == original  # untouched
+
+
+def test_apply_overlapping_blocks_fail_closed(tmp_path):
+    """Two blocks whose anchors are each unique in the original but consume
+    each other's text (here: identical repeated blocks) must abort with the
+    target untouched, not half-apply."""
+    target = tmp_path / "target.py"
+    original = "alpha\nbeta\ngamma\n"
+    target.write_text(original)
+    reply_f = tmp_path / "reply.raw"
+    reply_f.write_text(
+        "<<<<<<< SEARCH\nbeta\n=======\nBETA\n>>>>>>> REPLACE\n"
+        "<<<<<<< SEARCH\nbeta\n=======\nBETA2\n>>>>>>> REPLACE\n"
+    )
+    r = subprocess.run(
+        [sys.executable, str(APPLY_BLOCKS), str(target), str(reply_f)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert "overlap" in r.stderr
+    assert target.read_text() == original
+
+
 def test_apply_truncated_block_fails_closed(tmp_path):
     r, out = run_apply(tmp_path, "<<<<<<< SEARCH\nline two\n=======\nline TWO\n")
     assert r.returncode == 1
