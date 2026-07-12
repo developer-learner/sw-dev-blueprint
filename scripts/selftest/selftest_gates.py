@@ -638,6 +638,44 @@ def test_ui_role_locator_fails(tmp_path):
     assert "role/text/label" in r.stderr
 
 
+def test_ui_page_action_bare_tag_selector_fails(tmp_path):
+    """Audit find 2026-07-11: page.click("button") is idiomatic Playwright and
+    carried no rejectable prefix — the receiver rule must catch it."""
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE + "def test_x(page):\n    page.click('button')\n"
+    ))
+    assert r.returncode == 1
+    assert "button" in r.stderr
+
+
+def test_ui_page_action_attribute_selector_fails(tmp_path):
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE + "def test_x(page):\n    page.fill('input[type=submit]', 'x')\n"
+    ))
+    assert r.returncode == 1
+    assert "input[type=submit]" in r.stderr
+
+
+def test_ui_page_action_locked_testid_literal_passes(tmp_path):
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE
+        + "def test_x(page):\n"
+        + "    page.click('[data-testid=\"send-btn\"]')\n"
+    ))
+    assert r.returncode == 0, r.stderr
+
+
+def test_ui_locator_object_action_value_not_flagged(tmp_path):
+    """get_by_test_id(...).fill('some text') takes a VALUE, not a selector —
+    the page-receiver rule must not false-positive on locator-object actions."""
+    r = run_surface(tmp_path, CONTRACTS_UI, (
+        UI_PREAMBLE
+        + "def test_x(page):\n"
+        + "    page.get_by_test_id('message-input').fill('button')\n"
+    ))
+    assert r.returncode == 0, r.stderr
+
+
 def test_ui_rules_ignore_non_playwright_files(tmp_path):
     """A backend test using .locator-ish strings is untouched by the UI gate."""
     r = run_surface(tmp_path, CONTRACTS_UI, (

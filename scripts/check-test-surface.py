@@ -52,8 +52,20 @@ NON_TESTID_LOCATOR = re.compile(
 SELECTOR_CALL = re.compile(
     r"\.\s*(?:locator|query_selector(?:_all)?|wait_for_selector)\s*\(\s*(['\"])((?:(?!\1).)+)\1"
 )
-# action calls whose first arg is selector-shaped (old-style page.click(sel));
-# locator-object actions like get_by_test_id(...).fill("value") don't match
+# old-style page-object actions: `page.<verb>("<selector>", ...)` — on a bare
+# `page` receiver the first string arg IS a selector by Playwright's API, so
+# any value that is not a [data-testid=...] literal is a raw selector, however
+# innocuous it looks. A prefix blocklist (#, //, css=, ...) missed idiomatic
+# bare-tag and attribute selectors like page.click("button") /
+# page.click("input[type=submit]") — the accident class, not evasion (audit
+# find, 2026-07-11). Locator-object actions like get_by_test_id(...).fill("v")
+# don't match: `page.` must immediately precede the verb.
+PAGE_ACTION_SELECTOR = re.compile(
+    r"\bpage\s*\.\s*(?:click|dblclick|fill|type|press|check|uncheck|hover|tap)"
+    r"\s*\(\s*(['\"])((?:(?!\1).)+)\1"
+)
+# non-`page` receivers (frames, locals) with unmistakably selector-shaped
+# first args — kept as a backstop for what the receiver rule can't see
 RAW_SELECTOR_ACTION = re.compile(
     r"\.\s*(?:click|dblclick|fill|type|press|check|uncheck|hover|tap)"
     r"\s*\(\s*[\"'](?:#|//|css=|xpath=|text=|\.[A-Za-z_])"
@@ -153,7 +165,16 @@ def main(argv):
                         f"{f}:{lineno}: locates by role/text/label — UI tests observe only "
                         f"contracts.ui testids (D-58)"
                     )
-                if RAW_SELECTOR_ACTION.search(line):
+                flagged_action = False
+                for pm in PAGE_ACTION_SELECTOR.finditer(line):
+                    sel = pm.group(2)
+                    if not DATA_TESTID_SEL.search(sel):
+                        violations.append(
+                            f"{f}:{lineno}: page action takes raw selector `{sel}` — UI tests "
+                            f"observe only contracts.ui testids (D-58)"
+                        )
+                        flagged_action = True
+                if not flagged_action and RAW_SELECTOR_ACTION.search(line):
                     violations.append(
                         f"{f}:{lineno}: action takes a raw selector — UI tests observe only "
                         f"contracts.ui testids (D-58)"
