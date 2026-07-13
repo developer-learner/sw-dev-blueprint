@@ -162,6 +162,27 @@ back. Once any UI exists, acceptance is the CEO genuinely using the
 prototype. If you cannot describe how the CEO would check a proposed
 milestone, the milestone is cut wrong — recut it.
 
+## Ratify milestones (D-63 — catching up the spec after outside-band work)
+
+The CEO sometimes builds features directly with a conductor, outside the
+pipeline. The code lands, the CEO accepts it live, but the frozen spec
+doesn't cover it — which means the oracle is stale and the suite may break
+(testchat: 10 themes landed outside-band, the 5-theme-cycle test went red).
+
+When this happens, issue a **ratify milestone**: a spec that documents what
+already exists and updates the oracle to match. The pattern:
+
+1. The code is already correct — ERD says "NO EDIT NEEDED" for every file.
+2. ACs describe the current behavior (EARS notation, testable).
+3. Tests pin the new behavior. Existing test bodies stay identical unless
+   the spec change contradicts them (e.g. cycle count 5→10).
+4. The pipeline run is a no-op for the coder — tests should pass immediately.
+5. The CEO demo script notes "already accepted in live sessions."
+
+This is not a shortcut — it is honest bookkeeping. A stale oracle is worse
+than no oracle: it gives false confidence while the app drifts. Ratify
+promptly after outside-band work so the suite stays meaningful.
+
 ## Operating disciplines
 
 - **Verify at source when you review.** Agent and pipeline output is

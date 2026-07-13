@@ -31,6 +31,16 @@
 
 ---
 
+## D-63 — 2026-07-12 — Ratify milestones: catching up the spec after outside-band work
+
+**Decision:** When the CEO builds features directly with a conductor outside the pipeline, the TPM issues a **ratify milestone** to bring the frozen spec in line with the landed code. ERD says "NO EDIT NEEDED" for every file; ACs describe current behavior; the pipeline run is a coder no-op; tests pin the new state.
+
+**Found by:** testchat post-M10: 10 themes landed outside-band across CEO sessions (dark mode, sidebar management, markdown rendering, etc.). The 5-theme-cycle test went red because the oracle only knew about the first 5. A ratify milestone (M11b) documented all 10 themes, updated the oracle, and the suite went green — zero code changes, pure bookkeeping.
+
+**Do not suggest:** skipping the ratify because "the code already works" (the oracle is stale and will generate false failures); retroactively splitting into per-feature milestones (the code is already merged; a single ratify is honest).
+
+---
+
 ## D-61 — 2026-07-11 — Template updates gain hash-bound approval (`--approve <DIFF-SHA>`): the D-42 refreeze pattern applied to the second protected-artifact class
 
 **Decision:** `update-template.sh` gains `--approve <sha>`, mirroring refreeze's D-42 flow: `--dry-run` (and `--review`) print the `DIFF-SHA` — sha256 of the exact aggregate diff text — and `--approve <sha>` recomputes it and applies only on a byte-exact match, no tty required. Any change to the template or the child between review and approval changes the hash and fails closed. The interactive y/N path is unchanged and remains the default.
