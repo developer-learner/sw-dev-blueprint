@@ -122,6 +122,19 @@ SMOKE_REPLY=$(printf 'SMOKE_OK' | scripts/llm-call.sh em "$_smoke_sys" --max-tim
 rm -f "$_smoke_sys"
 [ -n "$SMOKE_REPLY" ] \
   || die "LLM smoke test failed — llm-call.sh returned empty output for a trivial prompt within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised)"
+# D-62: LM Studio drift probe — any model reload resets instance config
+# (context window, thinking toggle, chat_template_kwargs). A thinking model
+# puts output in reasoning_content and leaves content empty, which breaks
+# every downstream parser. Check the smoke reply for the thinking-model
+# signature: content is empty or absent while reasoning tokens are present.
+# Also warn if the reply looks nothing like the echo (model misconfigured).
+case "$SMOKE_REPLY" in
+  ""|THINKING_MODEL)
+    die "LM Studio drift: model returned empty content (likely in thinking mode). Open LM Studio → model settings → disable Reasoning toggle → save as default, then retry." ;;
+esac
+if ! printf '%s' "$SMOKE_REPLY" | grep -q 'SMOKE_OK'; then
+  echo "  WARNING: smoke reply did not echo 'SMOKE_OK' — got '$(printf '%s' "$SMOKE_REPLY" | head -c 80)'. Model may be misconfigured (thinking mode, wrong model, stale instance config). Proceeding, but verify behavior."
+fi
 echo "OK (frozen spec v$FROZEN_V)"
 
 # --- Parse .gate-paths for the build lane ---

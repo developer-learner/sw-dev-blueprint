@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-62 — 2026-07-12 — LM Studio drift probe in orchestrate.sh pre-flight
+
+**Decision:** The existing smoke test (echo a trivial prompt) now also checks for the thinking-model signature (empty content = reasoning_content consumed the output) and warns when the echo doesn't match. LM Studio silently resets instance config (context window, thinking toggle, chat_template_kwargs) on any model reload — the per-model UI "save as default" is the only durable setting, and it must be re-verified before each run.
+
+**Found by:** testchat M11a: both models unexpectedly entered thinking mode mid-day after a reload. The API-side `chat_template_kwargs` field was no longer honored; only the LM Studio UI Reasoning toggle (with save-as-default) worked. The smoke test passed because it only checked for non-empty output — a thinking model returns reasoning_content, which llm-call.sh strips, leaving empty content that the downstream parser silently accepts as "no output." The existing THINKING_MODEL guard in new-project.sh was not ported to the run-time pre-flight.
+
+**Do not suggest:** trusting `chat_template_kwargs` in the API request (currently broken in LM Studio); removing the drift probe because "the model should be configured correctly."
+
+---
+
 ## D-61 — 2026-07-11 — Template updates gain hash-bound approval (`--approve <DIFF-SHA>`): the D-42 refreeze pattern applied to the second protected-artifact class
 
 **Decision:** `update-template.sh` gains `--approve <sha>`, mirroring refreeze's D-42 flow: `--dry-run` (and `--review`) print the `DIFF-SHA` — sha256 of the exact aggregate diff text — and `--approve <sha>` recomputes it and applies only on a byte-exact match, no tty required. Any change to the template or the child between review and approval changes the hash and fails closed. The interactive y/N path is unchanged and remains the default.
