@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-66 — 2026-07-14 — The EM seat is precision-transcription work; bench it on verbatim copying, dense models preferred
+
+**Decision:** The EM's real job (after D-57/D-64/D-65 mechanized everything else) is copying ERD prose into briefs with ZERO interpretation. Any EM bench must therefore test transcription fidelity — replay a spec containing one subtly under-defined term and check whether the model copies the gap or fills it — not just schema-valid plan output. Dense models are preferred for the seat over sparse MoE at similar quality claims: a MoE activating only a few B params per token behaves like a small model on precision work.
+
+**Found by:** testchat M17/M18 head-to-head. The 35B MoE (3B active) "helpfully" resolved an implicit variable into a false definition (headroom = cap − cap = 0), derailing three coder attempts; the dense 27b, replayed on the identical ambiguous ERD, copied it verbatim — gap preserved, nothing invented. The original 2026-07-07 bench crowned the 35B at 100/100 on plan-JSON validity: it measured the wrong axis. Historical corroboration: the 122B EM also failed transcription (the 58-node-id array, D-57). As of 2026-07-14 the 27b holds both EM and coder seats in testchat.
+
+**Do not suggest:** re-benching on schema validity alone; assuming parameter count predicts transcription fidelity; a frontier EM as the fix (buys probability, not certainty — put load-bearing formulas in contracts instead, fully defined, no inference required).
+
+---
+
 ## D-65 — 2026-07-14 — no_edit_files: spec-declared no-op tasks never reach the coder
 
 **Decision:** `contracts.no_edit_files` (TPM-authored, frozen, human-approved at refreeze) lists inventory files the milestone leaves unchanged. The orchestrator skips the coder call for those tasks — acceptance (mapped tests + smoke_check) still runs in full. `validate-plan.py` rejects no_edit_files entries outside the inventory.
