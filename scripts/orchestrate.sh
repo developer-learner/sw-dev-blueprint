@@ -251,8 +251,13 @@ Your reply's VERY FIRST line must be the === FILE: line. Do not analyze,
 plan, or explain anything — every design decision is already made in the
 brief; transcribe it into working code immediately."
   fi
+  # Edit-mode replies are small by design (a few anchored blocks); cap them
+  # at half the create-mode budget so a runaway attempt fails in half the
+  # wall-clock time (testchat M17). Create mode keeps the full default.
+  local out_budget=""
+  [ -n "$existing" ] && out_budget=4096
   { printf '%s\n' "$instr"; build_context "contracts:$APPROVED/contracts.json" "$existing"; } \
-    | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh coder .opencode/prompts/coder.md \
+    | SWBP_MAX_OUTPUT="$out_budget" timeout "$AGENT_TIMEOUT" scripts/llm-call.sh coder .opencode/prompts/coder.md \
         --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
     || { CODER_EVIDENCE="coder call failed: $(tail -3 "$LOG_DIR/$id-a$attempt.log" | tr '\n' ' ')"; write_state phase ""; return 1; }
