@@ -93,6 +93,20 @@ def main() -> None:
             )
         out = out.replace(search, replace, 1)
 
+    # Post-apply integrity (testchat M20/M21): a REPLACE payload that itself
+    # contains marker lines parses as a well-formed block yet writes raw
+    # conflict markers into the target — the corruption then ships silently
+    # (browsers skip malformed CSS; greps still match). The applied result
+    # must never contain any marker line, fail-closed.
+    for ln in out.splitlines():
+        stripped = ln.strip()
+        if stripped.startswith("<<<<<<<") or stripped.startswith(">>>>>>>") or stripped == SEP:
+            fail(
+                f"applied result would contain an edit-block marker line "
+                f"({stripped[:30]!r}) — a REPLACE payload embedded markers; "
+                f"nothing written"
+            )
+
     open(target, "w").write(out)
     print(f"applied {len(blocks)} edit block(s) to {target}")
 
