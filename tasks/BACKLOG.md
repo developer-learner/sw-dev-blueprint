@@ -20,12 +20,6 @@
 
 ## Up Next
 
-### Fast path: skip the coder when mapped tests already pass
-**Priority:** P2
-**Why:** M4 observation — the loop calls the coder even when the task's file already passes its mapped tests. Deliberately NOT implemented pre-VM: accepting pre-existing code means accepting code of unknown provenance, which legitimizes conductor lane-crossing. Once conductors live inside the VM (lanes structural), pre-passing code can only be previously-accepted state, and the skip becomes safe and saves the slowest step in the pipeline.
-**Rough size:** Small
-**Depends on:** ~~Linux Dev VM landed~~ (done — `c7c78c4`..`68ba1da`)
-
 ### Escalation-ladder validation run
 **Priority:** P2
 **Why:** The retry → EM consult → brief/plan revision → TPM ladder has never been allowed to complete — nine milestones in, `MAX_TASK_STRIKES=1` (fail-fast default) means `consult_em` and all three verdict branches remain dead code in every default run (re-confirmed by the 2026-07-11 audit). Per Operating Rule 6, an untriggered safeguard is inconclusive. The alternative decision — commit to fail-fast as the design and prune the ladder — is equally acceptable; what is not acceptable is carrying unexercised machinery indefinitely.
@@ -72,3 +66,9 @@
 | Audit fix: D-58 UI gate page-receiver rule | 2026-07-11 | `cc19761` — `page.click("button")` froze unlocked DOM with no gate feedback (reproduced) |
 | Audit fix: refreeze determinism gate catches aliased sleeps | 2026-07-11 | `2b3671a` — literal `time\.sleep` grep missed `import time as t` / bare `sleep(` |
 | D-61: hash-bound `--approve` for update-template.sh | 2026-07-11 | D-42 pattern on the second protected-artifact class; retires the pty/expect workaround for conductor-driven pulls |
+
+---
+
+## Declined
+
+- **Fast path: skip the coder when mapped tests already pass** — CEO decision 2026-07-13: dropped. Savings are minutes per ratify milestone; the pipeline's reliability comes from one path with no shortcuts, and the skip removes a per-task check (Rule 3 relaxation). Ratify milestones (D-63) simply eat the no-op coder calls.
