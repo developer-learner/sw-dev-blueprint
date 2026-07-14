@@ -237,7 +237,9 @@ Rules:
 - Never include any line containing a think tag in a SEARCH section — anchor on nearby tag-free lines instead.
 - In new code, never write the think tag as one literal string — construct it by concatenation, e.g. '<' + 'think>'.
 - If the file already satisfies the brief, reply with exactly this line and nothing else: === NO CHANGES ===
-- Verify each SEARCH against the file one more time before answering."
+- Verify each SEARCH against the file one more time before answering.
+- Your reply's VERY FIRST line must be '<<<<<<< SEARCH' (or the NO CHANGES line). Do not analyze, plan, or explain anything — every design decision is already made in the brief. Prose before the blocks burns your output budget and truncates the edit mid-block.
+- Every block must be COMPLETE working code — never a stub, placeholder, or '...' body. If the brief needs a new function, write its full body in the block."
   else
     instr="$brief
 
