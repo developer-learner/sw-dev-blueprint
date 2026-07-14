@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-64 — 2026-07-13 — Browser-test mapping enforced mechanically in validate-plan.py
+
+**Decision:** A test file that imports `playwright` may only have its node-ids mapped to a task whose dependency closure contains the ENTIRE plan — in practice, the DAG's final task. Enforced in `validate-plan.py` alongside the existing import-closure check, which cannot see browser tests: they observe the app through the rendered DOM, not Python imports, and any inventory file (markup, styling, scripts) can shape what the browser renders.
+
+**Found by:** testchat M15: the ERD stated in prose "map browser node-ids to the final task in the DAG." The EM (mid-tier local model) deviated twice — first leaving a task with no acceptance signal (plan-gate halt, cost a re-freeze), then mapping the new browser test to the markup task, where it structurally could not pass before the styling task ran (false task failure, cost a manual plan fix). Schema constraints were honored both times; prose guidance was not — the recurring mid-tier signature (same as the M9 invented contract-id).
+
+**Alternatives considered:** better ERD wording (already explicit, ignored twice); a frontier EM (buys probability, not certainty, at recurring cost).
+
+**Do not suggest:** relaxing the check to "warn only"; trusting ERD prose for anything a gate can verify; special-casing single-task plans (a one-task plan's closure IS the whole plan — the check passes by construction).
+
+---
+
 ## D-62 — 2026-07-12 — LM Studio drift probe in orchestrate.sh pre-flight
 
 **Decision:** The existing smoke test (echo a trivial prompt) now also checks for the thinking-model signature (empty content = reasoning_content consumed the output) and warns when the echo doesn't match. LM Studio silently resets instance config (context window, thinking toggle, chat_template_kwargs) on any model reload — the per-model UI "save as default" is the only durable setting, and it must be re-verified before each run.

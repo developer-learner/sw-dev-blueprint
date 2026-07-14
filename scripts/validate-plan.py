@@ -452,6 +452,52 @@ def validate():
                         f"{t['id']}'s depends_on."
                     )
 
+    # D-64: browser tests observe the app through the DOM, not imports, so
+    # the closure analysis above cannot see their dependencies — a Playwright
+    # test can exercise ANY inventory file (markup, styling, and scripts all
+    # shape what the browser renders). Its only safe acceptance point is a
+    # task whose dependency closure contains the ENTIRE inventory, i.e. the
+    # DAG's final task. testchat M15: the EM mapped a new browser test to the
+    # markup task twice despite explicit ERD prose; the test structurally
+    # could not pass before the styling task ran — a false task failure.
+    def is_browser_test_file(path):
+        if path not in ast_cache:
+            try:
+                ast_cache[path] = ast.parse(Path(path).read_text(), filename=path)
+            except (OSError, SyntaxError):
+                ast_cache[path] = None
+        tree = ast_cache[path]
+        if tree is None:
+            return False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                if any(a.name.split(".")[0] == "playwright" for a in node.names):
+                    return True
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module.split(".")[0] == "playwright":
+                    return True
+        return False
+
+    all_task_ids = {t["id"] for t in tasks}
+    for t in tasks:
+        closure = {t["id"]} | ancestors(t["id"])
+        if closure == all_task_ids:
+            continue
+        browser_files = sorted(
+            tf for tf in {n.split("::")[0] for n in t["tests"]}
+            if is_browser_test_file(tf)
+        )
+        if browser_files:
+            missing = sorted(all_task_ids - closure)
+            errs.append(
+                f"task {t['id']}: browser test file(s) {browser_files} are "
+                f"mapped here, but task(s) {missing} are not in {t['id']}'s "
+                f"dependency closure — a browser test observes the rendered "
+                f"page, which any inventory file can shape, so it can only "
+                f"be accepted at a task downstream of the whole inventory. "
+                f"Map these tests to the DAG's final task."
+            )
+
     # oracle projection, part 2 (D-57) — the carried-forward split, computed
     # from the same ownership signals the reachability gates already extract:
     # an unmapped frozen node-id whose test file imports a task-owned module,
