@@ -569,13 +569,30 @@ Write EXACTLY one file: $file — the gate rejects any other change, including n
 
 The previous attempt failed with: $last_fail. Fix the cause, do not just retry the same content."
 
+  # D-65: files the frozen spec declares unchanged never reach the coder.
+  # "Change nothing" is a negative constraint a local model cannot reliably
+  # obey (testchat M16: one no-edit coder call damaged index.html, another
+  # added redundant code — both briefs said NO EDIT NEEDED). The declaration
+  # lives in frozen contracts.no_edit_files (human-approved at refreeze), so
+  # the skipped file's provenance is the spec, not luck. Acceptance below
+  # (mapped tests + smoke_check) still runs in full.
+  no_edit=$(python3 -c "import json; c=json.load(open('scripts/.approved/contracts.json')); print(1 if '$file' in c.get('no_edit_files', []) else 0)")
+
   # acceptance = projection of the frozen oracle (D-28) + optional smoke.
   # A coder call can now fail before any file exists (bad/missing sentinel
   # block, wrong path) — that's evidence like any other test failure, not a
   # script abort, so it's captured rather than left to `set -e`.
   pass=1
   CODER_EVIDENCE=""
-  if run_coder "$id" "$file" "$attempt_brief" "$((strikes + 1))"; then
+  if [ "$no_edit" = "1" ]; then
+    echo "  no-edit file (frozen contracts.no_edit_files) — coder not invoked; running acceptance only"
+    coder_ok=1
+  elif run_coder "$id" "$file" "$attempt_brief" "$((strikes + 1))"; then
+    coder_ok=1
+  else
+    coder_ok=0
+  fi
+  if [ "$coder_ok" = "1" ]; then
     git add "$file" && git commit -m "[task $id] attempt $((strikes + 1))" 2>/dev/null || true
     if [ -n "$mapped" ]; then
       # shellcheck disable=SC2086

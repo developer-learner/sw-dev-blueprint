@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-65 — 2026-07-14 — no_edit_files: spec-declared no-op tasks never reach the coder
+
+**Decision:** `contracts.no_edit_files` (TPM-authored, frozen, human-approved at refreeze) lists inventory files the milestone leaves unchanged. The orchestrator skips the coder call for those tasks — acceptance (mapped tests + smoke_check) still runs in full. `validate-plan.py` rejects no_edit_files entries outside the inventory.
+
+**Found by:** testchat M16: two "NO EDIT NEEDED" tasks were still handed to the coder. One damaged index.html (dropped a class the CSS keyed on — the smoke check greps survived, the regression tests caught it three tasks later); the other added redundant-but-passing code. A brief saying "change nothing" is a negative constraint (Rule 8) a local coder cannot reliably obey — the model is briefed to write, so it writes.
+
+**Alternatives considered:** invoking the coder and rejecting non-empty diffs (fail-loops — there is no "emit nothing" protocol in the D-59 edit-block contract); the declined skip-when-tests-pass heuristic (provenance by luck — here provenance is the frozen spec).
+
+**Do not suggest:** trusting "NO EDIT NEEDED" in ERD prose alone; extending the skip to files not declared in the frozen contracts; skipping the acceptance run for no-edit tasks.
+
+---
+
 ## D-64 — 2026-07-13 — Browser-test mapping enforced mechanically in validate-plan.py
 
 **Decision:** A test file that imports `playwright` may only have its node-ids mapped to a task whose dependency closure contains the ENTIRE plan — in practice, the DAG's final task. Enforced in `validate-plan.py` alongside the existing import-closure check, which cannot see browser tests: they observe the app through the rendered DOM, not Python imports, and any inventory file (markup, styling, scripts) can shape what the browser renders.

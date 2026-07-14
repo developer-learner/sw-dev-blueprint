@@ -1,99 +1,175 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "sw-dev-blueprint frozen contracts (scripts/.approved/contracts.json)",
-  "description": "The machine-readable section of the TPM's ERD: the locked cross-component surface. The TPM authors it in the web chat; the human installs it via scripts/refreeze.sh; no agent can write it (it lives outside every lane and is hash-pinned in scripts/.approved/frozen-manifest). Everything listed here is LOCKED — the EM owns implementation inside these seams and may not invent or alter them. INV-4 additionally requires that the frozen tests observe the system ONLY through surfaces declared here (test-visible surface must be a subset of the locked surface).",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["erd_version", "files", "entry_points"],
-  "properties": {
-    "erd_version": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Must equal scripts/.approved/VERSION. Bumped only by refreeze.sh."
-    },
-    "files": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "type": "string" },
-      "description": "The ERD build inventory: every source file the feature requires, relative to repo root. The plan gate requires exactly one task per listed file — coverage failures surface at validation, not integration."
-    },
-    "entry_points": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Importable symbols tests may use, as 'module' or 'module:symbol' (e.g. 'src.main' or 'src.main:app'). INV-4: any import of src.* in tests/ outside this list fails the surface gate."
-    },
-    "routes": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "method", "path"],
-        "properties": {
-          "id": { "type": "string", "description": "Stable contract id, e.g. 'route:GET /health'. Referenced by plan tasks." },
-          "method": { "type": "string" },
-          "path": { "type": "string", "description": "Path template, e.g. '/api/v1/items/{item_id}'." }
-        }
-      },
-      "description": "HTTP surface. INV-4: any route-shaped string a test sends a request to must appear here."
-    },
-    "schemas": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["id"],
-        "properties": {
-          "id": { "type": "string", "description": "e.g. 'schema:Item'." },
-          "fields": { "type": "object", "description": "Field name -> type, as locked by the TPM." }
-        }
-      },
-      "description": "Data shapes crossing a seam (request/response bodies, persisted records)."
-    },
-    "errors": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["id"],
-        "properties": {
-          "id": { "type": "string", "description": "e.g. 'error:404-item'." },
-          "status": { "type": "integer" },
-          "shape": { "type": "object", "description": "Error body shape." }
-        }
-      },
-      "description": "Locked error responses."
-    },
-    "externals": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "probe", "capture"],
-        "properties": {
-          "id": { "type": "string", "description": "Stable id, e.g. 'external:lmstudio-models'." },
-          "probe": { "type": "string", "description": "The exact shell command the operator ran against the REAL dependency to produce the capture (e.g. a curl). Re-runnable to detect upstream drift." },
-          "capture": { "type": "string", "description": "Path under captures/ (staged next to the spec, installed to scripts/.approved/captures/) holding the probe's raw output. This is the ground truth mocks are built from." },
-          "notes": { "type": "string", "description": "Optional: what the spec relies on from this capture (fields, event names, formats)." }
-        }
-      },
-      "description": "D-56: every external interface the spec makes assumptions about (third-party APIs, model output formats, wire protocols) must be declared here with a captured real response. refreeze.sh fails the freeze if a declared capture is missing. Mocks and tests derive from captures, never from the TPM's memory of how the dependency probably behaves."
-    },
-    "smoke_checks": {
-      "type": "object",
-      "additionalProperties": { "type": "string" },
-      "description": "TPM-authored shell commands keyed by file path (from the files array). Used for files with no covering frozen test — the orchestrator runs them in the sandbox after the coder writes the file. An oracle: authored by the TPM (frontier), installed via refreeze.sh, never by the EM. Each value must be a valid shell command, not prose."
-    },
-    "ui": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "testid", "description"],
-        "properties": {
-          "id": { "type": "string", "description": "Stable id, e.g. 'ui:send-btn'." },
-          "testid": { "type": "string", "description": "The data-testid value the implementation must carry and UI tests locate by. The ONLY DOM surface frozen tests may observe (D-58) — check-test-surface.py rejects role/text/CSS/XPath location in playwright-importing tests." },
-          "description": { "type": "string", "description": "What the element is, so the coder knows where the testid belongs." }
-        }
-      },
-      "description": "D-58: the locked DOM surface. Same principle as routes/entry_points — tests observe only what the spec locks, so the coder is free to restructure everything else. Testids reach the coder via contracts in the brief material."
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "sw-dev-blueprint frozen contracts (scripts/.approved/contracts.json)",
+ "description": "The machine-readable section of the TPM's ERD: the locked cross-component surface. The TPM authors it in the web chat; the human installs it via scripts/refreeze.sh; no agent can write it (it lives outside every lane and is hash-pinned in scripts/.approved/frozen-manifest). Everything listed here is LOCKED \u2014 the EM owns implementation inside these seams and may not invent or alter them. INV-4 additionally requires that the frozen tests observe the system ONLY through surfaces declared here (test-visible surface must be a subset of the locked surface).",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "erd_version",
+  "files",
+  "entry_points"
+ ],
+ "properties": {
+  "erd_version": {
+   "type": "integer",
+   "minimum": 1,
+   "description": "Must equal scripts/.approved/VERSION. Bumped only by refreeze.sh."
+  },
+  "files": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "string"
+   },
+   "description": "The ERD build inventory: every source file the feature requires, relative to repo root. The plan gate requires exactly one task per listed file \u2014 coverage failures surface at validation, not integration."
+  },
+  "entry_points": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "Importable symbols tests may use, as 'module' or 'module:symbol' (e.g. 'src.main' or 'src.main:app'). INV-4: any import of src.* in tests/ outside this list fails the surface gate."
+  },
+  "routes": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "method",
+     "path"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "Stable contract id, e.g. 'route:GET /health'. Referenced by plan tasks."
+     },
+     "method": {
+      "type": "string"
+     },
+     "path": {
+      "type": "string",
+      "description": "Path template, e.g. '/api/v1/items/{item_id}'."
+     }
     }
+   },
+   "description": "HTTP surface. INV-4: any route-shaped string a test sends a request to must appear here."
+  },
+  "schemas": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "id"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "e.g. 'schema:Item'."
+     },
+     "fields": {
+      "type": "object",
+      "description": "Field name -> type, as locked by the TPM."
+     }
+    }
+   },
+   "description": "Data shapes crossing a seam (request/response bodies, persisted records)."
+  },
+  "errors": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "id"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "e.g. 'error:404-item'."
+     },
+     "status": {
+      "type": "integer"
+     },
+     "shape": {
+      "type": "object",
+      "description": "Error body shape."
+     }
+    }
+   },
+   "description": "Locked error responses."
+  },
+  "externals": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "probe",
+     "capture"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "Stable id, e.g. 'external:lmstudio-models'."
+     },
+     "probe": {
+      "type": "string",
+      "description": "The exact shell command the operator ran against the REAL dependency to produce the capture (e.g. a curl). Re-runnable to detect upstream drift."
+     },
+     "capture": {
+      "type": "string",
+      "description": "Path under captures/ (staged next to the spec, installed to scripts/.approved/captures/) holding the probe's raw output. This is the ground truth mocks are built from."
+     },
+     "notes": {
+      "type": "string",
+      "description": "Optional: what the spec relies on from this capture (fields, event names, formats)."
+     }
+    }
+   },
+   "description": "D-56: every external interface the spec makes assumptions about (third-party APIs, model output formats, wire protocols) must be declared here with a captured real response. refreeze.sh fails the freeze if a declared capture is missing. Mocks and tests derive from captures, never from the TPM's memory of how the dependency probably behaves."
+  },
+  "smoke_checks": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "TPM-authored shell commands keyed by file path (from the files array). Used for files with no covering frozen test \u2014 the orchestrator runs them in the sandbox after the coder writes the file. An oracle: authored by the TPM (frontier), installed via refreeze.sh, never by the EM. Each value must be a valid shell command, not prose."
+  },
+  "ui": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "testid",
+     "description"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "Stable id, e.g. 'ui:send-btn'."
+     },
+     "testid": {
+      "type": "string",
+      "description": "The data-testid value the implementation must carry and UI tests locate by. The ONLY DOM surface frozen tests may observe (D-58) \u2014 check-test-surface.py rejects role/text/CSS/XPath location in playwright-importing tests."
+     },
+     "description": {
+      "type": "string",
+      "description": "What the element is, so the coder knows where the testid belongs."
+     }
+    }
+   },
+   "description": "D-58: the locked DOM surface. Same principle as routes/entry_points \u2014 tests observe only what the spec locks, so the coder is free to restructure everything else. Testids reach the coder via contracts in the brief material."
+  },
+  "no_edit_files": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "D-65: inventory files this frozen spec declares unchanged ('NO EDIT NEEDED' in the ERD). The orchestrator does not invoke the coder for their tasks \u2014 briefing a local model to 'change nothing' is a negative constraint it cannot reliably obey (testchat M16: a no-edit coder call damaged index.html, a second added redundant code). Acceptance (mapped tests + smoke_check) still runs. Every entry must also appear in files."
   }
+ }
 }

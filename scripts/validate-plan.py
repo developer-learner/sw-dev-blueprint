@@ -225,6 +225,16 @@ def validate():
     if extra_files:
         errs.append(f"tasks target files not in the ERD inventory: {extra_files}")
 
+    # D-65: no_edit_files must be inventory members — a no-edit declaration
+    # for a file outside the inventory is a spec typo the freeze should have
+    # caught; fail loudly here as the backstop.
+    stray_no_edit = sorted(set(contracts.get("no_edit_files", [])) - set(inventory))
+    if stray_no_edit:
+        errs.append(
+            f"contracts.no_edit_files entries not in the ERD inventory "
+            f"(files): {stray_no_edit}"
+        )
+
     # smoke_check executability — every value in contracts.smoke_checks must be
     # a real shell command, not prose. bash -n only checks syntax (prose is
     # syntactically valid), so we also verify the first token resolves to an

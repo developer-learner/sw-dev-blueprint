@@ -172,7 +172,12 @@ doesn't cover it — which means the oracle is stale and the suite may break
 When this happens, issue a **ratify milestone**: a spec that documents what
 already exists and updates the oracle to match. The pattern:
 
-1. The code is already correct — ERD says "NO EDIT NEEDED" for every file.
+1. The code is already correct — ERD says "NO EDIT NEEDED" for every file,
+   AND those files are listed in `contracts.no_edit_files` (D-65) — the
+   orchestrator will not invoke the coder for them; prose alone does not
+   protect a file (a coder briefed to "change nothing" edits anyway —
+   testchat M16 damaged a file that way). Declare no_edit_files in ANY
+   milestone with untouched inventory files, not just ratifies.
 2. ACs describe the current behavior (EARS notation, testable).
 3. Tests pin the new behavior. Existing test bodies stay identical unless
    the spec change contradicts them (e.g. cycle count 5→10).
