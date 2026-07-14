@@ -574,7 +574,7 @@ Write EXACTLY one file: $file — the gate rejects any other change, including n
   last_fail=$(cat "$TASK_STATE/$id.lastfail" 2>/dev/null || true)
   [ -n "$last_fail" ] && attempt_brief="$attempt_brief
 
-The previous attempt failed with: $last_fail. Fix the cause, do not just retry the same content."
+The previous attempt failed with: $last_fail. Fix the cause, do not just retry the same content. NOTE: the file may already contain a previous attempt's partial work — read its CURRENT state, find the SMALLEST remaining delta that satisfies the brief, and emit only that; if the file already satisfies the brief, reply === NO CHANGES ===. Do not re-describe or re-apply work that is already present."
 
   # D-65: files the frozen spec declares unchanged never reach the coder.
   # "Change nothing" is a negative constraint a local model cannot reliably
