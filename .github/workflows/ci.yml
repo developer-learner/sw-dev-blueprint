@@ -70,7 +70,10 @@ jobs:
         run: ruff check src/
       - name: Type check
         if: steps.guard.outputs.run == 'yes'
-        run: mypy src/
+        # --explicit-package-bases: src/ layouts without __init__.py files make
+        # bare `mypy src/` exit 2 on "Duplicate module named" (e.g. api/models.py
+        # vs services/models.py) BEFORE type-checking a single line.
+        run: mypy --explicit-package-bases src/
       # If using Postgres, uncomment DATABASE_URL and the services block above:
       # - name: Run tests
       #   env:
