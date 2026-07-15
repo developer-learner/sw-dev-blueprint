@@ -79,9 +79,24 @@ jobs:
       #   env:
       #     DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
       #   run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80
+      # Browser oracle (D-58): projects whose frozen suite includes Playwright
+      # UI tests need the browser binary; a no-playwright project skips in 1s.
+      - name: Install Playwright browser
+        if: steps.guard.outputs.run == 'yes'
+        run: |
+          if pip show playwright >/dev/null 2>&1; then
+            playwright install --with-deps chromium
+          fi
       - name: Run tests
         if: steps.guard.outputs.run == 'yes'
-        run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80 --json-report --json-report-file=.cache/test-report.json
+        # PYTHONPATH: tests import `src.*` from the repo root (the sandbox sets
+        # /work; CLAUDE.md documents `PYTHONPATH=. pytest`; CI must match).
+        # mkdir: pytest-json-report does not create the report's parent dir.
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p .cache
+          pytest --cov=src --cov-report=term-missing --cov-fail-under=80 --json-report --json-report-file=.cache/test-report.json
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         if: always() && steps.guard.outputs.run == 'yes'
