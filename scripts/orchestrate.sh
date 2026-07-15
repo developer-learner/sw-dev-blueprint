@@ -27,7 +27,7 @@
 # gate violation · 2 halted awaiting TPM (escalation batch written).
 set -euo pipefail
 
-MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-1}"      # coder attempts per brief (default: 1 = fail-fast)
+MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-2}"      # coder attempts per brief (D-70: 2 arms the escalation ladder — consult/verdicts were dead code for ~23 milestones under 1; D-69's run budget bounds the thrash fail-fast guarded against)
 MAX_BRIEF_REVISIONS="${MAX_BRIEF_REVISIONS:-1}" # EM brief_wrong rewrites per task
 MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"   # EM plan re-emits per run (validation retries + decomposition_wrong); default 2: the validator's error feedback demonstrably fixes plans on the second emit (testchat M6)
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"

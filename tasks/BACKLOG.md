@@ -20,12 +20,11 @@
 
 ## Up Next
 
-### Escalation-ladder validation run
+### Escalation-ladder validation: observe the first run that climbs it
 **Priority:** P2
-**Why:** The retry → EM consult → brief/plan revision → TPM ladder has never been allowed to complete — nine milestones in, `MAX_TASK_STRIKES=1` (fail-fast default) means `consult_em` and all three verdict branches remain dead code in every default run (re-confirmed by the 2026-07-11 audit). Per Operating Rule 6, an untriggered safeguard is inconclusive. The alternative decision — commit to fail-fast as the design and prune the ladder — is equally acceptable; what is not acceptable is carrying unexercised machinery indefinitely.
-**Recipe (M10):** run the milestone with `MAX_TASK_STRIKES=2 MAX_BRIEF_REVISIONS=1`; if no task fails organically, the run costs nothing extra. Observe: does a second strike produce a schema-valid diagnosis, does a `brief_wrong` revision actually change the brief, does `caps-exhausted` package a usable TPM bundle. CEO decision point after the run: keep (validated) or prune (decided).
-**Rough size:** Medium (process, not code)
-**Depends on:** M10 (next testchat milestone)
+**Why:** D-70 (2026-07-15, CEO directive) armed the ladder — `MAX_TASK_STRIKES` now defaults to 2, ending ~23 milestones of the consult/verdict machinery as dead code. Arming is not validating (Rule 6): the item closes only when a real run exercises it. Observe on the first milestone where a task strikes twice: schema-valid diagnosis produced; `brief_wrong` revision actually changes the brief; `caps-exhausted` packages a usable TPM bundle; D-69 budget contains the total. Then the CEO calls it: validated, or fix what the run exposed.
+**Rough size:** Small (observation, not code)
+**Depends on:** the next testchat milestone run where a task organically fails twice
 
 ---
 

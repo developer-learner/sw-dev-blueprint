@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-70 — 2026-07-15 — The escalation ladder is armed: MAX_TASK_STRIKES defaults to 2 (CEO directive)
+
+**Decision:** `MAX_TASK_STRIKES` defaults to 2. A task's first failure now retries with the failure appended to the brief; a second failure triggers the EM consult and the verdict machinery (`brief_wrong` revision / `decomposition_wrong` re-plan / `contract_or_test_wrong` TPM escalation). `MAX_BRIEF_REVISIONS=1` and `MAX_PLAN_REVISIONS=2` are unchanged — the ladder stays bounded at every rung, and D-69's run wall-clock budget (default 20 min) caps the total. `MAX_TASK_STRIKES=1` on the command line restores fail-fast per run.
+
+**Reason:** The ladder had been dead code in every default run since M4 — through roughly 23 milestones, `consult_em` and all three verdict branches never executed, which Operating Rule 6 classifies as an untriggered safeguard: inconclusive, not green. The standing backlog item offered two honest exits: validate it or prune it. The CEO chose validation (directive, 2026-07-15: "fix"), and the risk that originally justified fail-fast — unattended thrash burning hours — is now bounded by machinery that didn't exist when strikes=1 was chosen: D-69 halts a sick run on wall-clock, D-60 keeps briefs atomic, D-59 makes a bad second attempt fail closed rather than corrupt. First milestone run at the new default doubles as the validation run: observe whether the second strike produces a schema-valid diagnosis, whether a `brief_wrong` revision actually changes the brief, and whether `caps-exhausted` packages a usable TPM bundle.
+
+**Do not suggest:** raising strikes above 2 (the second strike exists to feed the consult, not to grind retries); reverting to 1 because a consult produced a bad diagnosis (that is the validation working — log it and fix the diagnosis path); treating an unexercised ladder as validated after this lands — only a run that actually climbs it counts (Rule 6).
+
+---
+
 ## D-69 — 2026-07-15 — run wall-clock budget + phase-timing log: thrash halts in minutes, not hours
 
 **Decision:** `orchestrate.sh` keeps a per-run phase-timing log (`.pipeline-state/logs/timings.tsv` — one row per phase boundary: pre-flight, each EM call, each coder attempt, each test run, each task verdict) and enforces `SWBP_RUN_BUDGET` (seconds; default 1200, `0` disables, non-numeric dies at startup). The budget is checked BETWEEN phases only — before each plan revision, before each task dispatch, before the full frozen suite — never mid-call. On breach: fail-closed halt that prints the timing table. `.pipeline-state` persists (D-24), so a re-run resumes from completed tasks and a budget halt costs only the re-run command.
