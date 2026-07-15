@@ -31,6 +31,15 @@ MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-1}"      # coder attempts per brief (defau
 MAX_BRIEF_REVISIONS="${MAX_BRIEF_REVISIONS:-1}" # EM brief_wrong rewrites per task
 MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"   # EM plan re-emits per run (validation retries + decomposition_wrong); default 2: the validator's error feedback demonstrably fixes plans on the second emit (testchat M6)
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
+# D-69: wall-clock budget for the WHOLE run, in seconds (0 disables). With
+# D-60 atomic tasks and a non-thinking local coder, a healthy run finishes in
+# minutes — a run that blows past this is thrashing (thinking drift, EM loops,
+# misconfiguration), and fail-fast applies to time the same as to strikes.
+# Checked BETWEEN phases only (never kills a call mid-flight); on breach the
+# run halts and prints the phase-timing table. State persists (D-24): a
+# re-run resumes from completed tasks, so a budget halt is cheap.
+SWBP_RUN_BUDGET="${SWBP_RUN_BUDGET:-1200}"
+RUN_T0=$(date +%s)
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
@@ -64,8 +73,33 @@ set_tstat()   { printf '%s\n' "$2" > "$TASK_STATE/$1.status"; }
 counter()     { [ -f "$TASK_STATE/$1.$2" ] && cat "$TASK_STATE/$1.$2" || echo 0; }
 set_counter() { printf '%s\n' "$3" > "$TASK_STATE/$1.$2"; }
 
+# --- run clock (D-69): phase-timing log + wall-clock budget ------------------
+# timings.tsv gets one row per phase boundary; the budget halt prints it, and
+# post-run tuning reads it — no historical run had per-phase numbers, so every
+# "where did 45 minutes go" was guesswork.
+case "$SWBP_RUN_BUDGET" in
+  ''|*[!0-9]*) die "SWBP_RUN_BUDGET must be a non-negative integer (seconds), got '$SWBP_RUN_BUDGET'" ;;
+esac
+run_elapsed() { echo $(( $(date +%s) - RUN_T0 )); }
+mark() { printf '%s\t%ss\t%s\n' "$(date '+%H:%M:%S')" "$(run_elapsed)" "$1" >> "$LOG_DIR/timings.tsv"; }
+check_budget() {  # check_budget <checkpoint> — between-phase gate, fail-closed
+  [ "$SWBP_RUN_BUDGET" -gt 0 ] || return 0
+  local e; e=$(run_elapsed)
+  [ "$e" -gt "$SWBP_RUN_BUDGET" ] || return 0
+  mark "BUDGET-HALT at $1"
+  echo ""
+  echo "=========================================="
+  echo "  HALT: run budget exceeded — ${e}s elapsed > SWBP_RUN_BUDGET=${SWBP_RUN_BUDGET}s"
+  echo "  checkpoint: $1"
+  echo "=========================================="
+  echo "  Phase timings ($LOG_DIR/timings.tsv):"
+  sed 's/^/    /' "$LOG_DIR/timings.tsv"
+  die "run over budget at '$1' — state persists; a re-run resumes from completed tasks. Healthy-but-slow (cold model load, big suite): raise SWBP_RUN_BUDGET or set 0. Otherwise the timing table names the phase that ate the clock — fix that, don't raise the budget."
+}
+
 # --- Pre-flight ---
 echo "=== Pre-flight ==="
+mark "run start (budget ${SWBP_RUN_BUDGET}s)"
 
 # Constraint 3: conductors live inside the VM; running on macOS is a structural error.
 [ "$(uname -s)" != "Darwin" ] \
@@ -136,6 +170,7 @@ if ! printf '%s' "$SMOKE_REPLY" | grep -q 'SMOKE_OK'; then
   echo "  WARNING: smoke reply did not echo 'SMOKE_OK' — got '$(printf '%s' "$SMOKE_REPLY" | head -c 80)'. Model may be misconfigured (thinking mode, wrong model, stale instance config). Proceeding, but verify behavior."
 fi
 echo "OK (frozen spec v$FROZEN_V)"
+mark "pre-flight done (spec v$FROZEN_V)"
 
 # --- Parse .gate-paths for the build lane ---
 build_dir="src/"
@@ -195,6 +230,7 @@ em_call() {
   local out="$1" schema="$2" instr="$3"; shift 3
   local phase_start; phase_start=$(git rev-parse HEAD)
   write_state phase em
+  mark "em-call start -> $out"
   { printf '%s\n' "$instr"; build_context "$@"; } \
     | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh em .opencode/prompts/em.md \
         --schema "$schema" --max-time "$AGENT_TIMEOUT" \
@@ -205,6 +241,7 @@ em_call() {
   cp "$LOG_DIR/em-last.raw" "$out"
   bash scripts/phase-gate.sh em "$phase_start"
   write_state phase ""
+  mark "em-call done -> $out"
 }
 
 # run_coder <task-id> <file> <brief> <attempt> — one completion, sentinel-
@@ -217,6 +254,7 @@ run_coder() {
   local phase_start; phase_start=$(git rev-parse HEAD)
   write_state phase task
   write_state task_target "$file"
+  mark "coder $id attempt $attempt start ($file)"
   # D-59: existing files are EDITED via anchored blocks, never retyped —
   # full-file regeneration made local coders silently delete working logic
   # (testchat M5..M7). New files still arrive as one sentinel-wrapped file.
@@ -329,6 +367,7 @@ PYEOF
 # Sets TESTS_RC (0 pass · 1 fail · 3 no verdict) and FAILING (ids, |-joined).
 run_tests() {
   mkdir -p .cache
+  mark "tests start ($# node-id(s); 0 = full suite)"
   scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
     --json-report-file=.cache/test-report.json "$@" >/dev/null 2>&1 || true
   local out
@@ -360,6 +399,7 @@ PYEOF
   else
     TESTS_RC=$?; FAILING="$out"
   fi
+  mark "tests done (rc=$TESTS_RC)"
 }
 
 # --- Plan phase: EM emits/revises, validator gates, bounded retries ----------
@@ -382,6 +422,7 @@ ensure_plan() {
   may refresh the budget: rm .pipeline-state/plan_revisions*   — otherwise the
   fix belongs in a re-freeze, which refreshes it automatically."
     }
+    check_budget "plan revision $((revs + 1))"
     write_state plan_revisions $((revs + 1))
     echo "=== EM: emit/revise plan (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
     em_call tasks/plan.json scripts/schemas/plan.schema.json \
@@ -569,6 +610,7 @@ while :; do
   [ -n "$NEXT" ] || break
 
   id="$NEXT"
+  check_budget "task $id"
   file=$(python3 scripts/validate-plan.py --task "$id" --field file)
   mapped=$(python3 scripts/validate-plan.py --task "$id" --field tests)
   smoke=$(python3 -c "import json; cs=json.load(open('scripts/.approved/contracts.json')).get('smoke_checks',{}); print(cs.get('$file',''))")
@@ -628,6 +670,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
 
   if [ "$pass" = "1" ]; then
     echo "task $id: PASS"
+    mark "task $id PASS"
     set_tstat "$id" done
     python3 scripts/validate-plan.py --task "$id" --field fingerprint > "$TASK_STATE/$id.fp"
     rm -f "$TASK_STATE/$id.lastfail"
@@ -635,6 +678,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
   fi
 
   echo "task $id: FAIL — $evidence"
+  mark "task $id FAIL (strike $((strikes + 1)))"
   printf '%s\n' "$evidence" > "$TASK_STATE/$id.lastfail"
   strikes=$((strikes + 1))
   set_counter "$id" strikes "$strikes"
@@ -707,12 +751,14 @@ done
 finalize_batch
 
 # --- all tasks done -> feature verdict is the FULL frozen suite (D-28) -------
+check_budget "full frozen suite"
 echo "=== Full frozen suite ==="
 run_tests
 if [ "$TESTS_RC" -eq 0 ]; then
   echo ""
   echo "=========================================="
   echo "  ALL FROZEN TESTS PASS — feature done"
+  echo "  total run time: $(run_elapsed)s (timings were in $LOG_DIR/timings.tsv)"
   echo "=========================================="
   cat >> tasks/CURRENT.md <<EOF
 

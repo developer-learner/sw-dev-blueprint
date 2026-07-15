@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-69 — 2026-07-15 — run wall-clock budget + phase-timing log: thrash halts in minutes, not hours
+
+**Decision:** `orchestrate.sh` keeps a per-run phase-timing log (`.pipeline-state/logs/timings.tsv` — one row per phase boundary: pre-flight, each EM call, each coder attempt, each test run, each task verdict) and enforces `SWBP_RUN_BUDGET` (seconds; default 1200, `0` disables, non-numeric dies at startup). The budget is checked BETWEEN phases only — before each plan revision, before each task dispatch, before the full frozen suite — never mid-call. On breach: fail-closed halt that prints the timing table. `.pipeline-state` persists (D-24), so a re-run resumes from completed tasks and a budget halt costs only the re-run command.
+
+**Reason:** Milestone runs ranged 10 minutes to 2 hours on the same task shapes. The long tail was never healthy work — it was unattended thrash (thinking-mode drift ruminating for thousands of tokens, EM revision loops against unsatisfiable specs, misconfigured instances), and the human noticed only after the babysitting hour was spent. With D-60 atomic tasks and a non-thinking local coder at 30–50 tok/s, a healthy run fits in minutes; a run that doesn't is *evidence*, and fail-fast should apply to wall-clock the way it already applies to strikes (MAX_TASK_STRIKES=1) and revisions (MAX_PLAN_REVISIONS=2). Second gap this closes: no historical run recorded per-phase timings, so every "where did 45 minutes go" was reconstruction from memory — Rule 5 violation by omission.
+
+**Do not suggest:** killing a call mid-flight on breach (a truncated coder write or half-applied plan is worse than two extra minutes; AGENT_TIMEOUT already bounds individual calls); raising the default when a project's runs are slow (raise per-run on the command line for a known-cold start, otherwise fix the phase the timing table names); folding the budget into AGENT_TIMEOUT (per-call and per-run are different failure classes — ten healthy 3-minute calls are a sick run).
+
+---
+
 ## D-68 — 2026-07-14 — silent error swallows are a task failure; failure paths are spec surface
 
 **Decision:** Two halves, mechanical + spec-side. (1) `scripts/check-swallowed-errors.py` runs in `run_coder` after both apply modes (edit-block and create); a Python `except: pass` with no comment, or an empty JS `.catch()`/`catch {}`, fails the attempt as a strike whose evidence names the line and the fix. A justification comment inside the handler makes a deliberate swallow pass — the rule targets silence, not swallowing. (2) TPM-ROLE law: any spec touching a side-effect (persist, external call, file write) must carry a failure-visibility AC ("WHEN it fails, the user SHALL see …").
