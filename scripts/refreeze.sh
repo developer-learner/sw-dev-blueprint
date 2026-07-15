@@ -114,6 +114,26 @@ PYEOF
   esac
 done
 
+# --- Lint gate for staged tests (D-67): frozen files cannot be lint-fixed
+# without a full refreeze ceremony, so lint debt must be rejected at the
+# door — testchat carried 7 unused imports across 30+ freezes because CI
+# lints only src/ and nothing linted the incoming suite. Fail-closed on a
+# missing ruff by design: a gate that skips silently is not a gate.
+if [ -n "$CHANGED_TEST_FILES" ]; then
+  command -v ruff >/dev/null 2>&1 \
+    || die "ruff not found — the staged-test lint gate (D-67) requires it: pip install ruff"
+  for f in $CHANGED_TEST_FILES; do
+    case "$f" in
+      *.py)
+        LINT_OUT=$(ruff check --no-cache "$IN/$f" 2>&1) \
+          || die "staged test $f fails lint (D-67 gate):
+$LINT_OUT
+  -> fix the TPM output and restage; frozen lint debt outlives the freeze"
+        ;;
+    esac
+  done
+fi
+
 # --- Determinism gate for staged UI tests (D-58): a flaky frozen test is a
 # spec defect, zero retries. Sleeps and timeout-tuned waits are the flake
 # factory — reject them at the door; Playwright auto-waiting is the law.

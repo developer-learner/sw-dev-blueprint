@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-67 — 2026-07-14 — refreeze lints staged tests; lint debt is rejected at the freeze door
+
+**Decision:** `refreeze.sh` runs `ruff check` on every staged `.py` test file before the approval prompt and dies on any finding. Fail-closed on a missing ruff binary (install it; no silent skip). Rationale: frozen files are hash-pinned — once lint debt freezes in, fixing it costs a full human-gated refreeze ceremony, so it never gets fixed. Same gate family as the D-58 determinism grep: strict at the door, because the door is the only cheap place.
+
+**Found by:** external audit of testchat (2026-07-14): 7 unused imports had ridden along in frozen test files for 30+ freezes. CI lints `src/` only, refreeze linted nothing — the incoming suite had no lint gate anywhere.
+
+**Do not suggest:** lint-fixing frozen tests in place (INV-1 violation — only refreeze changes them); widening CI's ruff to `tests/` as the primary fix (CI runs post-merge and can be dark for repos without a remote; the freeze door is pre-commit and always present).
+
+---
+
 ## D-66 — 2026-07-14 — The EM seat is precision-transcription work; bench it on verbatim copying, dense models preferred
 
 **Decision:** The EM's real job (after D-57/D-64/D-65 mechanized everything else) is copying ERD prose into briefs with ZERO interpretation. Any EM bench must therefore test transcription fidelity — replay a spec containing one subtly under-defined term and check whether the model copies the gap or fills it — not just schema-valid plan output. Dense models are preferred for the seat over sparse MoE at similar quality claims: a MoE activating only a few B params per token behaves like a small model on precision work.
