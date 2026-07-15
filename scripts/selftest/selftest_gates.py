@@ -802,3 +802,74 @@ def test_missing_contracts_is_usage_error(tmp_path):
         capture_output=True, text=True,
     )
     assert r.returncode == 2
+
+
+# ---------------------------------------------------------------------------
+# D-68: check-swallowed-errors.py — silent error swallows fail, justified pass
+# ---------------------------------------------------------------------------
+
+CHECK_SWALLOW = SCRIPTS / "check-swallowed-errors.py"
+
+
+def run_swallow(tmp_path, name, source):
+    f = tmp_path / name
+    f.write_text(source)
+    return subprocess.run(
+        [sys.executable, str(CHECK_SWALLOW), str(f)],
+        capture_output=True, text=True,
+    )
+
+
+def test_swallow_py_bare_except_pass_fails(tmp_path):
+    r = run_swallow(tmp_path, "m.py",
+        "try:\n    save()\nexcept OSError:\n    pass\n")
+    assert r.returncode == 1
+    assert "justification comment" in r.stdout
+
+
+def test_swallow_py_commented_pass_passes(tmp_path):
+    r = run_swallow(tmp_path, "m.py",
+        "try:\n    unlink()\nexcept OSError:  # best-effort cleanup\n    pass\n")
+    assert r.returncode == 0, r.stdout
+
+
+def test_swallow_py_handled_except_passes(tmp_path):
+    r = run_swallow(tmp_path, "m.py",
+        "try:\n    save()\nexcept OSError as e:\n    log(e)\n")
+    assert r.returncode == 0, r.stdout
+
+
+def test_swallow_js_empty_catch_callback_fails(tmp_path):
+    r = run_swallow(tmp_path, "m.js",
+        "fetch(url).then(ok).catch(function () {});\n")
+    assert r.returncode == 1
+    assert "empty .catch() callback" in r.stdout
+
+
+def test_swallow_js_arrow_catch_fails(tmp_path):
+    r = run_swallow(tmp_path, "m.js", "p.catch(() => {});\n")
+    assert r.returncode == 1
+
+
+def test_swallow_js_comment_in_catch_passes(tmp_path):
+    r = run_swallow(tmp_path, "m.js",
+        "p.catch(function () { /* offline is fine; retried on next action */ });\n")
+    assert r.returncode == 0, r.stdout
+
+
+def test_swallow_js_empty_catch_block_fails(tmp_path):
+    r = run_swallow(tmp_path, "m.js",
+        "try { work(); } catch (e) {}\n")
+    assert r.returncode == 1
+    assert "empty catch block" in r.stdout
+
+
+def test_swallow_js_handled_catch_passes(tmp_path):
+    r = run_swallow(tmp_path, "m.js",
+        "try { work(); } catch (e) { report(e); }\n")
+    assert r.returncode == 0, r.stdout
+
+
+def test_swallow_other_filetype_ignored(tmp_path):
+    r = run_swallow(tmp_path, "m.css", "catch (e) {}\n")
+    assert r.returncode == 0

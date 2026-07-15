@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-68 — 2026-07-14 — silent error swallows are a task failure; failure paths are spec surface
+
+**Decision:** Two halves, mechanical + spec-side. (1) `scripts/check-swallowed-errors.py` runs in `run_coder` after both apply modes (edit-block and create); a Python `except: pass` with no comment, or an empty JS `.catch()`/`catch {}`, fails the attempt as a strike whose evidence names the line and the fix. A justification comment inside the handler makes a deliberate swallow pass — the rule targets silence, not swallowing. (2) TPM-ROLE law: any spec touching a side-effect (persist, external call, file write) must carry a failure-visibility AC ("WHEN it fails, the user SHALL see …").
+
+**Found by:** external audit of testchat (2026-07-14): the thread-persist PUT ended in `.catch(function () {})` — a failed save of the user's data was indistinguishable from a successful one, for six milestones, all tests green, because no AC ever asked and no gate ever looked.
+
+**Do not suggest:** hard-halting on a finding (a strike with a named line is exactly what retry briefs are for); banning swallows outright (best-effort cleanup is legitimate — the comment requirement is the point); relying on the TPM law alone (advisory prose without the mechanical half is a suggestion, per the operating-rules preamble).
+
+---
+
 ## D-67 — 2026-07-14 — refreeze lints staged tests; lint debt is rejected at the freeze door
 
 **Decision:** `refreeze.sh` runs `ruff check` on every staged `.py` test file before the approval prompt and dies on any finding. Fail-closed on a missing ruff binary (install it; no silent skip). Rationale: frozen files are hash-pinned — once lint debt freezes in, fixing it costs a full human-gated refreeze ceremony, so it never gets fixed. Same gate family as the D-58 determinism grep: strict at the door, because the door is the only cheap place.

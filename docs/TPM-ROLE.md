@@ -99,6 +99,17 @@ This is what moved up the ladder and why the role exists at frontier tier:
   pytest cannot see browser-executed JS, so the ACs were checked by no one
   until the demo.
 
+**Every side-effect needs a failure-visibility AC (D-68).** When a milestone
+introduces or touches an operation whose failure the user would otherwise
+never see — persisting data, calling an external service, writing a file —
+the spec MUST include an AC answering "WHEN the operation fails, the user
+SHALL see …". A feature that can fail silently is under-specified, and the
+coder will faithfully implement the silence (testchat shipped a save path
+whose failures were swallowed by an empty error handler for six milestones;
+every test was green because no AC ever asked). The mechanical backstop
+(`check-swallowed-errors.py`) rejects silent swallows in code — this rule is
+the spec-side half: decide what the user sees, don't leave it to the coder.
+
 Deliver all artifacts as complete files (never fragments) in the staging
 layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`, `contracts.json`,
 `tests/<file>.py`.

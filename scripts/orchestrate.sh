@@ -311,6 +311,14 @@ PYEOF
     CODER_EVIDENCE="$CODER_EVIDENCE"
     return 1
   fi
+  # D-68 swallowed-error gate, both apply modes: a silent error swallow is a
+  # task failure (strike + retry brief), not a hard halt — the finding names
+  # the line and the fix (handle it, or justify the swallow in a comment).
+  if ! SWALLOW_FINDINGS=$(python3 scripts/check-swallowed-errors.py "$file" 2>&1); then
+    CODER_EVIDENCE="swallowed-error gate (D-68): $SWALLOW_FINDINGS"
+    write_state phase ""
+    return 1
+  fi
   bash scripts/phase-gate.sh task "$phase_start" "$file"   # violation = hard halt (D-15/D-22)
   write_state phase ""
   write_state task_target ""
