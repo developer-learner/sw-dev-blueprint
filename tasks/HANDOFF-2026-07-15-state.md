@@ -58,8 +58,9 @@ Updated 2026-07-16 for D-71 — the diagnosis rows below moved:
    returned a valid diagnosis first-try and on the retry rung. **Still owed
    (Rule 6):** production live-fire — see item 2, which this unblocks.
 2. ~~**Exercise the unexercised rungs.**~~ **DONE 2026-07-16 — scratch-rung
-   drill** (disposable child at `~/dev/scratch-rung`, ERD says double(n)=n*2,
-   frozen test demands 5). Two runs, both exit 2 with a self-contained
+   drill** (disposable child at `~/dev/scratch-rung`, deleted after the drill
+   on CEO directive 2026-07-16; ERD said double(n)=n*2, frozen test demanded
+   5). Two runs, both exit 2 with a self-contained
    bundle: run 1 fired brief_wrong routing + caps-exhausted bundle; run 2
    fired contract_or_test_wrong + spec-wrong bundle. D-71 diagnosis
    validation is production-proven (3/3 first-try valid — see ledger). The
