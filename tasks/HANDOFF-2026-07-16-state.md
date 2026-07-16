@@ -35,15 +35,21 @@ a disposable child (since deleted on CEO directive) whose ERD said
 contradiction lived only in the PRD, which EM/coder never see. Two runs,
 both halting exit 2 with a self-contained bundle.
 
+Plus the **scratch-decomp drill** (2026-07-16, later same day): a second
+disposable child (`~/dev/scratch-decomp`, kept for now) with a clean
+two-file spec (`api.compute` must delegate to `helpers.scale`) and a
+rigged plan — T1 (`src/api.py`) with `depends_on: []` so the frozen
+delegation test fails on the missing helper. One run, exit 0.
+
 | Gate | Live fire | Evidence |
 |------|-----------|----------|
 | Ladder: retry rung (strike 1→2) | ✅ | both drill runs + testchat M23 |
-| Ladder: EM consult | ✅ | 3 consults across the two drill runs |
-| Ladder: D-71 diagnosis validation | ✅ | **3/3 production diagnoses schema-valid first-try**; run 2's was factually perfect (named the node-id, quoted the 4≠5 contradiction) |
-| Ladder: D-71 retry rung | ◐ | 5 selftests + live probes green; never NEEDED live (all diagnoses passed first-try) |
+| Ladder: EM consult | ✅ | 4 consults: 3 across the scratch-rung runs + 1 in scratch-decomp |
+| Ladder: D-71 diagnosis validation | ✅ | **3/3 observed diagnoses schema-valid first-try**; run 2's was factually perfect (named the node-id, quoted the 4≠5 contradiction). The scratch-decomp diagnosis was valid (route fired) but its stdout didn't survive, so first-try vs D-71-retry is unknown for that one |
+| Ladder: D-71 retry rung | ◐ | 5 selftests + live probes green; never OBSERVED needed live (all observed diagnoses passed first-try) |
 | Verdict routing: `brief_wrong` | ✅ | run 1 — revision applied, strikes reset, re-ran |
 | Verdict routing: `contract_or_test_wrong` | ✅ | run 2 — routed straight to spec-wrong escalation |
-| Verdict routing: `decomposition_wrong` | ❌ | still unexercised — needs a consult that blames the split; not deterministically forceable |
+| Verdict routing: `decomposition_wrong` | ✅ | scratch-decomp drill — EM re-emitted plan v2 (T1 gained `depends_on: ["T2"]`, child `4ff5faa`), re-validated, strikes reset, run finished green (`66c6b9b`, 6/6 frozen tests) |
 | TPM bundle + BATCH.md + exit 2 | ✅ | both kinds: caps-exhausted (run 1), spec-wrong (run 2); bundles self-contained with embedded diagnosis |
 | D-65 no_edit_files | ✅ | testchat M23 (4 no-op tasks skipped coder) |
 | D-67 refreeze lint | ✅ | live-triggered via lint-bait (2026-07-15) |
@@ -53,9 +59,10 @@ both halting exit 2 with a self-contained bundle.
 
 ## Top open template work
 
-1. **Opportunistic rungs** — `decomposition_wrong` routing and a live D-71
-   retry. Both selftest-covered; neither forceable deterministically. When a
-   real child consult produces either, capture it in this ledger.
+1. **Opportunistic rung** — a live D-71 retry (`decomposition_wrong` closed
+   via the scratch-decomp drill). Selftest-covered; not forceable
+   deterministically — all live diagnoses so far have been schema-valid
+   first-try. When a real child consult produces one, capture it here.
 2. **ci.yml never syncs to children** (`.manifest-project`): hand-apply CI
    fixes to existing children (testchat: done, `6ba8cc2` + `f79f0d2`). New
    children inherit via clone.
