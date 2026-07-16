@@ -52,6 +52,7 @@ delegation test fails on the missing helper. One run, exit 0.
 | Verdict routing: `contract_or_test_wrong` | ✅ | run 2 — routed straight to spec-wrong escalation |
 | Verdict routing: `decomposition_wrong` | ✅ | scratch-decomp drill — EM re-emitted plan v2 (T1 gained `depends_on: ["T2"]`, child `4ff5faa`), re-validated, strikes reset, run finished green (`66c6b9b`, 6/6 frozen tests) |
 | TPM bundle + BATCH.md + exit 2 | ✅ | both kinds: caps-exhausted (run 1), spec-wrong (run 2); bundles self-contained with embedded diagnosis |
+| Plan gate: bounded revisions + halt | ✅ | linkbox M1 run 1 — EM omitted top-level `version` twice (prompt defect, fixed `d6aa3f4` + selftest); halted clean after 2/2 with the correct operator message |
 | D-65 no_edit_files | ✅ | testchat M23 (4 no-op tasks skipped coder) |
 | D-67 refreeze lint | ✅ | live-triggered via lint-bait (2026-07-15) |
 | D-68 swallowed-error | ◐ | has never yet FAILED a live coder attempt |
