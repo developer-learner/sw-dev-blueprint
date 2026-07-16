@@ -6,9 +6,12 @@
 
 ## Where the template stands
 
-- HEAD `41491d9`, pushed to origin, working tree clean.
-- 61 selftests green. Decisions through **D-70**.
-- Landed this round (2026-07-14/15), one concern per commit:
+- HEAD `959a663` (2026-07-16), pushed to origin, working tree clean.
+- 66 selftests green. Decisions through **D-71**.
+- Landed this round (2026-07-14/16), one concern per commit:
+  - `959a663` **D-71** EM diagnosis hardening — reply surface shrunk (shell
+    stamps task_id), inline example, one validator-fed retry; first selftests
+    for `consult_em` (+5). Closes open item 1 below.
   - `015e17e` ci.yml: `mypy --explicit-package-bases` (bare mypy exits 2 on
     duplicate module basenames before checking anything).
   - `ada440e` **D-67** refreeze lint gate: staged tests must pass ruff at the
@@ -25,7 +28,8 @@
 
 ## Gate validation ledger (Rule 6: untriggered ≠ working)
 
-Live-fire status as of testchat M23 (`[success] spec v44`, CEO-accepted):
+Live-fire status as of testchat M23 (`[success] spec v44`, CEO-accepted).
+Updated 2026-07-16 for D-71 — the diagnosis rows below moved:
 
 | Gate | Live fire | Evidence |
 |------|-----------|----------|
@@ -36,23 +40,26 @@ Live-fire status as of testchat M23 (`[success] spec v44`, CEO-accepted):
 | Ladder: retry rung | ✅ | T7 strike 1→2, failure appended to retry brief |
 | Ladder: EM consult | ✅ | fired after strike 2 |
 | Ladder: diagnosis schema gate | ✅ | refused schema-invalid diagnosis (empty task_id), halted correctly |
-| Ladder: verdict routing (brief_wrong / decomposition_wrong / spec-wrong) | ❌ | **unexercised — no production EM diagnosis has ever validated** |
+| Ladder: diagnosis retry rung (D-71) | ◐ | 5 selftests green + live 27b probe valid first-try AND on the retry rung (2026-07-16); never yet fired in a real run |
+| Ladder: verdict routing (brief_wrong / decomposition_wrong / spec-wrong) | ❌ | **still unexercised — D-71 removed the blocker (a valid diagnosis is now reachable), but no production consult has routed a verdict yet** |
 | Ladder: TPM escalation bundle | ❌ | never emitted in production |
 
 ## Top open template work
 
-1. **EM diagnosis hardening (highest value).** The MTPLX 27b plans cleanly
-   (3rd plan valid at M23) but its consult diagnosis came back
-   schema-invalid — same mid-tier weakness as the 122B ("weak on live
-   consult", D-66 family). Candidates, pick one and selftest it:
-   (a) one schema-retry with the validation error appended (mirror the
-   plan-revision pattern); (b) diagnosis prompt carries an inline literal
-   example of a valid reply; (c) shrink the reply surface to a verdict enum +
-   free-text reason, shell fills the rest. Until fixed, every 2-strike task
-   dead-ends at the diagnosis gate.
-2. **Exercise the unexercised rungs** — verdict routing and bundle emission
-   have never run. Cheapest path: a scratch child with a deliberately
-   caps-exhausted task; watch BATCH.md get written and a verdict route.
+1. ~~**EM diagnosis hardening.**~~ **DONE 2026-07-16 — D-71 (`959a663`).** All
+   three candidates shipped together: task_id off the reply surface (shell
+   stamps it, so the M23 empty-task_id failure is structurally impossible),
+   inline literal example, and one retry carrying the validator's errors
+   before the halt. `consult_em` selftested for the first time via
+   `scripts/selftest/drive-consult.sh` (66 selftests, was 61); live 27b probe
+   returned a valid diagnosis first-try and on the retry rung. **Still owed
+   (Rule 6):** production live-fire — see item 2, which this unblocks.
+2. **Exercise the unexercised rungs (now highest value).** Verdict routing and
+   bundle emission have never run; D-71 removed the blocker that made them
+   unreachable, so this is the next thing to prove and the live-fire
+   validation of D-71 itself. Cheapest path: a scratch child with a
+   deliberately caps-exhausted task; watch BATCH.md get written and a verdict
+   route.
 3. **ci.yml never syncs** (`.manifest-project`): the two CI fixes reach
    existing children only by hand (testchat: done, `6ba8cc2` + `f79f0d2`).
    New children inherit via clone. Remember for any other child revived.
