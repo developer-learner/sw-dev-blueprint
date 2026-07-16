@@ -36,7 +36,8 @@ contradiction lived only in the PRD, which EM/coder never see. Two runs,
 both halting exit 2 with a self-contained bundle.
 
 Plus the **scratch-decomp drill** (2026-07-16, later same day): a second
-disposable child (`~/dev/scratch-decomp`, kept for now) with a clean
+disposable child (since deleted on CEO directive, like scratch-rung —
+evidence lives in this ledger) with a clean
 two-file spec (`api.compute` must delegate to `helpers.scale`) and a
 rigged plan — T1 (`src/api.py`) with `depends_on: []` so the frozen
 delegation test fails on the missing helper. One run, exit 0.
@@ -111,3 +112,14 @@ delegation test fails on the missing helper. One run, exit 0.
 - **scratch-rung**: deleted 2026-07-16 post-drill (CEO directive). Its
   evidence lives in the ledger above, the two fix commits, and CLAUDE.md's
   correction log — not in the child.
+- **scratch-decomp**: deleted 2026-07-16 post-drill (CEO directive), same
+  policy — evidence in the ledger above.
+- **linkbox** (NEW, 2026-07-16): first real (non-drill) child — a personal
+  read-later bookmarks API (FastAPI + stdlib sqlite3, 2-file inventory).
+  Cloned from template `65cc863`, bootstrapped, both manifests regen'd,
+  tree clean at `[bootstrap]`. Spec v1 staged in
+  `scripts/.approved/incoming/` (PRD, ERD, contracts, 21 frozen tests —
+  verified 21/21 against a throwaway reference impl, deleted). Staging is
+  gitignored: if it vanishes before the freeze, the backup lives in the
+  authoring session's scratchpad. Awaiting the CEO's host-side freeze
+  (`refreeze.sh`) and the first VM run.
