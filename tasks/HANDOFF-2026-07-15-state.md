@@ -1,5 +1,8 @@
 # HANDOFF — sw-dev-blueprint state, 2026-07-15
 
+> **SUPERSEDED by HANDOFF-2026-07-16-state.md** — read that one; this file
+> is kept as the historical record of the 07-14/15 round.
+
 > Template-repo session handoff (not a child project's). Verify every claim
 > against the tree before repeating it: `git log`, `pytest
 > scripts/selftest/selftest_gates.py -q`, and the child's own history.
