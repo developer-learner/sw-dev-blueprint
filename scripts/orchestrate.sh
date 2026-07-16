@@ -128,6 +128,12 @@ curl -s --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1
 # Fail closed here, same as the manifest check below.
 [ "$(git config core.hooksPath || true)" = ".githooks" ] \
   || die "core.hooksPath is not '.githooks' — run scripts/bootstrap.sh first (the pre-commit lane gate is mandatory, not optional)"
+# The orchestrator's own [plan]/[task] commits swallow failures on purpose
+# (nothing-to-commit is normal) — which also swallows a missing git identity,
+# so every commit silently no-ops (scratch-rung drill 2026-07-16: the dev VM
+# had no identity and the plan commit vanished). Fail closed here instead.
+{ [ -n "$(git config user.email || true)" ] && [ -n "$(git config user.name || true)" ]; } \
+  || die "git identity missing — [plan]/[task] commits would silently no-op (their failures are deliberately swallowed): git config --global user.email <addr> && git config --global user.name <name>"
 # A dirty tree poisons the lane gate: phase-gate diffs the working tree
 # against a phase-start ref, so pre-existing uncommitted changes get blamed
 # on whichever tier runs first (testchat M2: the EM was accused of touching
