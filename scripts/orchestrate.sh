@@ -236,10 +236,20 @@ em_call() {
         --schema "$schema" --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/em-last.raw" 2> "$LOG_DIR/em-last.err" \
     || { cat "$LOG_DIR/em-last.err" >&2; die "EM call failed (see $LOG_DIR/em-last.err)"; }
-  python3 -c "import json; json.load(open('$LOG_DIR/em-last.raw'))" 2>/dev/null \
-    || die "EM returned invalid JSON (see $LOG_DIR/em-last.raw)"
+  if ! python3 -c "import json; json.load(open('$LOG_DIR/em-last.raw'))" 2>/dev/null; then
+    # EM_JSON_SOFT=1 (consult_em's D-71 retry loop): report failure to the
+    # caller instead of halting — a malformed reply there earns one retry.
+    [ "${EM_JSON_SOFT:-0}" = "1" ] \
+      || die "EM returned invalid JSON (see $LOG_DIR/em-last.raw)"
+    echo "  EM reply was not valid JSON (see $LOG_DIR/em-last.raw)" >&2
+    write_state phase ""
+    mark "em-call invalid-json -> $out"
+    return 1
+  fi
   cp "$LOG_DIR/em-last.raw" "$out"
-  bash scripts/phase-gate.sh em "$phase_start"
+  # Explicit die: em_call may run inside an if-condition (D-71), where set -e
+  # is suppressed for the whole function body — the lane gate must stay fatal.
+  bash scripts/phase-gate.sh em "$phase_start" || die "EM lane/integrity gate failed"
   write_state phase ""
   mark "em-call done -> $out"
 }
@@ -431,8 +441,15 @@ ensure_plan() {
   done
 }
 
-# --- EM consult: schema-bound diagnosis (D-29) -------------------------------
+# --- EM consult: schema-bound diagnosis (D-29, hardened D-71) ----------------
 # $1 task-id (or DRIFT)  $2 evidence text. Sets DIAG_VERDICT, DIAG_FILE.
+# D-71: the model's reply surface is verdict+reason(+revised_brief) only —
+# task_id is the shell's own knowledge, stamped into the artifact below (the
+# one production consult ever attempted died on an empty task_id echo,
+# testchat M23). An invalid reply — unparseable JSON or failed validation —
+# earns exactly ONE retry carrying the validator's errors, the same feedback
+# loop that demonstrably fixes plans on the second emit (ensure_plan,
+# testchat M6). A second invalid reply halts (Rule 4), as before.
 consult_em() {
   local id="$1" evidence="$2"
   rm -f tasks/diagnosis.json
@@ -441,14 +458,32 @@ consult_em() {
   for f in $(printf '%s' "$evidence" | grep -oE 'tests/[A-Za-z0-9_/]+\.py' | sort -u || true); do
     ctx+=("failing-test:$f")
   done
-  em_call tasks/diagnosis.json scripts/schemas/diagnosis.schema.json \
-    "Task consult. Task '$id' — $evidence. Decide ONE verdict: brief_wrong (the task brief mis-specified the work — include a full revised_brief, Rule 8 discipline), decomposition_wrong (the task split/dependencies are wrong), or contract_or_test_wrong (the frozen contract or test itself is wrong — your reason becomes the evidence a human carries to the TPM, so be specific: name the contract id or test node-id and what about it is wrong). Reply with ONLY the diagnosis JSON matching the schema you were given." \
-    "${ctx[@]}"
-  [ -f tasks/diagnosis.json ] || die "EM produced no diagnosis for $id — halting (Rule 4)"
-  DIAG_VERDICT=$(python3 scripts/validate-plan.py --diagnosis tasks/diagnosis.json) \
-    || die "EM diagnosis for $id failed schema validation — halting (Rule 4)"
-  DIAG_FILE="$STATE_DIR/diagnosis-$id.json"
-  mv tasks/diagnosis.json "$DIAG_FILE"
+  local instr="Task consult. Task '$id' — $evidence. Decide ONE verdict: brief_wrong (the task brief mis-specified the work — include a full revised_brief, Rule 8 discipline), decomposition_wrong (the task split/dependencies are wrong), or contract_or_test_wrong (the frozen contract or test itself is wrong — your reason becomes the evidence a human carries to the TPM, so be specific: name the contract id or test node-id and what about it is wrong). Reply with ONLY the diagnosis JSON matching the schema you were given, shaped exactly like this example: {\"verdict\": \"decomposition_wrong\", \"reason\": \"T2 imports the parser T4 creates but does not depend on T4\"}. Do NOT include a task_id field — the orchestrator records it itself."
+  local attempt verrs=""
+  for attempt in 1 2; do
+    [ -z "$verrs" ] \
+      || echo "=== EM diagnosis for $id rejected (attempt $((attempt - 1))) — one retry with the validator's errors (D-71) ==="
+    if EM_JSON_SOFT=1 em_call tasks/diagnosis.json scripts/schemas/diagnosis.schema.json \
+         "$instr${verrs:+ Your previous reply was rejected — fix exactly these errors and reply again with ONLY the corrected JSON: $verrs}" \
+         "${ctx[@]}"; then
+      python3 -c 'import json, sys
+p = "tasks/diagnosis.json"
+d = json.load(open(p))
+if isinstance(d, dict):
+    d["task_id"] = sys.argv[1]
+    json.dump(d, open(p, "w"), indent=2)
+' "$id"
+      if DIAG_VERDICT=$(python3 scripts/validate-plan.py --diagnosis tasks/diagnosis.json 2> "$LOG_DIR/diag-last.err"); then
+        DIAG_FILE="$STATE_DIR/diagnosis-$id.json"
+        mv tasks/diagnosis.json "$DIAG_FILE"
+        return 0
+      fi
+      verrs=$(tr '\n' ' ' < "$LOG_DIR/diag-last.err")
+    else
+      verrs="the reply was not parseable JSON at all"
+    fi
+  done
+  die "EM diagnosis for $id still invalid after one retry — halting (Rule 4): $verrs"
 }
 
 # --- Escalation bundle for the web-chat TPM (D-29) ---------------------------

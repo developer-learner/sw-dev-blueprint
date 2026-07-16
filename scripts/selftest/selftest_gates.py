@@ -5,7 +5,9 @@ check-test-surface.py are pure functions over JSON and file trees, and a
 validator that wrongly passes fails open. This file is the cheap-to-carry
 slice of "test the template itself" — the bash orchestration stays covered
 by dry runs until an incident says otherwise (correction-log habit: tighten
-from incidents, do not pre-harden speculatively).
+from incidents, do not pre-harden speculatively). That incident arrived:
+testchat M23's consult dead-ended on a schema-invalid EM diagnosis, so
+consult_em is now exercised here too, via drive-consult.sh (D-71).
 
 Deliberately NOT named test_*.py: orchestrate.sh and refreeze.sh run bare
 `pytest` / `pytest --collect-only` from the repo root, and a default-collected
@@ -873,3 +875,79 @@ def test_swallow_js_handled_catch_passes(tmp_path):
 def test_swallow_other_filetype_ignored(tmp_path):
     r = run_swallow(tmp_path, "m.css", "catch (e) {}\n")
     assert r.returncode == 0
+
+
+# --- consult_em: D-71 diagnosis hardening (bash, via drive-consult.sh) -------
+# The M23 incident this covers: the EM's one production diagnosis came back
+# schema-invalid (empty task_id) and the run dead-ended with no retry. D-71
+# removes task_id from the reply surface (shell stamps it) and grants one
+# retry carrying the validator's errors. These drive the REAL consult_em
+# extracted from orchestrate.sh against a scripted fake EM.
+
+DRIVE_CONSULT = SCRIPTS / "selftest" / "drive-consult.sh"
+
+VALID_DIAG = {"verdict": "decomposition_wrong", "reason": "T2 split is wrong"}
+
+
+def run_consult(tmp_path, replies, task_id="T7"):
+    rdir = tmp_path / "replies"
+    rdir.mkdir()
+    for i, reply in enumerate(replies, 1):
+        raw = reply if isinstance(reply, str) else json.dumps(reply)
+        (rdir / str(i)).write_text(raw)
+    return subprocess.run(
+        ["bash", str(DRIVE_CONSULT), str(tmp_path), task_id,
+         "failed 2 attempts on src/x.py"],
+        capture_output=True, text=True,
+    )
+
+
+def consult_calls(tmp_path):
+    return int((tmp_path / ".calls").read_text())
+
+
+def consult_artifact(tmp_path, task_id="T7"):
+    p = tmp_path / ".pipeline-state" / f"diagnosis-{task_id}.json"
+    return json.loads(p.read_text())
+
+
+def test_consult_valid_first_reply_one_call(tmp_path):
+    r = run_consult(tmp_path, [VALID_DIAG])
+    assert r.returncode == 0, r.stderr
+    assert consult_calls(tmp_path) == 1
+    assert "VERDICT=decomposition_wrong" in r.stdout
+    # task_id was never asked of the model; the shell stamped it
+    assert consult_artifact(tmp_path)["task_id"] == "T7"
+
+
+def test_consult_schema_invalid_then_valid_recovers(tmp_path):
+    r = run_consult(tmp_path, [{"verdict": "bogus", "reason": "x"}, VALID_DIAG])
+    assert r.returncode == 0, r.stderr
+    assert consult_calls(tmp_path) == 2
+    # the retry prompt carries the validator's exact complaint back to the EM
+    retry_prompt = (tmp_path / "prompts" / "2").read_text()
+    assert "verdict must be one of" in retry_prompt
+    assert consult_artifact(tmp_path)["task_id"] == "T7"
+
+
+def test_consult_non_json_then_valid_recovers(tmp_path):
+    r = run_consult(
+        tmp_path, ["I think the brief is wrong, because...", VALID_DIAG])
+    assert r.returncode == 0, r.stderr
+    assert consult_calls(tmp_path) == 2
+    assert "not parseable JSON" in (tmp_path / "prompts" / "2").read_text()
+
+
+def test_consult_two_invalid_replies_halt_bounded(tmp_path):
+    # a third scripted reply proves the loop never takes a third bite
+    r = run_consult(
+        tmp_path, [{"verdict": "bogus"}, {"reason": "still bad"}, VALID_DIAG])
+    assert r.returncode != 0
+    assert consult_calls(tmp_path) == 2
+    assert "after one retry" in r.stderr
+
+
+def test_consult_model_task_id_overwritten(tmp_path):
+    r = run_consult(tmp_path, [dict(VALID_DIAG, task_id="T99")])
+    assert r.returncode == 0, r.stderr
+    assert consult_artifact(tmp_path)["task_id"] == "T7"

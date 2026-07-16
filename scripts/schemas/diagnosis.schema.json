@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "sw-dev-blueprint EM diagnosis (tasks/diagnosis.json)",
-  "description": "Schema-bound verdict the EM writes when the shell orchestrator consults it after a task fails twice, or when the full frozen suite fails after all tasks passed (spec drift). The shell routes MECHANICALLY on `verdict` — the EM advises, it never drives (D-26/D-29). The orchestrator validates this file with scripts/validate-plan.py --diagnosis, consumes it, and deletes it; it is never committed.",
+  "description": "Schema-bound verdict the EM writes when the shell orchestrator consults it after a task fails twice, or when the full frozen suite fails after all tasks passed (spec drift). The shell routes MECHANICALLY on `verdict` — the EM advises, it never drives (D-26/D-29). D-71: the model's reply surface is verdict+reason(+revised_brief) only — the orchestrator stamps task_id into the artifact itself (it knows which task it is consulting about; asking a mid-tier model to echo it back was pure transcription risk), and an invalid reply earns exactly one retry carrying the validator's errors. The orchestrator validates the stamped file with scripts/validate-plan.py --diagnosis (which still requires task_id — on the artifact, guaranteed by the stamp), consumes it, and deletes it; it is never committed.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["task_id", "verdict", "reason"],
+  "required": ["verdict", "reason"],
   "properties": {
     "task_id": {
       "type": "string",
-      "description": "The failing task id (e.g. T3), or the literal string DRIFT for a suite-red/tasks-green consult."
+      "description": "The failing task id (e.g. T3), or the literal string DRIFT for a suite-red/tasks-green consult. NOT requested from the model — the orchestrator stamps it after the reply (D-71); a model-supplied value is overwritten."
     },
     "verdict": {
       "enum": ["brief_wrong", "decomposition_wrong", "contract_or_test_wrong"],
