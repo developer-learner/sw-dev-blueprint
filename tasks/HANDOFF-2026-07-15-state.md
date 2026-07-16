@@ -40,9 +40,12 @@ Updated 2026-07-16 for D-71 — the diagnosis rows below moved:
 | Ladder: retry rung | ✅ | T7 strike 1→2, failure appended to retry brief |
 | Ladder: EM consult | ✅ | fired after strike 2 |
 | Ladder: diagnosis schema gate | ✅ | refused schema-invalid diagnosis (empty task_id), halted correctly |
-| Ladder: diagnosis retry rung (D-71) | ◐ | 5 selftests green + live 27b probe valid first-try AND on the retry rung (2026-07-16); never yet fired in a real run |
-| Ladder: verdict routing (brief_wrong / decomposition_wrong / spec-wrong) | ❌ | **still unexercised — D-71 removed the blocker (a valid diagnosis is now reachable), but no production consult has routed a verdict yet** |
-| Ladder: TPM escalation bundle | ❌ | never emitted in production |
+| Ladder: diagnosis retry rung (D-71) | ◐ | 5 selftests green + live probes; never NEEDED in production — all 3 scratch-rung diagnoses were first-try valid, so the retry has still never fired live |
+| Ladder: diagnosis validation (D-71) | ✅ | scratch-rung drill 2026-07-16: 3/3 production diagnoses schema-valid first-try (2 brief_wrong runs 1a/1b, 1 contract_or_test_wrong run 2 — the run-2 diagnosis was also factually perfect: named the node-id, quoted the 4≠5 contradiction) |
+| Ladder: verdict routing — brief_wrong | ✅ | scratch-rung run 1: revision applied, strikes reset, re-ran |
+| Ladder: verdict routing — contract_or_test_wrong | ✅ | scratch-rung run 2: routed straight to spec-wrong escalation |
+| Ladder: verdict routing — decomposition_wrong | ❌ | still unexercised (needs a consult verdict that blames the split; not forced by this drill) |
+| Ladder: TPM escalation bundle + BATCH.md + exit 2 | ✅ | both scratch-rung runs: caps-exhausted bundle (run 1) AND spec-wrong bundle (run 2), self-contained with embedded diagnosis |
 
 ## Top open template work
 
@@ -54,12 +57,20 @@ Updated 2026-07-16 for D-71 — the diagnosis rows below moved:
    `scripts/selftest/drive-consult.sh` (66 selftests, was 61); live 27b probe
    returned a valid diagnosis first-try and on the retry rung. **Still owed
    (Rule 6):** production live-fire — see item 2, which this unblocks.
-2. **Exercise the unexercised rungs (now highest value).** Verdict routing and
-   bundle emission have never run; D-71 removed the blocker that made them
-   unreachable, so this is the next thing to prove and the live-fire
-   validation of D-71 itself. Cheapest path: a scratch child with a
-   deliberately caps-exhausted task; watch BATCH.md get written and a verdict
-   route.
+2. ~~**Exercise the unexercised rungs.**~~ **DONE 2026-07-16 — scratch-rung
+   drill** (disposable child at `~/dev/scratch-rung`, ERD says double(n)=n*2,
+   frozen test demands 5). Two runs, both exit 2 with a self-contained
+   bundle: run 1 fired brief_wrong routing + caps-exhausted bundle; run 2
+   fired contract_or_test_wrong + spec-wrong bundle. D-71 diagnosis
+   validation is production-proven (3/3 first-try valid — see ledger). The
+   drill also flushed out two real template bugs, both fixed and pushed:
+   `cbd9285` (create-mode coder calls crashed on empty SWBP_MAX_OUTPUT since
+   M17 — every testchat task since was an edit/no-op, so the path was dark)
+   and `b24c335` (missing git identity made pipeline commits silently no-op
+   in the VM; pre-flight now fails closed). Still unexercised:
+   decomposition_wrong routing and a live D-71 retry (both selftest-covered;
+   neither forceable deterministically — take them opportunistically when a
+   real consult produces them).
 3. **ci.yml never syncs** (`.manifest-project`): the two CI fixes reach
    existing children only by hand (testchat: done, `6ba8cc2` + `f79f0d2`).
    New children inherit via clone. Remember for any other child revived.
