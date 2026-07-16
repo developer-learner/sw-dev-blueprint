@@ -118,7 +118,11 @@ body = {
     # replies are legitimately small — a tighter edit-mode budget halves
     # the wall-clock cost of every failed attempt, since a local model
     # generates its whole allowance before the applier can reject it).
-    "max_tokens": int(os.environ.get("SWBP_MAX_OUTPUT", 0))
+    # `or 0`, not a .get() default: orchestrate.sh legitimately exports
+    # SWBP_MAX_OUTPUT="" for create-mode ("no per-call override"), and
+    # int('') raises — which killed every create-mode coder call from the
+    # M17 budget change until the 2026-07-16 ladder drill exposed it.
+    "max_tokens": int(os.environ.get("SWBP_MAX_OUTPUT") or 0)
                   or profile.get("max_output_tokens", 8192),
 }
 if profile.get("extra_body"):
