@@ -951,3 +951,23 @@ def test_consult_model_task_id_overwritten(tmp_path):
     r = run_consult(tmp_path, [dict(VALID_DIAG, task_id="T99")])
     assert r.returncode == 0, r.stderr
     assert consult_artifact(tmp_path)["task_id"] == "T7"
+
+
+def test_plan_prompt_names_every_required_schema_key():
+    # linkbox M1 (2026-07-16): the EM omitted the required top-level
+    # "version" key on BOTH fresh-plan emissions — the prompt's checklist
+    # named erd_version but not version, and with no plan-being-revised to
+    # copy the key from, the local EM follows the checklist literally.
+    # Prompt-schema drift: every key the schema requires must be named in
+    # the emission prompt.
+    orch = (SCRIPTS / "orchestrate.sh").read_text()
+    prompt = re.search(
+        r'"Decompose the frozen ERD into atomic ONE-FILE tasks.*?"',
+        orch, re.S).group(0)
+    schema = json.loads((SCRIPTS / "schemas" / "plan.schema.json").read_text())
+    for key in schema["required"]:
+        # word-boundary match: "version" must not be satisfied by the
+        # "erd_version" mention (the exact vacuity that hid this defect)
+        assert re.search(rf"(?<![A-Za-z_]){re.escape(key)}(?![A-Za-z_])", prompt), (
+            f"plan.schema.json requires top-level '{key}' but the "
+            f"ensure_plan emission prompt never names it")
