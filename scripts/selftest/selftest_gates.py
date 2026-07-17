@@ -992,3 +992,204 @@ def test_plan_prompt_names_every_required_schema_key():
         assert re.search(rf"(?<![A-Za-z_]){re.escape(key)}(?![A-Za-z_])", prompt), (
             f"plan.schema.json requires top-level '{key}' but the "
             f"ensure_plan emission prompt never names it")
+
+
+# --- phase-gate.sh manifest phase (fixes c139cbc) ----------------------------
+# Frozen-integrity gate for the pre-commit / conductor path. Three failure
+# modes the review found (2026-07-16) and c139cbc fixed:
+#   #3 an absent frozen-manifest silently skipped the check (fail-open)
+#   #4 a hand-added test file escaped the pin yet ran in the full suite
+#   plus a regression pin: gitignored bytecode caches must not false-positive
+PHASE_GATE = SCRIPTS / "phase-gate.sh"
+
+
+def _init_git(repo):
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"],
+        cwd=repo, check=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-qm", "fixture"],
+        cwd=repo, check=True,
+    )
+
+
+@pytest.fixture()
+def frozen_repo(tmp_path):
+    """A post-refreeze child: control-plane manifests, a frozen VERSION,
+    one pinned test file on disk. Just enough for phase-gate to run."""
+    (tmp_path / "scripts" / ".approved").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "scripts" / "phase-gate.sh").write_bytes(PHASE_GATE.read_bytes())
+    (tmp_path / "scripts" / "phase-gate.sh").chmod(0o755)
+
+    (tmp_path / "tests" / "test_x.py").write_text("def test_ok(): pass\n")
+    (tmp_path / "scripts" / ".approved" / "VERSION").write_text("1\n")
+    frozen_hash = subprocess.check_output(
+        ["sha256sum", "tests/test_x.py"], cwd=tmp_path, text=True,
+    )
+    (tmp_path / "scripts" / ".approved" / "frozen-manifest").write_text(frozen_hash)
+
+    cp_hash = subprocess.check_output(
+        ["sha256sum", "scripts/phase-gate.sh"], cwd=tmp_path, text=True,
+    )
+    (tmp_path / "scripts" / ".manifest-template").write_text(cp_hash)
+    (tmp_path / "scripts" / ".manifest-project").write_text("")
+
+    _init_git(tmp_path)
+    return tmp_path
+
+
+def _run_gate(repo, phase="manifest"):
+    return subprocess.run(
+        ["bash", "scripts/phase-gate.sh", phase, "HEAD"],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_phase_gate_manifest_baseline_passes(frozen_repo):
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_phase_gate_frozen_manifest_absent_but_version_present_fails(frozen_repo):
+    """The whole check used to be wrapped in `[ -f FROZEN ]`, which turned
+    deleting the manifest itself into a silent skip. c139cbc fixed the
+    trigger to VERSION presence."""
+    (frozen_repo / "scripts" / ".approved" / "frozen-manifest").unlink()
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 1
+    assert "frozen-manifest is missing" in r.stdout
+
+
+def test_phase_gate_pinned_file_tampered_fails(frozen_repo):
+    (frozen_repo / "tests" / "test_x.py").write_text("def test_ok(): return 42\n")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 1
+    assert "frozen spec tampered" in r.stdout
+
+
+def test_phase_gate_unpinned_test_file_fails(frozen_repo):
+    """INV-1 addition coverage — the hash loop catches modification and
+    deletion of pinned files, but a fresh tests/test_y.py was invisible
+    to the manifest yet ran in the full frozen suite."""
+    (frozen_repo / "tests" / "test_stowaway.py").write_text("def test_x(): pass\n")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 1
+    assert "unpinned test file" in r.stdout
+    assert "test_stowaway.py" in r.stdout
+
+
+def test_phase_gate_gitignored_bytecode_does_not_trip(frozen_repo):
+    """Regression pin: the fix uses git ls-files (gitignore-respecting) on
+    the disk side so pytest's __pycache__/.pytest_cache don't flag as
+    unpinned on any child that has ever run tests."""
+    (frozen_repo / ".gitignore").write_text("__pycache__/\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "add", ".gitignore"],
+        cwd=frozen_repo, check=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-qm", "gitignore"],
+        cwd=frozen_repo, check=True,
+    )
+    (frozen_repo / "tests" / "__pycache__").mkdir()
+    (frozen_repo / "tests" / "__pycache__" / "test_x.cpython-314.pyc").write_bytes(b"\x00")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, r.stdout
+
+
+# --- refreeze.sh REMOVED whitelist (fixes 64535e3) --------------------------
+# The `case "$f" in tests/*.py)` whitelist accepted `tests/../scripts/foo.py`
+# because bash case-globs match '/'. 64535e3 rejects traversal before the
+# pattern check. We exercise refreeze in --diff mode: it runs the same
+# staging validation (including the REMOVED check) but applies nothing —
+# so we can test the freeze door without a real interactive terminal.
+REFREEZE = SCRIPTS / "refreeze.sh"
+
+
+@pytest.fixture()
+def stageable_repo(tmp_path):
+    """A repo with the machinery refreeze needs to reach the REMOVED
+    validation: an existing frozen spec (v1), plus a staging dir. We
+    keep the staging minimal (just a REMOVED file) because we want the
+    REMOVED validation to fire, not the delta plumbing beyond it."""
+    (tmp_path / "scripts" / ".approved" / "incoming").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    for name in ("refreeze.sh", "phase-gate.sh"):
+        target = tmp_path / "scripts" / name
+        target.write_bytes((SCRIPTS / name).read_bytes())
+        target.chmod(0o755)
+
+    # A prior freeze exists (VERSION>0), so REMOVED entries can refer to
+    # files that must be present in the tree.
+    (tmp_path / "scripts" / ".approved" / "VERSION").write_text("1\n")
+    (tmp_path / "tests" / "test_real.py").write_text("def test_ok(): pass\n")
+    # frozen-manifest is regenerated by refreeze, so any content is fine
+    # for the pre-apply validation phase we're exercising.
+    (tmp_path / "scripts" / ".approved" / "frozen-manifest").write_text("")
+
+    _init_git(tmp_path)
+    return tmp_path
+
+
+def _run_refreeze_diff(repo):
+    return subprocess.run(
+        ["bash", "scripts/refreeze.sh", "--diff", "scripts/.approved/incoming"],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_refreeze_removed_rejects_traversal(stageable_repo):
+    """The specific defeat the review found: `tests/../scripts/x.py`
+    matched the `tests/*.py` case-glob (bash case-globs match '/') and
+    would have `rm -f`'d the traversed path at apply. The fix rejects
+    traversal *before* the pattern, with a distinct 'no traversal'
+    message — a generic "not tests/*.py" reject at some later stage
+    isn't the invariant we want to pin (unfixed code failed later for a
+    different reason, which a looser assertion would have passed)."""
+    # A "victim" file at the traversed target so the pre-fix code would
+    # have passed the [ -f "$f" ] existence check and continued into the
+    # apply path. Reproduces the exact vulnerability shape.
+    (stageable_repo / "scripts" / "x_victim.py").write_text("victim\n")
+    (stageable_repo / "scripts" / ".approved" / "incoming" / "REMOVED").write_text(
+        "tests/../scripts/x_victim.py\n"
+    )
+    r = _run_refreeze_diff(stageable_repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "no traversal" in combined, combined
+
+
+@pytest.mark.parametrize("bad_path", [
+    "/etc/passwd",                 # absolute
+    "../scripts/refreeze.sh",      # simple parent-escape
+    "tests/../../etc/passwd",      # not tests/*.py at all
+])
+def test_refreeze_removed_rejects_non_tests_paths(stageable_repo, bad_path):
+    """Base whitelist — both pre-fix and post-fix reject these. Kept as
+    a regression pin so a future rewrite doesn't loosen the whitelist."""
+    (stageable_repo / "scripts" / ".approved" / "incoming" / "REMOVED").write_text(
+        bad_path + "\n"
+    )
+    r = _run_refreeze_diff(stageable_repo)
+    assert r.returncode != 0
+    combined = r.stdout + r.stderr
+    assert "REMOVED entries must be" in combined, combined
+
+
+def test_refreeze_removed_accepts_plain_tests_path(stageable_repo):
+    """The tightening must not break the legitimate case."""
+    (stageable_repo / "scripts" / ".approved" / "incoming" / "REMOVED").write_text(
+        "tests/test_real.py\n"
+    )
+    r = _run_refreeze_diff(stageable_repo)
+    # --diff mode may still fail late (delta plumbing needs more staging),
+    # but it must NOT fail at the REMOVED whitelist.
+    combined = r.stdout + r.stderr
+    assert "REMOVED entries must be" not in combined, combined
