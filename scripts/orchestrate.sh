@@ -658,7 +658,13 @@ while :; do
   id="$NEXT"
   check_budget "task $id"
   file=$(python3 scripts/validate-plan.py --task "$id" --field file)
-  mapped=$(python3 scripts/validate-plan.py --task "$id" --field tests)
+  # Read into an array so parametrized node-ids (containing spaces or '['..']')
+  # aren't word-split or glob-expanded by an unquoted expansion.
+  mapped_out=$(python3 scripts/validate-plan.py --task "$id" --field tests)
+  mapped=()
+  while IFS= read -r line; do
+    [ -n "$line" ] && mapped+=("$line")
+  done <<< "$mapped_out"
   smoke=$(python3 -c "import json,sys; cs=json.load(open('scripts/.approved/contracts.json')).get('smoke_checks',{}); print(cs.get(sys.argv[1],''))" "$file")
   brief=$(cat "$BRIEF_DIR/$id" 2>/dev/null || python3 scripts/validate-plan.py --task "$id" --field brief)
   strikes=$(counter "$id" strikes)
@@ -697,9 +703,8 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
   fi
   if [ "$coder_ok" = "1" ]; then
     git add "$file" && git commit -m "[task $id] attempt $((strikes + 1))" 2>/dev/null || true
-    if [ -n "$mapped" ]; then
-      # shellcheck disable=SC2086
-      run_tests $mapped
+    if [ "${#mapped[@]}" -gt 0 ]; then
+      run_tests "${mapped[@]}"
       [ "$TESTS_RC" -eq 0 ] || { pass=0; }
       evidence="mapped tests failing: ${FAILING:-no verdict (rc=$TESTS_RC)}"
     else
