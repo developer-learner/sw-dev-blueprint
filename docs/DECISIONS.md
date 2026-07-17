@@ -523,7 +523,7 @@
 
 ## D-29 — 2026-07-01 — Escalation ladder with batched, filesystem-only TPM round-trips
 
-**Decision:** Escalation is a shell-owned ladder with every counter in `.pipeline-state/`: task retry (strike 1, failure evidence appended to the same brief) → EM consult at two strikes (schema-bound verdict) → `brief_wrong` (revised brief, max 2 per task) → `decomposition_wrong` (plan re-emit, re-validated, max 2 per run) → `contract_or_test_wrong` / caps exhausted / spec drift → **batched TPM bundle** → human applies the TPM's delta via `scripts/refreeze.sh` → affected subtree resumes. PRD-ambiguity escalates from the TPM to the CEO in chat. Because the TPM is a human-operated web chat (not a callable service), the shell packages each escalation as a self-contained copy-pasteable bundle (`.pipeline-state/escalations/<id>/bundle.md`, aggregated into `BATCH.md`), keeps driving every independent subtree to its own stopping point first, and halts exactly once with exit code 2. Format: `docs/ESCALATION.md`.
+**Decision:** Escalation is a shell-owned ladder with every counter in `.pipeline-state/`: task retry (strike 1, failure evidence appended to the same brief) → EM consult at two strikes (schema-bound verdict) → `brief_wrong` (revised brief, `MAX_BRIEF_REVISIONS` default 1 per task) → `decomposition_wrong` (plan re-emit, re-validated, `MAX_PLAN_REVISIONS` default 2 per run) → `contract_or_test_wrong` / caps exhausted / spec drift → **batched TPM bundle** → human applies the TPM's delta via `scripts/refreeze.sh` → affected subtree resumes. PRD-ambiguity escalates from the TPM to the CEO in chat. Because the TPM is a human-operated web chat (not a callable service), the shell packages each escalation as a self-contained copy-pasteable bundle (`.pipeline-state/escalations/<id>/bundle.md`, aggregated into `BATCH.md`), keeps driving every independent subtree to its own stopping point first, and halts exactly once with exit code 2. Format: `docs/ESCALATION.md`.
 
 **Alternatives considered:** (a) Halt-and-ping on first escalation — one browser round-trip per defect; with N independent seam problems that is N round-trips instead of 1. (b) An API integration to the frontier model — assumes a service the operator does not run; the filesystem is the only integration that exists. (c) Let the EM decide when to escalate — escalation is procedure, and procedure is shell-owned (D-26).
 
@@ -599,7 +599,7 @@
 
 **Decision:** The orchestrator MUST spawn each build and test task in a clean context window. State transfers between tasks via structured files on disk, never via conversation history.
 
-**How the shell orchestrator satisfies this:** `scripts/orchestrate.sh` wraps each agent phase in a separate `opencode run --attach --agent <name>` invocation (line 79-81). Each invocation starts fresh. The orchestrator itself is a shell script — no LLM context to rot.
+**How the shell orchestrator satisfies this:** `scripts/orchestrate.sh` makes one `scripts/llm-call.sh` HTTP completion per phase (post-D-53 — no agent harness, no attach, no session state). Each completion is stateless by construction. The orchestrator itself is a shell script — no LLM context to rot.
 
 **Target for OpenHands port:** When the orchestrator becomes an LLM agent, the coordinator loop must stay under 40% of its context budget.
 

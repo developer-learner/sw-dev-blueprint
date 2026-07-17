@@ -13,7 +13,7 @@
 |------|---------|-------|-----------|
 | retry | task fails once | coder (same brief + failure appended) | `MAX_TASK_STRIKES` (2) |
 | consult | task fails twice | EM writes schema-bound diagnosis (verdict+reason only — the shell stamps `task_id`); an invalid reply earns one retry carrying the validator's errors (D-71) | 1 retry, then halt |
-| `brief_wrong` | EM verdict | revised brief, strikes reset | `MAX_BRIEF_REVISIONS` (2) |
+| `brief_wrong` | EM verdict | revised brief, strikes reset | `MAX_BRIEF_REVISIONS` (default 1) |
 | `decomposition_wrong` | EM verdict | EM re-emits plan, re-validated | `MAX_PLAN_REVISIONS` (2) |
 | `contract_or_test_wrong` / caps exhausted / spec drift | EM verdict or shell signal | **batched TPM bundle** | human round-trip |
 | PRD ambiguous | TPM (in chat) | CEO decides | human |
