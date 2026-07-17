@@ -373,7 +373,12 @@ PYEOF
     write_state phase ""
     return 1
   fi
-  bash scripts/phase-gate.sh task "$phase_start" "$file"   # violation = hard halt (D-15/D-22)
+  # Explicit die: run_coder always runs inside an if-condition, where set -e
+  # is suppressed for the whole function body — without this the gate's exit
+  # code was silently discarded and the task committed anyway (same class as
+  # em_call's D-71 fix). Violation = hard halt (D-15/D-22), never a strike.
+  bash scripts/phase-gate.sh task "$phase_start" "$file" \
+    || die "task lane/integrity gate failed ($file) — hard halt (D-15/D-22)"
   write_state phase ""
   write_state task_target ""
   return 0
