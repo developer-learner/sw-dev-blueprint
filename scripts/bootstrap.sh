@@ -77,7 +77,6 @@ pip install \
   "uvicorn[standard]" \
   pydantic \
   pydantic-settings \
-  loguru \
   python-dotenv \
   httpx \
   aiosqlite
@@ -139,8 +138,10 @@ echo "  1. (Rule 3) Confirm the installed stack matches this project; adjust if 
 echo "  2. Fill in .env with your config values"
 echo "  3. Update CLAUDE.md — project name, description, tech stack"
 echo "  4. Update docs/PRODUCT.md with your product context"
-echo "  5. Run Pre-Flight Check (BLUEPRINT.md Step 0)"
-echo "  6. Start LM Studio, load any non-thinking coder model (your choice)"
-echo "  7. Run: opencode"
-echo "  8. Map agents to models in ~/.config/opencode/opencode.json (global) — the repo config is model-free"
-echo "  9. Just tell it what you want to build"
+echo "  5. Start LM Studio and load one or two non-thinking models (any of your choice)"
+echo "  6. Map roles to loaded model names in ~/.config/sw-dev-blueprint/models.env"
+echo "     (SWBP_MODEL_EM=<name>, SWBP_MODEL_CODER=<name> — see scripts/llm-call.sh)"
+echo "  7. Author the frozen spec (PRD/ERD/contracts/tests) with a frontier LLM,"
+echo "     stage it under scripts/.approved/incoming/, then scripts/refreeze.sh"
+echo "  8. Run scripts/orchestrate.sh — the shell drives EM and coder over HTTP,"
+echo "     no agent harness required (D-53)"
