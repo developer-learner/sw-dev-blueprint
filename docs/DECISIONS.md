@@ -287,7 +287,11 @@
 
 **Reason:** In the conductor-operated design (D-40) the primary caller of this script is an agent, not a human — defaults must serve the common caller. Auto-detection that guesses the caller's context is exactly the class of cleverness that fails silently; an explicit flag cannot misfire. The instruction-layer half exists because the script fix alone doesn't stop an agent from summarizing captured output.
 
-**Do not suggest:** Restoring TTY auto-detection; having the conductor paraphrase or trim the bundle ("the CEO only needs the gist" — the TPM needs every byte, and the sentinel footer is load-bearing for tpm-unpack.sh). Conductor denied the task tool: no agent in this repo can spawn another
+**Do not suggest:** Restoring TTY auto-detection; having the conductor paraphrase or trim the bundle ("the CEO only needs the gist" — the TPM needs every byte, and the sentinel footer is load-bearing for tpm-unpack.sh).
+
+---
+
+## D-48 — 2026-07-02 — Conductor denied the task tool: no agent in this repo can spawn another
 
 **Decision:** The built-in Build agent gets `"tools": { "task": false }` in the project `opencode.json`, completing D-43. No agent — conductor, em, or coder — can spawn any agent. The only inter-agent invocation path in the entire system is `orchestrate.sh` calling `opencode run --agent` inside the sandbox. CEO-surfaced gap: "Build hands to the orchestrator" was doc-advisory while Build held the task tool — it could have dispatched coder directly, skipping sandbox mounts and per-task gates. Residual soft path: Build running `opencode run --agent coder` via bash is not allowlisted, so it falls to the ask-prompt (= CEO alarm), subject to the D-45 glob caveat.
 
