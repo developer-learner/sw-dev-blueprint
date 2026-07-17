@@ -127,5 +127,7 @@ delegation test fails on the missing helper. One run, exit 0.
   prompt defect (fixed, `d6aa3f4`); run 2 went plan → T1 (attempt 1) →
   T2 (attempt 2, organic retry-rung fire) → full suite green. App
   smoke-verified end-to-end (create/409/tag-filter/patch/unread/delete).
-  Pending: D-44 CEO acceptance of the running prototype
-  (`uvicorn src.api:app`), then BACKLOG bookkeeping.
+  **CEO-ACCEPTED same day (D-44, `60d9b96`)**: /docs by hand, an
+  independent LLM black-box pass (16/16), and restart persistence
+  verified. Child `tasks/` de-templated (own BACKLOG; template handoffs
+  removed). M2 direction open — the CEO's call.
