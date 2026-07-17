@@ -1,7 +1,24 @@
 # TESTING.md — Testing Strategy
 
 > Strategy and conventions, not results.
-> CI handles pass/fail tracking. This file tells the LLM how we test.
+> The frozen suite in `tests/` is TPM-authored and hash-pinned (INV-1) —
+> it is not written or edited by any agent, ever. This file describes the
+> STYLE the TPM works in when authoring that suite, plus how to run and
+> read results.
+
+---
+
+## Who writes the tests
+
+The TPM (frontier LLM in a web chat) authors the frozen suite alongside
+the ERD/contracts, at spec time, **before the implementation exists**
+(INV-1, D-31). They enter the repo only via `scripts/refreeze.sh` under
+a human-approved diff, and are hash-pinned in
+`scripts/.approved/frozen-manifest`. No agent — coder, EM, or conductor
+— may create or modify a file under `tests/`. See `docs/TPM-ROLE.md`
+for the top tier's job description and `docs/ESCALATION.md` for how
+test-suite errors are corrected (spec delta round-trip, never a direct
+edit).
 
 ---
 
@@ -9,18 +26,24 @@
 
 - Test behavior, not implementation
 - Tests should read like documentation
-- If it's hard to test, the design is wrong — fix the design
-- Coverage target: 80% on business logic (services/), not on route boilerplate
+- If it's hard to test, the design is wrong — fix the design (revised
+  ERD, refreeze) rather than tolerate untestable code
+- Coverage target: 80% on business logic, not on route boilerplate — the
+  ratchet may drift per project (Rule 3)
 
 ---
 
-## Test Types
+## Test Types (style guidance for the TPM)
 
-| Type | Location | Tool | When to write |
-|------|----------|------|---------------|
-| Unit | `tests/services/`, `tests/utils/` | pytest | Always — alongside new functions |
-| Integration | `tests/integration/` | pytest | For flows that touch DB or external services |
-| API | `tests/api/` | pytest + httpx | For every route |
+Layout mirrors the project's file inventory; every frozen test file must
+observe the system only through `contracts.entry_points` + `contracts.routes`
+(INV-4, checked by `scripts/check-test-surface.py` at freeze time).
+
+| Type | Typical location | Tool | Style note |
+|------|------------------|------|------------|
+| Unit | `tests/services/`, `tests/utils/` | pytest | One file per source file; every acceptance criterion in the ERD has at least one test |
+| Integration | `tests/integration/` | pytest | For flows that touch DB or external services; externals require a captured probe (D-56) |
+| API | `tests/api/` | pytest + httpx (`TestClient`, in-process) | Every locked route in `contracts.routes` gets tests; no real sockets (sandbox has `--network none`) |
 
 ---
 
@@ -103,9 +126,10 @@ def auth_headers(test_user):
 ## Machine-readable results
 
 Tests produce a JSON report at `.cache/test-report.json` (via `pytest-json-report`).
-The orchestrator agent reads this file to determine pass/fail and extract failing
-test IDs + assertion messages. This is the inter-agent contract for Rule 5 ground
-truth — agents parse the JSON, not the human terminal output.
+`scripts/orchestrate.sh` reads this file to determine pass/fail and extract failing
+test IDs + assertion messages — the shell parses the JSON, never the human
+terminal output. (Post-D-53 there is no "orchestrator agent" — orchestrate is
+a shell script and consumes the report directly.)
 
 ---
 
