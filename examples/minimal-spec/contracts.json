@@ -1,0 +1,77 @@
+{
+  "erd_version": 1,
+  "files": [
+    "src/storage.py",
+    "src/api.py"
+  ],
+  "entry_points": [
+    "src.storage",
+    "src.storage:DuplicateURL",
+    "src.storage:init_db",
+    "src.storage:add_bookmark",
+    "src.storage:get_bookmark",
+    "src.storage:list_bookmarks",
+    "src.storage:update_bookmark",
+    "src.storage:delete_bookmark",
+    "src.api",
+    "src.api:app"
+  ],
+  "routes": [
+    {
+      "id": "route:POST /api/v1/bookmarks",
+      "method": "POST",
+      "path": "/api/v1/bookmarks"
+    },
+    {
+      "id": "route:GET /api/v1/bookmarks",
+      "method": "GET",
+      "path": "/api/v1/bookmarks"
+    },
+    {
+      "id": "route:GET /api/v1/bookmarks/{bookmark_id}",
+      "method": "GET",
+      "path": "/api/v1/bookmarks/{bookmark_id}"
+    },
+    {
+      "id": "route:PATCH /api/v1/bookmarks/{bookmark_id}",
+      "method": "PATCH",
+      "path": "/api/v1/bookmarks/{bookmark_id}"
+    },
+    {
+      "id": "route:DELETE /api/v1/bookmarks/{bookmark_id}",
+      "method": "DELETE",
+      "path": "/api/v1/bookmarks/{bookmark_id}"
+    }
+  ],
+  "schemas": [
+    {
+      "id": "schema:Bookmark",
+      "fields": {
+        "id": "int",
+        "url": "str",
+        "title": "str",
+        "notes": "str",
+        "tags": "list[str]",
+        "read": "bool",
+        "created_at": "str (ISO-8601 UTC)"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "id": "error:404-bookmark",
+      "status": 404,
+      "shape": { "detail": "bookmark not found" }
+    },
+    {
+      "id": "error:409-duplicate-url",
+      "status": 409,
+      "shape": { "detail": "duplicate url" }
+    },
+    {
+      "id": "error:422-bad-url",
+      "status": 422,
+      "shape": { "detail": "url must start with http:// or https://" }
+    }
+  ]
+}
