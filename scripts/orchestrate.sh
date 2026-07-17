@@ -113,7 +113,7 @@ mark "run start (budget ${SWBP_RUN_BUDGET}s)"
 
 # Constraint 3: conductors live inside the VM; running on macOS is a structural error.
 [ "$(uname -s)" != "Darwin" ] \
-  || die "orchestrate.sh must run inside the Linux dev VM, not on the macOS host — see tasks/HANDOFF-dev-vm.md constraint 3"
+  || die "orchestrate.sh must run inside the Linux dev VM, not on the macOS host — see docs/DEV-VM-SETUP.md constraint 3"
 
 python3 --version >/dev/null 2>&1 || die "python3 required"
 git --version >/dev/null 2>&1    || die "git required"

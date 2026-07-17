@@ -113,7 +113,7 @@ Read these files from the repository in this exact order:
 > **Platform note:** `scripts/orchestrate.sh` hard-refuses to run on macOS
 > and requires a Linux environment (Lima VM on Apple Silicon, or bare
 > Linux). `scripts/refreeze.sh` runs on the macOS host. The split-brain is
-> deliberate — see `tasks/HANDOFF-dev-vm.md` for the setup that made it
+> deliberate — see `docs/DEV-VM-SETUP.md` for the setup that made it
 > work in practice.
 
 > `docs/SANDBOX-VALIDATION.md` is a historical validation record from

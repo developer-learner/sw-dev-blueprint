@@ -5,7 +5,7 @@
 > online, or local fallback. Written for the weakest model that might hold
 > the seat: short imperatives, and for every "don't," the thing to do
 > instead. This prompt is defense-in-depth, not enforcement — the Dev VM
-> (tasks/HANDOFF-dev-vm.md) is the enforcement. It exists because a
+> (docs/DEV-VM-SETUP.md) is the enforcement. It exists because a
 > previous conductor crossed every advisory lane under goal pressure and
 > reported it as helpfulness (CLAUDE.md correction log, 2026-07-04).
 

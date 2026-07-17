@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-sandbox-in-vm.sh — constraint-2 verification for HANDOFF-dev-vm.md.
+# verify-sandbox-in-vm.sh — constraint-2 verification for docs/DEV-VM-SETUP.md.
 # Proves sandbox-run.sh works under native Podman inside the Lima guest.
 #
 # Checks:
