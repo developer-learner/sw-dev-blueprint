@@ -380,6 +380,16 @@ PYEOF
   # the line and the fix (handle it, or justify the swallow in a comment).
   if ! SWALLOW_FINDINGS=$(python3 scripts/check-swallowed-errors.py "$file" 2>&1); then
     CODER_EVIDENCE="swallowed-error gate (D-68): $SWALLOW_FINDINGS"
+    # Reset the file to HEAD — apply-edit-blocks (or create-mode write)
+    # succeeded before D-68 rejected the result, so the working tree
+    # carries the failed attempt. Without this, a downstream EM consult
+    # runs phase-gate.sh em against a dirty non-tasks/ file and gets
+    # mis-blamed for the coder's diff (testchat M25 T7 hit this).
+    if git ls-files --error-unmatch "$file" >/dev/null 2>&1; then
+      git checkout HEAD -- "$file"
+    else
+      rm -f "$file"
+    fi
     write_state phase ""
     return 1
   fi
