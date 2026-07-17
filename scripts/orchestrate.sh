@@ -65,6 +65,16 @@ mkdir -p "$STATE_DIR" "$TASK_STATE" "$BRIEF_DIR" "$LOG_DIR" "$ESC_DIR"
 
 die() { echo "FAIL: $*" >&2; exit 1; }
 
+# Single-writer lock on the state dir. Every counter in .pipeline-state/
+# (strikes, plan_revisions, phase, task_target, spec_version) is a plain
+# file with a write-then-read pattern that assumes no concurrent runs.
+# flock -n fails immediately if another orchestrate is already holding
+# the lock, so a second run halts with a clear message instead of
+# silently corrupting the state files of the run in progress.
+exec 200> "$STATE_DIR/.lock"
+flock -n 200 \
+  || die "another scripts/orchestrate.sh is already running (holds $STATE_DIR/.lock) — wait for it to finish or kill it, then retry"
+
 # --- state helpers (files, not shell vars: crash checkpoint per D-24) ---
 read_state()  { [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }
 write_state() { printf '%s\n' "$2" > "$STATE_DIR/$1"; }
