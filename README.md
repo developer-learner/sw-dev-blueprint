@@ -47,7 +47,7 @@ sw-dev-blueprint/
         └── ci.yml             # GitHub Actions: test + lint on every push
 ```
 
-> **Template files under `src/`, `docs/`, and `tasks/` are intentionally generic skeletons.** They are filled with project-specific content at bootstrap and by the first frozen spec. Do not judge the template by the skeleton — judge it by the process that fills them.
+> **Template files under `docs/` and `tasks/` are intentionally generic skeletons.** They are filled with project-specific content at bootstrap and by the first frozen spec. There is no `src/` in the template — the frozen ERD's file inventory (`contracts.files`) determines what the coder creates, per project. Do not judge the template by the skeletons — judge it by the process that fills them.
 
 ---
 
@@ -118,11 +118,16 @@ run the orchestrator, and answer escalation batches by carrying
    review the diff, approve with y — the spec freezes here (version-stamped,
    hash-pinned; no agent can touch it).
 2. **`scripts/orchestrate.sh`** — drives everything: the EM emits a validated
-   task plan, the coder executes one file per task inside a read-only-repo
-   sandbox, gates and mapped frozen tests run after each task, and the feature
-   is done only when the FULL frozen suite is green. Exit 2 means an
+   task plan, the coder receives one prompt per task (host-side HTTP, no
+   filesystem access — the shell writes the reply to disk), mapped frozen
+   tests then run **inside** a read-only-repo sandbox (`--network none`,
+   `.cache/` writable), lane gates re-check after every phase, and the
+   feature is done only when the FULL frozen suite is green. Exit 2 means an
    escalation batch is waiting in `.pipeline-state/escalations/BATCH.md` —
    paste it into the TPM chat, stage the returned delta, refreeze, re-run.
+
+> **Platform:** `orchestrate.sh` must run on Linux (Lima VM on Apple
+> Silicon works; `refreeze.sh` runs on the macOS host).
 
 Neither EM nor coder has any tool or filesystem access at all (D-53) — the
 orchestrator reads whatever context a call needs, sends ONE HTTP completion
