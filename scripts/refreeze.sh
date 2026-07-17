@@ -479,7 +479,11 @@ rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-c
   for f in PRD.md ERD.md contracts.json test-nodeids; do
     [ -f "$APPROVED/$f" ] && sha256sum "$APPROVED/$f"
   done
-  find tests -type f -name "*.py" | sort | while read -r f; do sha256sum "$f"; done
+  # Pin every file under tests/ (not only .py): non-.py fixtures a TPM
+  # could stage would otherwise install unpinned, and the phase-gate
+  # cross-check (INV-1 addition coverage) requires the disk set and
+  # pinned set to be equal.
+  find tests -type f | sort | while read -r f; do sha256sum "$f"; done
   if [ -d "$APPROVED/captures" ]; then
     find "$APPROVED/captures" -type f | sort | while read -r f; do sha256sum "$f"; done
   fi
