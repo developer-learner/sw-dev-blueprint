@@ -48,7 +48,6 @@ sw-dev-blueprint/
 ```
 
 > **Template files under `src/`, `docs/`, and `tasks/` are intentionally generic skeletons.** They are filled with project-specific content at bootstrap and by the first frozen spec. Do not judge the template by the skeleton — judge it by the process that fills them.
-```
 
 ---
 
