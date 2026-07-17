@@ -59,11 +59,22 @@ def main() -> None:
     target, reply_path = sys.argv[1], sys.argv[2]
     raw = open(reply_path).read()
 
-    if re.search(rf"^\s*{re.escape(NO_CHANGES)}\s*$", raw, re.M):
+    no_changes_declared = bool(
+        re.search(rf"^\s*{re.escape(NO_CHANGES)}\s*$", raw, re.M)
+    )
+    blocks = parse_blocks(raw)
+    if no_changes_declared and blocks:
+        # A reply that both declares NO CHANGES and carries edit blocks is
+        # ambiguous — treating it as a no-op silently discards the edits.
+        # Fail; the retry rung then re-briefs with the specific error.
+        fail(
+            "reply contains both '=== NO CHANGES ===' and edit blocks; "
+            "pick one — either omit all edit blocks (true no-op) or omit "
+            "the NO-CHANGES line (real edit)"
+        )
+    if no_changes_declared:
         print("no changes (coder judged brief already satisfied — mapped tests still gate)")
         return
-
-    blocks = parse_blocks(raw)
     if not blocks:
         fail("reply contained no edit blocks and no NO-CHANGES line")
 
