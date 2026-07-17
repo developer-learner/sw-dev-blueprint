@@ -1193,3 +1193,73 @@ def test_refreeze_removed_accepts_plain_tests_path(stageable_repo):
     # but it must NOT fail at the REMOVED whitelist.
     combined = r.stdout + r.stderr
     assert "REMOVED entries must be" not in combined, combined
+
+
+# --- run_coder: gate-failure propagation (review blocker #1, drive-coder.sh) -
+# The 2026-07-16 pre-publish review's worst finding: run_coder is always
+# invoked as an if-condition, which suppresses `set -e` for its whole body,
+# and the task lane gate at its tail had no explicit failure handling — a
+# failing gate was silently ignored and the caller committed the file anyway.
+# Fixed with an explicit `|| die` (hard halt, D-15/D-22). The same bug class
+# had already been fixed once in em_call (D-71) and recurred here; these
+# tests are the mechanical guard against a third occurrence. The harness
+# reproduces the exact calling shape (if-condition + commit-on-success).
+
+DRIVE_CODER = SCRIPTS / "selftest" / "drive-coder.sh"
+
+CODER_GOOD_REPLY = (
+    "=== FILE: src/x.py ===\n"
+    "def f():\n"
+    "    return 1\n"
+    "=== END FILE ===\n"
+)
+
+
+def run_coder_drive(tmp_path, reply, gate_rc, task_file="src/x.py"):
+    rdir = tmp_path / "replies"
+    rdir.mkdir()
+    (rdir / "1").write_text(reply)
+    return subprocess.run(
+        ["bash", str(DRIVE_CODER), str(tmp_path), "T7", task_file, str(gate_rc)],
+        capture_output=True, text=True,
+    )
+
+
+def coder_commit_count(tmp_path):
+    return int(subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"],
+        cwd=tmp_path, capture_output=True, text=True,
+    ).stdout.strip())
+
+
+def test_coder_gate_pass_writes_and_commits(tmp_path):
+    r = run_coder_drive(tmp_path, CODER_GOOD_REPLY, gate_rc=0)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "RC=0" in r.stdout
+    assert coder_commit_count(tmp_path) == 2  # fixture + [task T7]
+    assert (tmp_path / "src" / "x.py").read_text().startswith("def f():")
+
+
+def test_coder_gate_failure_is_hard_halt_and_nothing_committed(tmp_path):
+    """THE blocker-#1 pin. A failing lane gate must kill the run via die
+    (exit, which escapes the set -e suppression) BEFORE the call site can
+    commit. Pre-fix behavior: run_coder returned 0, the file was committed,
+    and the harness would print RC=0 COMMITS=2 — every assertion below
+    fails against that code."""
+    r = run_coder_drive(tmp_path, CODER_GOOD_REPLY, gate_rc=1)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "hard halt" in r.stderr
+    assert "RC=" not in r.stdout          # die fired before the call site resumed
+    assert coder_commit_count(tmp_path) == 1  # fixture only — no [task] commit
+
+
+def test_coder_wrong_path_reply_is_strike_not_commit(tmp_path):
+    """Reply naming a different path than the task = coder FAILURE (return 1,
+    strike evidence), never a write and never a commit."""
+    wrong = CODER_GOOD_REPLY.replace("src/x.py", "src/other.py")
+    r = run_coder_drive(tmp_path, wrong, gate_rc=0)
+    assert r.returncode == 0, (r.stdout, r.stderr)   # harness survives; strike path
+    assert "RC=1" in r.stdout
+    assert coder_commit_count(tmp_path) == 1
+    assert not (tmp_path / "src" / "x.py").exists()
+    assert not (tmp_path / "src" / "other.py").exists()
