@@ -44,3 +44,11 @@ blueprint-dryrun*/
 
 # TPM agent write lane — outbox is consumed by refreeze.sh, never committed
 .tpm/
+
+# Session lab-notebook — dated session-state handoffs and ad-hoc experiment
+# scripts. Per-operator working notes; the durable record of what happened
+# lives in DECISIONS.md (D-entries) and the correction log in CLAUDE.md.
+# Reference doctrine that once lived under tasks/HANDOFF-* has been moved to
+# docs/ (DEV-VM-SETUP.md, BROWSER-ORACLE-DESIGN.md); those stay tracked.
+tasks/HANDOFF-*-state.md
+tasks/em-ab-test.py
