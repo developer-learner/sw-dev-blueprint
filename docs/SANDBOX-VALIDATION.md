@@ -1,5 +1,14 @@
-# SANDBOX-VALIDATION.md — Pipeline Validation Record
+# SANDBOX-VALIDATION.md — Pipeline Validation Record (HISTORICAL, PRE-D-53)
 
+> ⚠️  **Historical validation record from 2026-06-07.** It captures a
+> *pre-D-53* pipeline architecture in which the coder ran *inside* the
+> sandbox via a containerized OpenCode. That architecture was retired on
+> 2026-07-03 (D-53): the EM and coder are now host-side HTTP completions
+> with no agent harness, and only pytest/smoke_check run in the sandbox.
+> Kept for provenance — do NOT follow it as current setup guidance. For
+> the current sandbox contract see `scripts/sandbox-run.sh` and
+> BLUEPRINT.md's component inventory.
+>
 > Date: 2026-06-07
 > Machine: Apple M5 Max, 128 GB
 > Container: `swbp-sandbox` (Python 3.12-slim, OpenCode 1.15.13, Podman 5.8.2)
