@@ -239,6 +239,27 @@ def test_smoke_check_valid_command_passes(repo):
     assert "not a valid shell command" not in r.stderr
 
 
+def test_smoke_check_injection_does_not_execute(repo, tmp_path):
+    """A smoke_checks value whose first token is a command-substitution must
+    NOT execute on the host during validation (blocker #2). The token is
+    passed to `command -v` as data, so the payload never runs; the value is
+    still rejected (it is not a real executable)."""
+    canary = tmp_path / "CANARY"
+    contracts = CONTRACTS.copy()
+    # A single whitespace-free token (so split()[0] is the whole payload) that
+    # would `touch` the canary if interpolated into the shell word — ${IFS}
+    # supplies the argument separator without a literal space.
+    contracts["smoke_checks"] = {"src/b.py": "foo;touch${IFS}" + str(canary)}
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(json.dumps(contracts))
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text("tests/test_a.py::test_one\n")
+    plan = good_plan()
+    plan["tasks"][1]["tests"] = []
+    r = run_validate(repo, plan)
+    assert not canary.exists(), "smoke_check payload executed on the host (injection)"
+    assert r.returncode == 1
+    assert "not a valid shell command" in r.stderr
+
+
 def test_brief_over_max_chars_rejected(repo):
     """A brief exceeding MAX_BRIEF_CHARS is rejected."""
     plan = good_plan()

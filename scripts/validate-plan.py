@@ -256,8 +256,14 @@ def validate():
         else:
             first_token = sc_cmd.split()[0] if sc_cmd.strip() else ""
             if first_token:
+                # The token comes from TPM-authored contracts.smoke_checks —
+                # untrusted text. It MUST NOT be interpolated into the shell
+                # word (`command -v $tok` ran `$(...)`, backticks, and
+                # `foo;payload` on the host at validation time). Pass it as a
+                # positional arg so bash treats it as data, never syntax; `--`
+                # guards a token that begins with '-'.
                 cv = subprocess.run(
-                    ["bash", "-c", f"command -v {first_token}"],
+                    ["bash", "-c", 'command -v -- "$1"', "bash", first_token],
                     capture_output=True, text=True
                 )
                 if cv.returncode != 0:
