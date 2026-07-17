@@ -482,8 +482,14 @@ rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-c
   # Pin every file under tests/ (not only .py): non-.py fixtures a TPM
   # could stage would otherwise install unpinned, and the phase-gate
   # cross-check (INV-1 addition coverage) requires the disk set and
-  # pinned set to be equal.
-  find tests -type f | sort | while read -r f; do sha256sum "$f"; done
+  # pinned set to be equal. Bytecode caches (__pycache__, .pytest_cache)
+  # are runtime artifacts a host-side pytest run creates — hashing them
+  # into the manifest guarantees a "spec tampered" halt on the next
+  # test run (testchat M25 hit this three times in one session).
+  find tests -type f \
+    -not -path '*/__pycache__/*' \
+    -not -path '*/.pytest_cache/*' \
+    | sort | while read -r f; do sha256sum "$f"; done
   if [ -d "$APPROVED/captures" ]; then
     find "$APPROVED/captures" -type f | sort | while read -r f; do sha256sum "$f"; done
   fi

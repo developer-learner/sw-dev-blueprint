@@ -85,6 +85,12 @@ if [ -f "$FROZEN_VERSION" ]; then
   while IFS='  ' read -r expected_hash path; do
     [ -z "$expected_hash" ] && continue
     [ -z "$path" ] && continue
+    # Defense-in-depth for manifests frozen before refreeze.sh learned to
+    # exclude bytecode caches — skip such entries so an old project isn't
+    # forced to re-freeze just to clear a false tamper alarm.
+    case "$path" in
+      */__pycache__/*|*/.pytest_cache/*) continue ;;
+    esac
     if actual=$(sha256sum -- "$path" 2>/dev/null); then
       actual="${actual%% *}"
     else
