@@ -44,7 +44,7 @@ delegation test fails on the missing helper. One run, exit 0.
 
 | Gate | Live fire | Evidence |
 |------|-----------|----------|
-| Ladder: retry rung (strike 1→2) | ✅ | both drill runs + testchat M23 |
+| Ladder: retry rung (strike 1→2) | ✅ | both drill runs + testchat M23 + **linkbox M1 (first organic fire on a real run)**: T2 attempt 1 called `update_bookmark(id, **fields)` against a `(id, fields: dict)` signature; retry with failure appended fixed it on attempt 2 |
 | Ladder: EM consult | ✅ | 4 consults: 3 across the scratch-rung runs + 1 in scratch-decomp |
 | Ladder: D-71 diagnosis validation | ✅ | **3/3 observed diagnoses schema-valid first-try**; run 2's was factually perfect (named the node-id, quoted the 4≠5 contradiction). The scratch-decomp diagnosis was valid (route fired) but its stdout didn't survive, so first-try vs D-71-retry is unknown for that one |
 | Ladder: D-71 retry rung | ◐ | 5 selftests + live probes green; never OBSERVED needed live (all observed diagnoses passed first-try) |
@@ -122,5 +122,10 @@ delegation test fails on the missing helper. One run, exit 0.
   `scripts/.approved/incoming/` (PRD, ERD, contracts, 21 frozen tests —
   verified 21/21 against a throwaway reference impl, deleted). Staging is
   gitignored: if it vanishes before the freeze, the backup lives in the
-  authoring session's scratchpad. Awaiting the CEO's host-side freeze
-  (`refreeze.sh`) and the first VM run.
+  authoring session's scratchpad. **M1 BUILT same day** (`[success] spec
+  v1`, `471499a`): frozen v1 at `d3fdfdf`; run 1 halted on the plan-gate
+  prompt defect (fixed, `d6aa3f4`); run 2 went plan → T1 (attempt 1) →
+  T2 (attempt 2, organic retry-rung fire) → full suite green. App
+  smoke-verified end-to-end (create/409/tag-filter/patch/unread/delete).
+  Pending: D-44 CEO acceptance of the running prototype
+  (`uvicorn src.api:app`), then BACKLOG bookkeeping.
