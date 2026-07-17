@@ -32,7 +32,6 @@
       "git log*": "allow",
       "git diff*": "allow",
       "git show*": "allow",
-      "cat *": "allow",
       "ls *": "allow",
       "*": "ask"
     }
