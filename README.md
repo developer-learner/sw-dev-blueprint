@@ -14,7 +14,7 @@
 
 ```
 sw-dev-blueprint/
-├── BLUEPRINT.md               # 🌱 Master seed doc — the LLM's entry point (read first)
+├── BLUEPRINT.md               # 🌱 Master seed doc — read after this README; its Document Map sets the full order
 ├── CLAUDE.md                  # 🧠 Master LLM context (auto-read by OpenCode + Claude Code)
 ├── AGENTS.md                  # Symlink → CLAUDE.md (OpenCode's preferred filename)
 ├── CONVENTIONS.md             # Code style rules
@@ -48,6 +48,27 @@ sw-dev-blueprint/
 ```
 
 > **Template files under `docs/` and `tasks/` are intentionally generic skeletons.** They are filled with project-specific content at bootstrap and by the first frozen spec. There is no `src/` in the template — the frozen ERD's file inventory (`contracts.files`) determines what the coder creates, per project. Do not judge the template by the skeletons — judge it by the process that fills them.
+
+---
+
+## What you need
+
+Honest expectation: **~an hour of setup before your first run**, most of it
+container-image builds and model downloads.
+
+| Piece | Why | Notes |
+|-------|-----|-------|
+| macOS (Apple Silicon) host + a **Linux VM** (Lima works), or bare Linux | `scripts/orchestrate.sh` hard-refuses macOS; `scripts/refreeze.sh` runs on the host. The split is deliberate — see `docs/DEV-VM-SETUP.md` | Podman image stores are **per side**; pre-warm with `scripts/sandbox-run.sh -- true` on both |
+| **Podman** | The sandbox that runs the frozen suite over generated code (`--network none`, read-only repo). Mandatory — no unsandboxed fallback (D-30) | Host: `podman machine start` before a freeze |
+| **LM Studio** (or any OpenAI-compatible local server) | Serves the EM and coder seats | Map roles in `~/.config/sw-dev-blueprint/models.env` — the repo never names models (D-41) |
+| A **~27B-class dense local model, non-thinking, 32K context** | The proven floor for the coder/EM seats — smaller or heavily-MoE models failed task-level work in this repo's own history (D-12/D-14/D-66) | "Non-thinking" is a hard rule (BLUEPRINT.md Rule 1) |
+| **ruff** on the host | `refreeze.sh` lints staged tests at the freeze door and fails closed without it (D-67) | `brew install ruff` |
+| **python3, git**; `gh` optional | Gate scripts, version control, template drift-check | — |
+| A **frontier LLM web chat** (any) | Plays the TPM seat: writes the spec + tests you freeze | No API needed — the filesystem is the only integration (D-29) |
+
+Want to see what you're signing up for before installing anything? Read
+**`examples/minimal-spec/`** — a complete, real frozen spec (PRD, ERD,
+contracts, 21 tests) that this pipeline built into a working API.
 
 ---
 
