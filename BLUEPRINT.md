@@ -30,13 +30,15 @@ the scope its capability class can carry, and the shell owns all procedure.
 | **EM** (mid-tier LLM) | one HTTP completion, no tools (`scripts/llm-call.sh`, D-53) | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) — shell writes both |
 | **Coder** (local LLM) | one HTTP completion, no tools (`scripts/llm-call.sh`, D-53) | one file per task, sentinel-wrapped in the reply |
 
-Tests are **run by the shell** (`scripts/orchestrate.sh` → pytest) — there is
-no test agent. The TPM's spec enters the repo only through
+Tests are **run by the shell** (`scripts/orchestrate.sh` → pytest inside the
+sandbox) — there is no test agent. The TPM's spec enters the repo only through
 `scripts/refreeze.sh` (a human-approved diff), after which it is frozen and
 hash-pinned. The orchestrator validates the EM's plan mechanically
-(`scripts/validate-plan.py`), walks the task DAG, runs the coder one file at a
-time inside a read-only-repo sandbox, and gates every step. A feature is done
-when the FULL frozen suite is green. See `docs/TPM-ROLE.md` for the top tier's
+(`scripts/validate-plan.py`), walks the task DAG, calls the coder for each
+task (one `scripts/llm-call.sh` HTTP completion, no tools), writes the reply
+to exactly the task's file, then runs pytest inside the sandbox (`--network
+none`, repo mounted read-only, `.cache/` writable) and gates every step. A
+feature is done when the FULL frozen suite is green. See `docs/TPM-ROLE.md` for the top tier's
 job description and `docs/ESCALATION.md` for how failures climb.
 
 **No agent harness sits in the execution path (D-53).** EM and coder have no
@@ -69,7 +71,7 @@ The full stack this system runs on. Know every object before operating it.
 | **git** | Version control + the LLM's undo button. Every edit is committable; any mistake is `git reset` away. Also: backup, attribution, collaboration. |
 | **GitHub** | The remote. Off-machine backup, host for `gh repo create --template`, and the fleet's drift-check CI (D-33). |
 | **venv** | Per-project dependency isolation. NOT a security sandbox — it stops dependency collisions, not destructive commands. |
-| **podman** | The actual sandbox. `scripts/sandbox-run.sh` mounts the repo read-only and grants each agent only its write lane (D-30). `SANDBOX=1` is mandatory for the orchestrator. |
+| **podman** | The sandbox pytest/smoke_check runs in. `scripts/sandbox-run.sh` mounts the repo read-only, disables the network, and grants `.cache/` read-write for the test report (D-30). Post-D-53 nothing agent-side runs *inside* the sandbox — the EM and coder are host-side HTTP calls, and their output is guarded by shell-owned lanes (phase-gate.sh), not by container mounts. The sandbox exists so untrusted **generated code** executes in isolation, not to contain the agents that produced it. |
 | **LM Studio** | The local inference server (`localhost:1234`) for the coder tier (and, typically, the EM tier). Most common failure point — verify the correct non-thinking model is loaded (Pre-Flight Step 0). |
 | **scripts/llm-call.sh** | The ONLY way the pipeline talks to a model (D-53): one bare HTTP completion per call, no harness, no tools, no memory between calls. Reads the CEO's role→model mapping and hard-halts rather than silently substituting a model if a role is unmapped. |
 | **A conductor (any chat agent)** | The CEO's single interface (D-40) — Claude Code, OpenCode, or anything similar. Runs the scripts and reports back; the CEO runs no commands. Never in the trust-critical path: EM/coder don't go through it (D-53), so the choice of conductor is a preference, not an architecture decision. |
@@ -97,14 +99,25 @@ Read these files from the repository in this exact order:
 | 5 | `.opencode/prompts/*.md` | EM/coder system prompts, read directly by `scripts/llm-call.sh` — model-free by design (D-41/D-53) | Agent setup |
 | 6 | `docs/PRODUCT.md` | What we're building and why | New features |
 | 7 | `docs/ARCHITECTURE.md` | Data models, API, key flows | Any code change |
-| 8 | `docs/DECISIONS.md` | Why choices were made (the ladder: D-26..D-35) | Before suggesting alternatives |
+| 8 | `docs/DECISIONS.md` | Why choices were made (the ladder: D-26..D-71) | Before suggesting alternatives |
 | 9 | `docs/TESTING.md` | How we test + machine-readable report format | Writing or running tests |
 | 10 | `docs/TPM-ROLE.md` | The top tier's job description | Operating the TPM chat |
 | 11 | `docs/ESCALATION.md` | The failure ladder + TPM bundle format | Any failed run |
-| 12 | `scripts/.approved/` | **The frozen spec** — PRD, ERD, contracts, VERSION | Every session — the oracle |
-| 13 | `tasks/CURRENT.md` | Session notes: active work, halt notes, status | Every session |
-| 14 | `tasks/BACKLOG.md` | Upcoming work queue | Planning sessions |
-| 15 | `scripts/orchestrate.sh` + `scripts/phase-gate.sh` | The procedure owner + the gate | Before running the pipeline |
+| 12 | `docs/CEO-PLAYBOOK.md` | Operator runbook for the human at the top of the ladder | Operating the pipeline day to day |
+| 13 | `docs/CONDUCTOR-ROLE.md` | System prompt for the conductor seat | Setting up a conductor |
+| 14 | `scripts/.approved/` | **The frozen spec** — PRD, ERD, contracts, VERSION | Every session — the oracle |
+| 15 | `tasks/CURRENT.md` | Session notes: active work, halt notes, status | Every session |
+| 16 | `tasks/BACKLOG.md` | Upcoming work queue | Planning sessions |
+| 17 | `scripts/orchestrate.sh` + `scripts/phase-gate.sh` | The procedure owner + the gate | Before running the pipeline |
+
+> **Platform note:** `scripts/orchestrate.sh` hard-refuses to run on macOS
+> and requires a Linux environment (Lima VM on Apple Silicon, or bare
+> Linux). `scripts/refreeze.sh` runs on the macOS host. The split-brain is
+> deliberate — see `tasks/HANDOFF-dev-vm.md` for the setup that made it
+> work in practice.
+
+> `docs/SANDBOX-VALIDATION.md` is a historical validation record from
+> 2026-06-07 (pre-D-53); kept for provenance, not current setup guidance.
 
 ---
 
@@ -211,11 +224,15 @@ hash-pinned in `scripts/.approved/frozen-manifest`.
 - The EM writes `tasks/` only. The coder writes exactly the ONE file its
   task names. Nothing agent-side may touch `scripts/`, `tests/`, `.git/`,
   or `.githooks/`.
-- Enforced by the sandbox, not by prompts: `scripts/sandbox-run.sh` mounts
-  the repo read-only and grants only the lane each agent needs (D-30);
-  `scripts/phase-gate.sh` re-checks after every phase as the backstop.
+- Enforced structurally, not by prompts: post-D-53 the model replies never
+  touch the filesystem — the **shell writes every artifact** from the reply
+  (EM reply → `tasks/plan.json`; coder reply → the one file its task names,
+  parsed from a sentinel block; any other path in the reply is a coder
+  FAILURE, not a write). `scripts/phase-gate.sh` re-verifies the working
+  tree after every phase and fails closed on any file outside the lane
+  (fixed in `d2b5572` — the task-phase gate is now a hard halt again).
   Do not phrase boundaries as instructions to a model — asking a model to
-  self-restrain does not substitute for the mount.
+  self-restrain does not substitute for the shell being the sole writer.
 - On a wall, escalate UP one tier (Rule 2). No tier invents the decision of
   the tier above it.
 
