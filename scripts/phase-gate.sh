@@ -55,7 +55,11 @@ for MANIFEST in scripts/.manifest-template scripts/.manifest-project; do
   while IFS='  ' read -r expected_hash path; do
     [ -z "$expected_hash" ] && continue
     [ -z "$path" ] && continue
-    actual=$(sha256sum "$path" 2>/dev/null | cut -d' ' -f1 || echo "MISSING")
+    if actual=$(sha256sum -- "$path" 2>/dev/null); then
+      actual="${actual%% *}"
+    else
+      actual="MISSING"
+    fi
     if [ "$actual" != "$expected_hash" ]; then
       echo "GATE FAIL: control plane tampered — $path (expected $expected_hash, got $actual)"
       exit 1
@@ -81,7 +85,11 @@ if [ -f "$FROZEN_VERSION" ]; then
   while IFS='  ' read -r expected_hash path; do
     [ -z "$expected_hash" ] && continue
     [ -z "$path" ] && continue
-    actual=$(sha256sum "$path" 2>/dev/null | cut -d' ' -f1 || echo "MISSING")
+    if actual=$(sha256sum -- "$path" 2>/dev/null); then
+      actual="${actual%% *}"
+    else
+      actual="MISSING"
+    fi
     if [ "$actual" != "$expected_hash" ]; then
       echo "GATE FAIL: frozen spec tampered — $path changed outside scripts/refreeze.sh"
       exit 1
