@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-set -e
+# new-project.sh is meant to run from INSIDE a fresh clone of this template
+# (produced by `gh repo create --template` + git clone). It invokes
+# ./scripts/bootstrap.sh in the current directory, so the "target" is the
+# CWD, not a subdirectory of it.
+set -euo pipefail
 
-PROJECT_NAME="$1"
-TARGET_DIR="$(pwd)/$PROJECT_NAME"
+PROJECT_NAME="${1:?usage: scripts/new-project.sh <project-name> — run from inside a fresh clone of this template}"
+TARGET_DIR="$(pwd -P)"
 LLM_PORT="${SANDBOX_LLM_PORT:-1234}"
 LLM_URL="http://localhost:$LLM_PORT/v1/chat/completions"
 
