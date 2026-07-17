@@ -41,12 +41,25 @@ while [ $# -gt 0 ]; do
       rel="${2:?--rw needs a repo-relative path}"
       rel="${rel#./}"; rel="${rel%/}"
       case "$rel" in
-        ""|.|..*|/*) echo "sandbox-run: refusing --rw '$2' (must be a repo-relative subdir)" >&2; exit 2 ;;
-        scripts|scripts/*|.git|.git/*|.githooks|.githooks/*)
-          echo "sandbox-run: refusing --rw '$2' (control plane is never agent-writable)" >&2; exit 2 ;;
+        ""|.|/*) echo "sandbox-run: refusing --rw '$2' (must be a repo-relative subdir)" >&2; exit 2 ;;
       esac
+      # Canonicalize before comparing: bash case-globs match '/', so a
+      # literal `scripts|scripts/*` blocklist accepts `tests/../scripts`.
+      # realpath resolves the traversal, then containment is checked against
+      # the real target — this script is the load-bearing security wall.
       mkdir -p "$REPO/$rel"
-      RW_MOUNTS+=(-v "$REPO/$rel:/work/$rel:Z")
+      canon="$(realpath -- "$REPO/$rel" 2>/dev/null || true)"
+      repo_canon="$(realpath -- "$REPO")"
+      case "$canon" in
+        "$repo_canon"/*) ;;
+        *) echo "sandbox-run: refusing --rw '$2' (escapes repo root)" >&2; exit 2 ;;
+      esac
+      inner="${canon#"$repo_canon"/}"
+      case "$inner" in
+        scripts|scripts/*|.git|.git/*|.githooks|.githooks/*)
+          echo "sandbox-run: refusing --rw '$2' (control plane is never agent-writable: $inner)" >&2; exit 2 ;;
+      esac
+      RW_MOUNTS+=(-v "$canon:/work/$inner:Z")
       shift 2 ;;
     --) shift; break ;;
     *) break ;;

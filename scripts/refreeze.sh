@@ -85,7 +85,11 @@ REMOVED_FILES=""
 if [ -f "$IN/REMOVED" ]; then
   REMOVED_FILES=$(grep -vE '^\s*(#|$)' "$IN/REMOVED" || true)
   for f in $REMOVED_FILES; do
+    # Bash case-globs match '/', so a literal `tests/*.py` accepts
+    # `tests/../scripts/foo.py` — a whitelist the TPM could bypass to
+    # rm -f arbitrary paths at apply. Reject traversal before the pattern.
     case "$f" in
+      /*|*/../*|../*|*/..|..) die "REMOVED entries must be repo-relative tests/*.py paths (no traversal), got: $f" ;;
       tests/*.py) ;;
       *) die "REMOVED entries must be tests/*.py paths, got: $f" ;;
     esac
