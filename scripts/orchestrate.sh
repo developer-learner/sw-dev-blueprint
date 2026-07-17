@@ -659,7 +659,7 @@ while :; do
   check_budget "task $id"
   file=$(python3 scripts/validate-plan.py --task "$id" --field file)
   mapped=$(python3 scripts/validate-plan.py --task "$id" --field tests)
-  smoke=$(python3 -c "import json; cs=json.load(open('scripts/.approved/contracts.json')).get('smoke_checks',{}); print(cs.get('$file',''))")
+  smoke=$(python3 -c "import json,sys; cs=json.load(open('scripts/.approved/contracts.json')).get('smoke_checks',{}); print(cs.get(sys.argv[1],''))" "$file")
   brief=$(cat "$BRIEF_DIR/$id" 2>/dev/null || python3 scripts/validate-plan.py --task "$id" --field brief)
   strikes=$(counter "$id" strikes)
   echo "--- Task $id -> $file (strike $((strikes + 1))/$MAX_TASK_STRIKES) ---"
@@ -679,7 +679,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
   # lives in frozen contracts.no_edit_files (human-approved at refreeze), so
   # the skipped file's provenance is the spec, not luck. Acceptance below
   # (mapped tests + smoke_check) still runs in full.
-  no_edit=$(python3 -c "import json; c=json.load(open('scripts/.approved/contracts.json')); print(1 if '$file' in c.get('no_edit_files', []) else 0)")
+  no_edit=$(python3 -c "import json,sys; c=json.load(open('scripts/.approved/contracts.json')); print(1 if sys.argv[1] in c.get('no_edit_files', []) else 0)" "$file")
 
   # acceptance = projection of the frozen oracle (D-28) + optional smoke.
   # A coder call can now fail before any file exists (bad/missing sentinel
