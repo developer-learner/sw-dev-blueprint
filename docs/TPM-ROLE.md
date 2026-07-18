@@ -199,6 +199,34 @@ This is not a shortcut — it is honest bookkeeping. A stale oracle is worse
 than no oracle: it gives false confidence while the app drifts. Ratify
 promptly after outside-band work so the suite stays meaningful.
 
+## Legacy debt surfaces when a file is first touched under a new gate (D-68)
+
+The D-68 swallowed-error gate scans the whole file the coder just wrote
+to, not just the changed lines. Any `catch { }` or `.catch(function () {})`
+that predates the gate — however old, however inert — will fail the check
+the first time the coder touches that file, and the coder cannot fix it
+(the brief authorizes exactly its lines). Two consecutive strikes on
+untouchable legacy is the failure mode, seen live in testchat M25 T7
+(four legacy empty catches, unrelated to the brief, halted the run).
+
+Two ways to handle it, TPM's call per case:
+
+- **Preemptive live-fix sweep.** Before freezing a milestone that will
+  edit a file with legacy debt, the CEO/conductor grep the file for the
+  gate's signatures (`grep -n 'catch\s*(\|\.catch(function' <file>`),
+  add a one-line justification comment inside each empty handler, and
+  commit as a `[live-fix, CEO session]`. Zero behavior change, no test
+  authored — the debt is now blessed. The ratify-milestone pattern
+  above absorbs the commit.
+- **Brief the coder to justify in-scope.** If the debt is genuinely
+  small (one or two catches) and near the brief's edit anchor, name it
+  as an additional atomic edit in the brief with the exact one-line
+  comment to insert. Still a coder edit, still scoped.
+
+Rule of thumb: any file over ~200 lines that hasn't been coder-touched
+since D-68 landed is a preemptive-sweep candidate — grep it before the
+freeze, not after the halt.
+
 ## Operating disciplines
 
 - **Verify at source when you review.** Agent and pipeline output is
