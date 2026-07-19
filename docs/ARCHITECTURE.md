@@ -164,6 +164,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-69**: Run wall-clock budget + phase-timing log
 - **D-70**: The escalation ladder is armed — `MAX_TASK_STRIKES` defaults to 2
 - **D-71**: EM diagnosis hardened — shrunken reply surface + one validator-fed retry
+- **D-73**: Failure detail from the test report reaches retry briefs and consults
 
 ### Gates, lanes & governance
 

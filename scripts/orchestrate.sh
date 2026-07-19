@@ -405,7 +405,11 @@ PYEOF
 }
 
 # run_tests [nodeid...] — full frozen suite when no args.
-# Sets TESTS_RC (0 pass · 1 fail · 3 no verdict) and FAILING (ids, |-joined).
+# Sets TESTS_RC (0 pass · 1 fail · 3 no verdict), FAILING (ids, |-joined) and
+# FAIL_DETAIL (D-73: crash message / longrepr tail per failure, bounded — the
+# report always carried this text; only the node-ids ever reached the evidence
+# string, and an EM diagnosing from bare ids misdiagnosed twice in the
+# 2026-07-16 drill).
 run_tests() {
   mkdir -p .cache
   mark "tests start ($# node-id(s); 0 = full suite)"
@@ -413,7 +417,18 @@ run_tests() {
     --json-report-file=.cache/test-report.json "$@" >/dev/null 2>&1 || true
   local out
   if out=$(python3 - <<'PYEOF'
-import json, sys
+import json, re, sys
+from pathlib import Path
+
+# Cleared first: stale detail from a previous run must never leak into a
+# later attempt's evidence.
+DETAIL = Path(".cache/test-failures.txt")
+DETAIL.write_text("")
+
+def tail(s, n=240):
+    s = re.sub(r"\s+", " ", str(s)).strip()
+    return s if len(s) <= n else "..." + s[-n:]
+
 try:
     with open(".cache/test-report.json") as f:
         r = json.load(f)
@@ -422,23 +437,43 @@ except (FileNotFoundError, json.JSONDecodeError):
 tests = r.get("tests", [])
 summary = r.get("summary", {})
 total = summary.get("total", 0) if isinstance(summary, dict) else 0
-collect_errors = r.get("collectors") and any(
-    c.get("outcome") == "failed" for c in r.get("collectors", []))
-if total == 0 and not collect_errors:
+failed_collectors = [c for c in r.get("collectors", [])
+                     if c.get("outcome") == "failed"]
+if total == 0 and not failed_collectors:
     print("NO_TESTS"); sys.exit(3)
-failed = sorted(t["nodeid"] for t in tests
-                if t.get("outcome") in ("failed", "error"))
-if collect_errors:
+
+def crash_text(t):
+    # The tail is the informative end: a longrepr's final line is the error;
+    # the crash message (when the plugin recorded one) is already terse.
+    for phase in ("call", "setup", "teardown"):
+        p = t.get(phase) or {}
+        msg = (p.get("crash") or {}).get("message") or p.get("longrepr")
+        if msg:
+            return tail(msg)
+    return ""
+
+failed_tests = sorted((t for t in tests
+                       if t.get("outcome") in ("failed", "error")),
+                      key=lambda t: t["nodeid"])
+failed = [t["nodeid"] for t in failed_tests]
+detail = [f"{t['nodeid']}: {crash_text(t)}"
+          for t in failed_tests[:3] if crash_text(t)]
+for c in failed_collectors[:1]:
+    detail.append(f"collection: {tail(c.get('longrepr', ''))}")
+if failed_collectors:
     failed.append("COLLECTION_ERROR (see .cache/test-report.json)")
 if not failed:
     sys.exit(0)
+if detail:
+    DETAIL.write_text(" || ".join(detail) + "\n")
 print("|".join(failed))
 sys.exit(1)
 PYEOF
   ); then
-    TESTS_RC=0; FAILING=""
+    TESTS_RC=0; FAILING=""; FAIL_DETAIL=""
   else
     TESTS_RC=$?; FAILING="$out"
+    FAIL_DETAIL=$(head -c 900 .cache/test-failures.txt 2>/dev/null | tr -d '\n' || true)
   fi
   mark "tests done (rc=$TESTS_RC)"
 }
@@ -726,7 +761,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     if [ "${#mapped[@]}" -gt 0 ]; then
       run_tests "${mapped[@]}"
       [ "$TESTS_RC" -eq 0 ] || { pass=0; }
-      evidence="mapped tests failing: ${FAILING:-no verdict (rc=$TESTS_RC)}"
+      evidence="mapped tests failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
     else
       evidence=""
     fi
@@ -844,7 +879,7 @@ fi
 
 # tasks green but suite red = SPEC DRIFT: routes EM -> TPM, never coder retries (D-28)
 echo "=== SPEC DRIFT: every task passed its projection but the full suite is red ==="
-drift_evidence="all tasks done and individually green; full suite failing: ${FAILING:-no verdict (rc=$TESTS_RC)}"
+drift_evidence="all tasks done and individually green; full suite failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
 
 if [ "$MAX_TASK_STRIKES" -le 1 ]; then
   echo ""

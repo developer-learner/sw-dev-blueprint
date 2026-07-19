@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-73 — 2026-07-18 — Failure detail from the json-report reaches retry briefs and EM consults
+
+**Decision:** `run_tests` now extracts the crash message (or longrepr tail) of the first 3 failing tests — plus the first failing collector — from `.cache/test-report.json` into a bounded, single-line `FAIL_DETAIL` (≤240 chars per failure, ≤900 total), which rides along with the failing node-ids into the task's `lastfail` (and therefore the next attempt brief) and into EM consult evidence, including the drift consult. The shell owns the extraction end to end; no model gains any tool or access (D-53 intact).
+
+**Alternatives considered:** (a) Debugger integration (attach on failure, dump backtrace/locals) — rejected: heavy machinery for information pytest already serializes into the report the pipeline was discarding. (b) Full longrepr passthrough — rejected: unbounded text in a brief stresses the coder's context and the EM's transcription discipline (D-66); the tail carries the error line. (c) `pytest -l/--showlocals` — unnecessary once the report's own crash text is used; can be revisited if the terse form proves insufficient.
+
+**Reason:** The evidence string was node-ids only — `mapped tests failing: tests/x.py::test_y` — while the diagnosis-bearing text (assertion message, import error, traceback tail) sat unread in the report on disk. The 2026-07-16 ladder drill showed the cost: an EM given only a traceback-free failure surface plausibly-but-wrongly diagnosed `brief_wrong` twice. The retry path has the same shape as the plan path's proven pattern (validator errors fed back fix emit #2, D-71): a coder told *what* failed, not just *which id* failed, can fix the cause instead of guessing.
+
+**Do not suggest:** raising the truncation caps "for completeness" (the bound is what keeps briefs inside the 2500-char discipline and the EM inside its transcription envelope); feeding the model the report file itself or a tool to read it (D-53: the shell gathers context, models get one completion); treating richer evidence as a substitute for the escalation ladder (a coder that still fails with the error text in hand is a seat or spec problem, not a prompt problem).
+
+---
+
 ## D-72 — 2026-07-17 — Quantization tier for EM/coder seats: 4-bit is the CEO default; 8-bit is the reactive escalation
 
 **Decision (CEO directive):** For BOTH EM and coder seats, the default is **4-bit**. Switch to **8-bit** (or higher) only on a specific triggering signal or explicit CEO judgment call. Speed wins as the default axis because the pipeline's user-visible cost is wall-clock per milestone and 4-bit's measured advantage on this repo's coder-shaped prompts is 1.4×-1.7× real time. The CEO's operational choice sits in `models.env`; this decision is guidance the operator applies at role-mapping time, not a mechanical gate — the blueprint has never gated by quantization identity, per D-41.
