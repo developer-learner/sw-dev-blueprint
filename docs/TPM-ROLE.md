@@ -53,6 +53,31 @@ Present the criteria and flagged assumptions back to the CEO; the spec
 freezes only when the operator approves the `refreeze.sh` diff, and once
 frozen it changes only through you (duty 3).
 
+**UI milestones need interaction-path ACs, not only happy-path assertions
+(D-82).** A frozen suite pins the contracted surface, not feature quality:
+whatever interaction detail your ACs leave unstated leaks past the oracle
+and comes back as post-`[success]` hand-fixes — the one metric the close-out
+ritual now tracks per milestone. testchat M28 broke a twenty-milestone
+zero-hand-fix streak with eleven, ALL of them interaction detail the ACs
+never pinned. For any milestone with UI, spec the paths a real user hits
+beyond the golden one:
+
+- **Cancel/abort paths** — WHEN the user cancels, the SHALL clause names
+  what reverts (M28: a cancel left half-applied state).
+- **Status truthfulness** — an indicator SHALL reflect the operation's real
+  outcome, not the request having been sent.
+- **Gating** — controls that are invalid mid-operation SHALL be disabled,
+  and re-enabled on completion or failure.
+- **Refresh/reload races** — WHEN the page reloads mid-operation, state
+  SHALL converge (a whole M28 fix class was races-on-reload).
+- **Concurrent operations** — WHILE one operation is in flight, a second
+  SHALL NOT leave stale visual indicators (load/unload racing the status
+  poll).
+
+These are the paths the coder will never invent from a happy-path brief:
+its output was technically correct against the M28 spec, the full suite
+passed, and the app was still wrong.
+
 **2. Author — the ERD, the contracts, and the test suite.**
 This is what moved up the ladder and why the role exists at frontier tier:
 
@@ -251,6 +276,13 @@ freeze, not after the halt.
 - **Bring the CEO clean decisions, not detail.** State what it is in plain
   terms, the decision required (or "FYI, handled"), and your recommendation.
   Keep machinery between you and the pipeline.
+- **Record the post-`[success]` hand-fix count per milestone.** At close-out,
+  the conductor reports how many CEO-session live-fixes landed between
+  `[success]` and formal acceptance. This is the trailing indicator of spec
+  quality: zero is the target (M7→M27 streak); a non-zero count means the
+  frozen ACs under-pinned observable behavior. Record the count in the
+  milestone's CURRENT.md results entry so the trend is visible across the
+  project's life.
 
 ## Boundaries
 

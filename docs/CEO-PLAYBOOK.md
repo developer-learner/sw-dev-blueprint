@@ -72,6 +72,14 @@ LM Studio — no specific model required, D-41) and `scripts/bootstrap.sh`.
    both are true: frozen suite green AND you've accepted the prototype.
    If it passes tests but isn't what you meant, that's not a bug — the
    spec is wrong: back to the TPM (step 2) for the next delta.
+   - **Record the hand-fix ledger at close-out (D-82).** Have the
+     conductor count the live-fix commits made after `[success]`
+     (`git log --oneline --grep='live-fix' <success-commit>..HEAD`) and
+     record the number in `tasks/CURRENT.md`'s Results. Zero is the norm
+     (testchat held it from M7 to M27). The count is your honest measure
+     of what leaked past the frozen ACs: a spike (M28: eleven) means the
+     spec under-pinned interaction detail — name that to the TPM at the
+     next intake, don't just absorb the fixes.
 6. **Next milestone:** fresh TPM session (step 1). Continuity lives in the
    frozen artifacts, not the conversation.
 

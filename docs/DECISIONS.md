@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-82 — 2026-07-19 — Hand-fix ledger at close-out + interaction-path ACs for UI milestones
+
+**Decision:** Two halves, metric + spec-side, both documentation (no gate). (1) The milestone close-out records the post-`[success]` live-fix count in `tasks/CURRENT.md`'s Results (CEO-PLAYBOOK step 5; mirrored as a TPM operating discipline). Zero is the norm — testchat held it M7→M27 — and a spike is the honest measure of what leaked past the frozen ACs, surfaced as input to the next TPM intake instead of being silently absorbed. (2) TPM-ROLE duty 1: UI milestones must pin interaction-path ACs — cancel/abort reverts, status truthfulness, mid-operation gating, refresh/reload races, concurrent-operation indicator staleness — not only happy-path assertions.
+
+**Found by:** testchat M28 (2026-07-19): eleven post-`[success]` live-fixes, breaking the zero streak held since M7 — ALL interaction detail the frozen ACs never pinned, so the coder's output was technically correct, the full suite passed, and the app was wrong. Nothing in the close-out surfaced the count; the trend was invisible until a human noticed the volume.
+
+**Alternatives considered:** a mechanical gate on the count (rejected — live-fixes happen AFTER `[success]`, outside any gate's window; the ledger is a trailing indicator for spec-quality trend, not a blocker); freezing interaction-path ACs as a schema requirement in contracts.json (rejected — "has UI" is not mechanically decidable at freeze time, and D-58's testid surface already constrains what UI tests may observe; the gap was in what the TPM chose to assert, which is a role-doc matter); counting all post-success commits instead of live-fixes (rejected — ratify deltas and doc commits are not defect signal).
+
+**Do not suggest:** treating a zero ledger as proof of spec quality (it proves only that nobody had to fix anything by hand YET); letting the ledger justify skipping the D-44 hands-on gate ("suite green + zero fixes" still isn't CEO acceptance); moving the recording to an agent-authored file other than CURRENT.md's Results (the close-out ritual already lives there).
+
+---
+
 ## D-81 — 2026-07-19 — Gate-symmetry doctrine: gate strength proportional to blast radius
 
 **Decision:** Codified as BLUEPRINT.md Rule 9. Every seat's output artifact receives a mechanical validity check at handoff; gate density is proportional to the artifact's blast radius (downstream work an undetected defect destroys), never inversely proportional to the seat's capability. The rule is documentation-only — it changes no code, but establishes the design principle that D-78, D-80, D-75, INV-4, and D-56 collectively embody for the TPM lane, and that future gates must respect. Items 1 and 4 of the M28 handoff are the first two instances; future spec-level checks must satisfy this rule to be admitted.
