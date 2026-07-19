@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-78 — 2026-07-19 — Freeze-time satisfiability preflight: new/changed contracts must be implementable by the inventory
+
+**Decision:** `refreeze.sh` now proves, before the human approval gate — and in `--diff` mode, before the CEO reads the diff — that every new/changed route and entry_point in the staged contracts is implementable by the delta's `contracts.files`, via `validate-plan.py --spec-preflight OLD NEW`. Entry points are checked exactly: the module path IS the implementing file, so a new module must be in the inventory or on disk, and a new `:symbol` on an on-disk module outside the inventory is equally unbuildable. Routes are checked through the source tree's registration signal (AST scan for route-decorator/registration literals, prefix-aware suffix matching): a route registered nowhere must be buildable by the delta — its path-siblings' registering file must be an editable inventory member; a route family with no siblings needs at least one editable `.py` in the inventory. Fail-closed naming the uncovered contracts; fail-open only where the spec genuinely carries no signal.
+
+**Found by:** testchat M28 v51 (2026-07-19). The spec froze `route:GET /api/v1/models/catalog` without adding `src/api/models.py`/`src/services/models.py` to `contracts.files`. The plan gate's exact plan↔inventory bijection made the spec unimplementable by ANY EM — but that verdict only exists downstream, so it cost ~75 minutes, two EM model swaps, and a seat escalation before the v53 DELTA named it ("no valid plan could contain a task that builds the catalog endpoint"). Verified against ground truth, not just synthetic fixtures: the real v51 staging replayed against the real pre-v51 tree fails this preflight in ~2 seconds naming `src/api/models.py`; the real v53 recut passes.
+
+**Alternatives considered:** requiring the TPM to name an implementing file per route contract (rejected — changes the TPM authoring contract, adds a schema field, and the source tree already carries the signal mechanically); implementing the check in refreeze.sh's shell (rejected — the route/segment matching machinery lives in validate-plan.py; the preflight is a spec-only mode of the same file, so the two gates cannot drift apart); a warning instead of fail-closed (rejected — v51's defect sat through TWO human approvals, v51 and v52, both minutes after a milestone close at day's end; a warning would have scrolled past).
+
+**Do not suggest:** treating preflight-pass as proof of implementability (it proves only the provable classes; ERD prose can still direct work to the wrong file); extending it to schemas/errors ids (no mechanical file signal exists for those); tightening the fail-open branches to fail-closed without new evidence (an initial v1 freeze and genuinely new route families have no source signal by construction — failing them would block every greenfield spec).
+
+---
+
 ## D-77 — 2026-07-19 — Flake triage before declaring SPEC DRIFT: carried-forward failures are retried in isolation
 
 **Decision:** When the final full-suite run fails but every task passed its projection, `orchestrate.sh` no longer declares SPEC DRIFT immediately. Each failing node-id is first classified: a node mapped in `tasks/plan.json` (delta-owned) keeps the DRIFT path unchanged; an unmapped node (carried-forward regression, the D-57 shell-computed bucket) is re-run in isolation twice. Only when EVERY failing node is unmapped AND passes 2/2 in isolation is the suite treated as green — with a loud WARNING on the console and a D-77 note in `tasks/CURRENT.md`'s Results. Any collection error, mapped failure, or isolated reproduction proceeds to DRIFT exactly as before, with the original full-run evidence preserved.

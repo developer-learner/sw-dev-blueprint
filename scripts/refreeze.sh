@@ -252,6 +252,19 @@ INV4_CONTRACTS="$APPROVED/contracts.json"
 python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
   || die "INV-4 rejected the delta — fix the tests or lock the surface in contracts.json, then restage"
 
+# --- D-78: freeze-time satisfiability preflight ---
+# The plan gate's exact plan↔inventory bijection means a new route or
+# entry_point whose implementing file is outside contracts.files is
+# unimplementable by ANY EM — every plan gets rejected, and the ladder burns
+# EM strikes and model swaps against an impossible spec (testchat v51/M28:
+# ~75 minutes, two EM swaps, one seat escalation). The unsatisfiability is
+# provable from the spec alone, so it is proved HERE, before the human reads
+# the diff — in --diff mode too, so the CEO never reviews a doomed delta.
+if [ -f "$IN/contracts.json" ]; then
+  python3 scripts/validate-plan.py --spec-preflight "$APPROVED/contracts.json" "$IN/contracts.json" \
+    || die "satisfiability preflight rejected the delta (D-78) — add the named implementing file(s) to contracts.files (or fix the entry_point) and restage"
+fi
+
 # --- Build the full diff (deterministic — its hash is the approval token) ---
 DIFF_FILE=".pipeline-state/refreeze-pending.diff"
 mkdir -p .pipeline-state

@@ -1195,6 +1195,188 @@ def test_refreeze_removed_accepts_plain_tests_path(stageable_repo):
     assert "REMOVED entries must be" not in combined, combined
 
 
+# --- validate-plan.py --spec-preflight (D-78) --------------------------------
+# testchat M28 v51: a spec froze GET /api/v1/models/catalog with no
+# implementing file in contracts.files; the plan gate's exact bijection made
+# it unimplementable by ANY EM, discovered ~75 minutes downstream. The
+# preflight proves that from the spec alone, pre-approval. These tests pin
+# the v51 reproduction and each fail-open boundary.
+
+V51_SRC = (
+    "router = APIRouter(prefix='/api/v1')\n"
+    "\n"
+    "@router.get('/models')\n"
+    "def list_models():\n"
+    "    return []\n"
+)
+
+
+def preflight_repo(tmp_path, src=V51_SRC):
+    (tmp_path / "src" / "api").mkdir(parents=True)
+    if src is not None:
+        (tmp_path / "src" / "api" / "models.py").write_text(src)
+    return tmp_path
+
+
+def run_preflight(repo, old, new):
+    old_p = repo / "old-contracts.json"
+    if old is not None:
+        old_p.write_text(json.dumps(old))
+    new_p = repo / "new-contracts.json"
+    new_p.write_text(json.dumps(new))
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--spec-preflight",
+         str(old_p), str(new_p)],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+V51_OLD = {
+    "erd_version": 1,
+    "files": ["src/api/chat.py"],
+    "entry_points": [],
+    "routes": [{"id": "route:GET /api/v1/models",
+                "method": "GET", "path": "/api/v1/models"}],
+}
+
+
+def v51_new(files):
+    return {
+        "erd_version": 2,
+        "files": files,
+        "entry_points": [],
+        "routes": V51_OLD["routes"] + [
+            {"id": "route:GET /api/v1/models/catalog",
+             "method": "GET", "path": "/api/v1/models/catalog"}],
+    }
+
+
+def test_preflight_v51_sibling_file_outside_inventory_fails(tmp_path):
+    """The exact v51 shape: new route, registered nowhere, whose path-sibling
+    (GET /api/v1/models) is registered in a file absent from contracts.files.
+    The failure must name that file — it IS the fix."""
+    repo = preflight_repo(tmp_path)
+    r = run_preflight(repo, V51_OLD, v51_new(["src/api/chat.py"]))
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "v51/M28 class" in r.stderr, r.stderr
+    assert "src/api/models.py" in r.stderr, r.stderr
+
+
+def test_preflight_v51_fix_file_in_inventory_passes(tmp_path):
+    """The v53 recut shape: same delta plus the implementing file."""
+    repo = preflight_repo(tmp_path)
+    r = run_preflight(
+        repo, V51_OLD, v51_new(["src/api/chat.py", "src/api/models.py"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_sibling_file_no_edit_declared_fails(tmp_path):
+    """In the inventory but no_edit (D-65) is NOT implementable — the
+    orchestrator never invokes the coder for no-edit files."""
+    repo = preflight_repo(tmp_path)
+    new = v51_new(["src/api/chat.py", "src/api/models.py"])
+    new["no_edit_files"] = ["src/api/models.py"]
+    r = run_preflight(repo, V51_OLD, new)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+
+
+def test_preflight_route_already_registered_passes(tmp_path):
+    """A route the source already serves is satisfiable regardless of the
+    inventory — carried-forward surface, not delta work."""
+    repo = preflight_repo(tmp_path, src=V51_SRC.replace(
+        "@router.get('/models')", "@router.get('/models/catalog')"))
+    r = run_preflight(repo, V51_OLD, v51_new(["src/api/chat.py"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_new_route_family_fails_open_with_editable_py(tmp_path):
+    """A brand-new path family names no natural implementing file — no
+    signal, so an editable .py in the inventory is accepted."""
+    repo = preflight_repo(tmp_path)
+    new = v51_new(["src/api/chat.py"])
+    new["routes"] = [{"id": "route:GET /webhooks/incoming",
+                      "method": "GET", "path": "/webhooks/incoming"}]
+    r = run_preflight(repo, V51_OLD, new)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_new_route_no_editable_py_fails(tmp_path):
+    """...but an inventory that could not register ANY route fails closed."""
+    repo = preflight_repo(tmp_path)
+    new = v51_new(["src/static/index.html"])
+    new["routes"] = [{"id": "route:GET /webhooks/incoming",
+                      "method": "GET", "path": "/webhooks/incoming"}]
+    r = run_preflight(repo, V51_OLD, new)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "no editable .py" in r.stderr, r.stderr
+
+
+def test_preflight_new_entry_point_module_uncreatable_fails(tmp_path):
+    """A new entry_point whose module file is neither on disk nor in the
+    inventory: no task may create it."""
+    repo = preflight_repo(tmp_path)
+    new = v51_new(["src/api/chat.py"])
+    new["routes"] = V51_OLD["routes"]  # isolate the entry-point check
+    new["entry_points"] = ["src.services.catalog"]
+    r = run_preflight(repo, V51_OLD, new)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "src/services/catalog.py" in r.stderr, r.stderr
+
+
+def test_preflight_new_symbol_on_uninventoried_module_fails(tmp_path):
+    """The one-artifact-smaller v51: a new :symbol on an on-disk module that
+    no task may edit."""
+    repo = preflight_repo(tmp_path)
+    new = v51_new(["src/api/chat.py"])
+    new["routes"] = V51_OLD["routes"]  # isolate the entry-point check
+    new["entry_points"] = ["src.api.models:list_model_catalog"]
+    r = run_preflight(repo, V51_OLD, new)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "list_model_catalog" in r.stderr, r.stderr
+
+
+def test_preflight_existing_symbol_outside_inventory_passes(tmp_path):
+    """Locking an ALREADY-EXISTING symbol is pure surface declaration —
+    no implementation work needed, inventory irrelevant."""
+    repo = preflight_repo(tmp_path)
+    new = v51_new(["src/api/chat.py"])
+    new["routes"] = V51_OLD["routes"]  # isolate the entry-point check
+    new["entry_points"] = ["src.api.models:list_models"]
+    r = run_preflight(repo, V51_OLD, new)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_initial_freeze_fails_open(tmp_path):
+    """v1: no prior contracts, no source tree. Routes with an editable .py
+    in the inventory must pass — everything is buildable from nothing."""
+    (tmp_path / "src").mkdir()
+    new = v51_new(["src/main.py"])
+    new["erd_version"] = 1
+    r = run_preflight(tmp_path, None, new)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+# --- refreeze.sh wires the preflight before approval (D-78) ------------------
+
+def test_refreeze_diff_mode_runs_preflight(stageable_repo):
+    """refreeze --diff must reject a v51-shaped delta BEFORE printing a
+    DIFF-SHA — the CEO never reviews a doomed spec."""
+    repo = stageable_repo
+    for name in ("validate-plan.py", "check-test-surface.py"):
+        (repo / "scripts" / name).write_bytes((SCRIPTS / name).read_bytes())
+    (repo / "src" / "api").mkdir(parents=True)
+    (repo / "src" / "api" / "models.py").write_text(V51_SRC)
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(V51_OLD))
+    (repo / "scripts" / ".approved" / "incoming" / "contracts.json").write_text(
+        json.dumps(v51_new(["src/api/chat.py"])))
+    r = _run_refreeze_diff(repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "D-78" in combined, combined
+    assert "DIFF-SHA" not in combined, combined
+
+
 # --- run_coder: gate-failure propagation (review blocker #1, drive-coder.sh) -
 # The 2026-07-16 pre-publish review's worst finding: run_coder is always
 # invoked as an if-condition, which suppresses `set -e` for its whole body,

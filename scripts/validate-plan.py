@@ -33,6 +33,13 @@ Modes:
   validate-plan.py --affected DELTA.json    print ids of tasks invalidated by a re-freeze
                                             delta, including transitive dependents
   validate-plan.py --diagnosis FILE         validate an EM diagnosis; print its verdict
+  validate-plan.py --spec-preflight OLD NEW
+                                            D-78 freeze-time satisfiability: every
+                                            new/changed route and entry_point in NEW
+                                            (vs OLD, which may not exist yet) must be
+                                            implementable by NEW's contracts.files;
+                                            exit 0/1. Run by refreeze.sh BEFORE the
+                                            human approval prompt.
 """
 import ast
 import hashlib
@@ -51,6 +58,11 @@ TASK_REQUIRED = {"id", "file", "depends_on", "brief", "contracts", "tests"}
 TASK_ALLOWED = TASK_REQUIRED
 MAX_BRIEF_CHARS = 2500
 VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
+HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "options"}
+# Method-agnostic registration calls (Flask .route/.add_url_rule, FastAPI
+# .add_api_route) — a path literal under one of these registers the route
+# for ANY method.
+ROUTE_REGISTRARS = {"route", "add_api_route", "add_url_rule", "websocket"}
 
 # Carried-forward node-ids computed by the last validate() call (D-57).
 # Informational — the final full-suite run covers them regardless.
@@ -83,6 +95,22 @@ def build_dir():
     except FileNotFoundError:
         pass
     return d
+
+
+def seg_matches(t_seg, p_seg):
+    """One path segment against one template segment: a {param} segment on
+    either side matches anything; otherwise exact. Shared by the plan gate's
+    route matcher (template vs concrete test literal) and the D-78 preflight
+    (template vs registration-literal template)."""
+    if t_seg.startswith("{") and t_seg.endswith("}"):
+        return True
+    if p_seg.startswith("{") and p_seg.endswith("}"):
+        return True
+    return t_seg == p_seg
+
+
+def path_segs(path):
+    return [s for s in path.strip("/").split("/") if s]
 
 
 def contract_ids(contracts):
@@ -339,7 +367,6 @@ def validate():
     # exists, and no coder attempt can ever make it pass. Fail-open on
     # detection: dynamic paths, request helpers, routes without a method
     # field, or routes no task claims do not fire.
-    HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "options"}
     route_by_key = {}
     for r in contracts.get("routes", []):
         if isinstance(r, dict) and "id" in r and "method" in r and "path" in r:
@@ -355,8 +382,7 @@ def validate():
                 continue
             t_segs = template.strip("/").split("/")
             if len(t_segs) == len(p_segs) and all(
-                (ts.startswith("{") and ts.endswith("}")) or ts == ps
-                for ts, ps in zip(t_segs, p_segs)
+                seg_matches(ts, ps) for ts, ps in zip(t_segs, p_segs)
             ):
                 return rid
         return None
@@ -548,6 +574,191 @@ def validate():
     return plan, order
 
 
+def registered_route_literals(src_root):
+    """AST-visible route registrations under src_root, as (METHOD-or-None,
+    path-literal, file). Catches decorator and call forms alike (both are
+    ast.Call): <obj>.get("/x"), <obj>.route("/x", ...), add_api_route,
+    add_url_rule. Registrations without a leading-slash string literal
+    (mounts, prefix-only "" paths, computed paths) are invisible — callers
+    must treat absence as 'no signal', never as proof of absence."""
+    root = Path(src_root)
+    if not root.is_dir():
+        return []
+    out = []
+    for f in sorted(root.rglob("*.py")):
+        try:
+            tree = ast.parse(f.read_text(), filename=str(f))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                    and node.args[0].value.startswith("/")):
+                attr = node.func.attr
+                if attr in HTTP_METHODS:
+                    out.append((attr.upper(), node.args[0].value, str(f)))
+                elif attr in ROUTE_REGISTRARS:
+                    out.append((None, node.args[0].value, str(f)))
+    return out
+
+
+def literal_registers(method, path, reg_method, literal):
+    """Does a registration literal serve the frozen route (method, path)?
+    Routers mount under prefixes (testchat: APIRouter(prefix='/api/v1') +
+    @router.get('/models')), so the literal matches any segment-aligned
+    SUFFIX of the full path template, with {param} segments wild on either
+    side. '/' only matches '/' exactly."""
+    if reg_method is not None and method and reg_method != method:
+        return False
+    l_segs = path_segs(literal)
+    if not l_segs:
+        return path.strip("/") == ""
+    p_segs = path_segs(path)
+    if len(l_segs) > len(p_segs):
+        return False
+    tail = p_segs[len(p_segs) - len(l_segs):]
+    return all(seg_matches(ts, ls) for ts, ls in zip(tail, l_segs))
+
+
+def spec_preflight(old_path, new_path):
+    """D-78: freeze-time satisfiability. The plan gate's exact plan↔inventory
+    bijection means a task may only target contracts.files members — so a
+    new contract whose implementing file is outside the inventory is
+    unimplementable by ANY EM, and every plan will be rejected. That is
+    provable from the spec alone; prove it here, before a human approves the
+    freeze (testchat v51/M28: ~75 minutes and two EM swaps downstream of a
+    2-second check).
+
+    Fail-closed on the provable classes, fail-open where the spec carries no
+    signal (a brand-new route family names no natural implementing file)."""
+    old = {}
+    if Path(old_path).is_file():
+        old = load_json(Path(old_path), "current frozen contracts")
+    new = load_json(Path(new_path), "staged contracts")
+    files = set(new.get("files", []))
+    editable = files - set(new.get("no_edit_files", []))
+    editable_py = {f for f in editable if f.endswith(".py")}
+    errs = []
+    checked = 0
+
+    # entry_points: the implementing file is derivable exactly — the module
+    # path. New module → must be buildable (in files) or already on disk.
+    # New :symbol on an on-disk module outside the inventory → same v51
+    # class, one artifact smaller: no task may add the symbol.
+    old_eps = set(old.get("entry_points", []))
+    for ep in new.get("entry_points", []):
+        if not isinstance(ep, str) or ep in old_eps:
+            continue
+        checked += 1
+        module, _, symbol = ep.partition(":")
+        mod_file = module.replace(".", "/") + ".py"
+        if mod_file in files:
+            continue
+        p = Path(mod_file)
+        if not p.is_file():
+            errs.append(
+                f"entry_point '{ep}': implementing file {mod_file} is neither "
+                f"in contracts.files nor on disk — no task may create it"
+            )
+            continue
+        if symbol:
+            try:
+                tree = ast.parse(p.read_text(), filename=mod_file)
+            except SyntaxError:
+                continue  # unparseable existing module: no signal
+            names = set()
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                     ast.ClassDef)):
+                    names.add(node.name)
+                elif isinstance(node, ast.Assign):
+                    names.update(t.id for t in node.targets
+                                 if isinstance(t, ast.Name))
+                elif isinstance(node, ast.AnnAssign) and isinstance(
+                        node.target, ast.Name):
+                    names.add(node.target.id)
+            if symbol not in names:
+                errs.append(
+                    f"entry_point '{ep}': symbol '{symbol}' does not exist in "
+                    f"{mod_file}, which is not in contracts.files — no task "
+                    f"may add it"
+                )
+
+    # routes: a route's implementing file is not named by the spec, but the
+    # source tree carries the signal. Already registered → satisfiable.
+    # Not registered → this delta must build it, and its natural home is
+    # where its path-siblings are registered (v51: /api/v1/models/catalog
+    # belongs beside GET /api/v1/models in src/api/models.py) — that file
+    # must be an editable inventory member.
+    def route_entries(c):
+        return {r["id"]: r for r in c.get("routes", [])
+                if isinstance(r, dict) and r.get("id")
+                and isinstance(r.get("path"), str)}
+
+    old_routes = route_entries(old)
+    new_routes = route_entries(new)
+    changed = [
+        r for rid, r in sorted(new_routes.items())
+        if rid not in old_routes
+        or json.dumps(old_routes[rid], sort_keys=True)
+        != json.dumps(r, sort_keys=True)
+    ]
+    if changed:
+        regs = registered_route_literals(build_dir())
+
+        def implementers(route):
+            method = (route.get("method") or "").upper()
+            return sorted({f for m, lit, f in regs
+                           if literal_registers(method, route["path"], m, lit)})
+
+        old_impl = {rid: implementers(r) for rid, r in old_routes.items()}
+        for r in changed:
+            checked += 1
+            rid, path = r["id"], r["path"]
+            if implementers(r):
+                continue  # already registered somewhere; satisfiable
+            segs = path_segs(path)
+            sibling_files = []
+            for k in range(len(segs) - 1, 0, -1):
+                sibs = sorted({
+                    f
+                    for orid, ofiles in old_impl.items()
+                    for f in ofiles
+                    if path_segs(old_routes[orid]["path"])[:k] == segs[:k]
+                })
+                if sibs:
+                    sibling_files = sibs
+                    break
+            if sibling_files:
+                if not set(sibling_files) & editable:
+                    errs.append(
+                        f"route '{rid}' ({path}) is new and registered "
+                        f"nowhere; its path-siblings live in "
+                        f"{', '.join(sibling_files)}, none of which is an "
+                        f"editable contracts.files member — no task can "
+                        f"implement it (the v51/M28 class). Add the "
+                        f"implementing file to contracts.files."
+                    )
+            elif not editable_py:
+                errs.append(
+                    f"route '{rid}' ({path}) is new, registered nowhere, and "
+                    f"contracts.files has no editable .py file that could "
+                    f"register it"
+                )
+            # else: new route family with editable .py present — the spec
+            # names no natural implementing file; no signal, fail open.
+
+    if errs:
+        for e in errs:
+            print(f"SPEC PREFLIGHT FAIL (D-78): {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"spec preflight ok (D-78): {checked} new/changed contract(s) "
+          f"implementable by the inventory")
+
+
 def cmd_affected(delta_path):
     plan, _ = validate()
     delta = load_json(Path(delta_path), "delta")
@@ -639,6 +850,9 @@ def main(argv):
         return
     if argv[0] == "--diagnosis" and len(argv) == 2:
         cmd_diagnosis(argv[1])
+        return
+    if argv[0] == "--spec-preflight" and len(argv) == 3:
+        spec_preflight(argv[1], argv[2])
         return
     fail([f"usage error: {' '.join(argv)} (see module docstring)"])
 
