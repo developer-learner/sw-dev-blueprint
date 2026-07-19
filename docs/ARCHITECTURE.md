@@ -179,4 +179,4 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-45**: Conductor bash allowlist — pipeline scripts + read-only git; everything else asks
 - **D-47**: External TPM review of D-40..D-46 adjudicated
 - **D-59**: The coder edits existing files through anchored blocks
-- **D-76**: `postmortems/` incident archive — unauthoritative, human-authored, zero pipeline dependency
+- **D-76/D-84**: `project-trail/` running project record (né `postmortems/`) — unauthoritative, conductor- and human-authored, zero pipeline dependency, narrative never evidence
