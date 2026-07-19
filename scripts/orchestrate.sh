@@ -882,6 +882,46 @@ finalize_batch
 check_budget "full frozen suite"
 echo "=== Full frozen suite ==="
 run_tests
+
+# --- D-77: flake triage before declaring drift -------------------------------
+# A failing node that is unmapped in the plan (carried-forward, D-57) and that
+# passes repeatedly in isolation is a flake, not spec drift: the delta never
+# touched it and the failure does not reproduce. Only when EVERY failing node
+# classifies as a flake is the suite treated as green (with a loud WARNING);
+# any mapped node, collection error, or reproducing failure keeps the DRIFT
+# path exactly as before.
+FLAKE_NOTE=""
+if [ "$TESTS_RC" -eq 1 ] && [ -n "$FAILING" ] \
+  && [[ "$FAILING" != *COLLECTION_ERROR* ]]; then
+  flake_ids=""
+  all_flakes=1
+  saved_failing="$FAILING" saved_detail="$FAIL_DETAIL"
+  IFS='|' read -r -a _fail_ids <<< "$FAILING"
+  for fid in "${_fail_ids[@]}"; do
+    mapped=$(python3 -c "import json,sys
+p = json.load(open('tasks/plan.json'))
+print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
+    if [ "$mapped" != "0" ]; then
+      all_flakes=0; break   # delta-mapped node failing = real drift
+    fi
+    for _try in 1 2; do
+      run_tests "$fid"
+      if [ "$TESTS_RC" -ne 0 ]; then
+        all_flakes=0; break 2   # reproduces in isolation = real failure
+      fi
+    done
+    flake_ids="${flake_ids:+$flake_ids }$fid"
+  done
+  FAILING="$saved_failing"; FAIL_DETAIL="$saved_detail"; TESTS_RC=1
+  if [ "$all_flakes" -eq 1 ]; then
+    echo "WARNING (D-77): full-suite failure(s) are carried-forward flakes —"
+    echo "  unmapped in the plan and passed 2/2 in isolation: $flake_ids"
+    FLAKE_NOTE="
+WARNING (D-77): carried-forward node(s) failed in the full run but passed 2/2 in isolation (flake, not drift): $flake_ids"
+    TESTS_RC=0
+  fi
+fi
+
 if [ "$TESTS_RC" -eq 0 ]; then
   echo ""
   echo "=========================================="
@@ -892,7 +932,7 @@ if [ "$TESTS_RC" -eq 0 ]; then
 
 ## Results
 
-Full frozen TPM suite green against spec v$FROZEN_V. Feature built and validated.
+Full frozen TPM suite green against spec v$FROZEN_V. Feature built and validated.${FLAKE_NOTE}
 EOF
   rm -rf "$STATE_DIR"
   git add tasks/CURRENT.md && git commit -m "[success] spec v$FROZEN_V" 2>/dev/null || true

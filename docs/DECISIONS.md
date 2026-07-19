@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-77 — 2026-07-19 — Flake triage before declaring SPEC DRIFT: carried-forward failures are retried in isolation
+
+**Decision:** When the final full-suite run fails but every task passed its projection, `orchestrate.sh` no longer declares SPEC DRIFT immediately. Each failing node-id is first classified: a node mapped in `tasks/plan.json` (delta-owned) keeps the DRIFT path unchanged; an unmapped node (carried-forward regression, the D-57 shell-computed bucket) is re-run in isolation twice. Only when EVERY failing node is unmapped AND passes 2/2 in isolation is the suite treated as green — with a loud WARNING on the console and a D-77 note in `tasks/CURRENT.md`'s Results. Any collection error, mapped failure, or isolated reproduction proceeds to DRIFT exactly as before, with the original full-run evidence preserved.
+
+**Found by:** testchat M28 (2026-07-19, spec v54). The run halted on `test_thinking_placeholder_shows_then_clears` — a timing-sensitive M9-era Playwright test outside the M28 delta's inventory — which had passed 150/150 earlier in the same session and passed 1/1 in isolation. Drift detection tripped on a flake, and the CEO had to manually authorize `[success]` after hand-running the isolate + inventory check this decision now mechanizes. Rule 6's corollary cuts both ways: "something went wrong" ≠ "the safeguard tripped for the right reason".
+
+**Alternatives considered:** re-running the full suite instead of isolation (rejected — a flake can flake again in the full run; isolation is what discriminates interference/timing from real breakage); triaging on the test FILE being in `contracts.files` (rejected — the plan mapping is the exact D-57 ownership signal the shell already owns, and mapped-but-unownable node-ids stay correctly on the strict path); N>2 isolated retries (rejected — 2 clean passes on an unmapped node is already stronger evidence than the one manual pass the CEO accepted in the live incident); quarantining or skipping flaky tests (rejected — the frozen suite is the acceptance surface; a flake is surfaced loudly, never removed).
+
+**Do not suggest:** auto-retrying MAPPED failing nodes (a delta-owned failure is real signal, never a flake candidate); silencing or downgrading the WARNING (the flake is a real defect in the frozen test — it belongs in a TPM refreeze eventually); moving this triage into `run_tests` itself (per-task projections must stay strict — a task's own flaky test failing is a legitimate strike).
+
+---
+
 ## D-76 — 2026-07-18 — postmortems/ incident archive adopted; general vault and per-file ADR migration rejected
 
 **Decision:** A top-level `postmortems/` directory holds one file per incident that changed how the system works — a rule, gate, or invariant exists or changed because of it (naming `YYYY-MM-DD-slug.md`, `status: historical`, one page). It is deliberately unauthoritative: human-authored, agent-read-only (advisory for the conductor; pipeline phases are structurally excluded because the directory is outside every `.gate-paths` lane, so INV-2 fails closed on any pipeline-phase write), and nothing in the pipeline reads it — zero dependency, forever. References are one-way: a postmortem cites decisions and specs by number/path; no pipeline artifact cites back. Files stay committed (INV-2 counts untracked files repo-wide during runs). Decisions do NOT move: `docs/DECISIONS.md` remains the single decision log. Backfilled at adoption: the 2026-07-11 fabricated-authorization incident (the honor-string family's live occurrence, → D-61) and the 2026-07-04 M4 conductor breach (→ hooksPath pre-flight, D-55 outer sandbox).

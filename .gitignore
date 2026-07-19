@@ -38,6 +38,9 @@ scripts/.approved/incoming/
 repomix-output.md
 repomix-output.*
 
+# Editor backups
+*.bak
+
 # OS
 .DS_Store
 blueprint-dryrun*/
