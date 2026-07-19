@@ -493,7 +493,35 @@ ensure_plan() {
     revs=$(plan_revisions_used)
     [ "$revs" -lt "$MAX_PLAN_REVISIONS" ] || {
       echo "$verrs"
+      # --- D-79: audit the puzzle before blaming the solver ------------------
+      # Exhausting the plan budget is as much evidence about the SPEC as about
+      # the EM: testchat M28 saw two different EM models fail identically at
+      # this gate because v51/v52 were unimplementable by ANY EM — and the
+      # ladder, which only knows how to escalate the ACTOR, burned ~75 minutes
+      # of model swaps and a seat escalation against an impossible spec. Before
+      # halting toward the actor path, re-run the D-78 satisfiability audit on
+      # the frozen spec against the current tree (old={} form: everything
+      # already registered/on disk passes; what remains must be buildable by
+      # the inventory). If the spec is the defect, route straight to the TPM
+      # bundle — no further EM strikes, no model swaps.
+      local audit
+      if ! audit=$(python3 scripts/validate-plan.py --spec-preflight /dev/null "$APPROVED/contracts.json" 2>&1); then
+        echo ""
+        echo "SPEC DEFECT (D-79): the frozen spec is unimplementable — the plan"
+        echo "gate would reject EVERY decomposition. Swapping or escalating the"
+        echo "EM cannot fix this; the delta below belongs to the TPM."
+        echo "$audit"
+        package_escalation "spec-defect" "SPEC-DEFECT" "plan gate rejected $revs consecutive EM plans; last validator output:
+$verrs
+
+D-78/D-79 satisfiability audit of frozen spec v$FROZEN_V (mechanical, spec-only):
+$audit" "-"
+        finalize_batch
+      fi
       die "plan invalid after $revs EM revisions — halting for the human (Rule 4).
+  The D-79 spec audit found no unsatisfiable contract, so the spec is not
+  provably at fault — the ladder's actor path (EM model quality, prompt, or a
+  spec problem the audit cannot see) applies.
   If the halt's cause was fixed OUTSIDE the spec (e.g. a gate defect), the CEO
   may refresh the budget: rm .pipeline-state/plan_revisions*   — otherwise the
   fix belongs in a re-freeze, which refreshes it automatically."
@@ -561,7 +589,7 @@ package_escalation() {  # $1 kind  $2 id  $3 evidence  $4 diagnosis-file
   {
     echo "## Escalation: $kind — $id (spec v$FROZEN_V)"
     echo
-    if [ "$id" != "DRIFT" ]; then
+    if [ "$id" != "DRIFT" ] && [ "$id" != "SPEC-DEFECT" ]; then
       echo "### Task entry (tasks/plan.json)"
       echo '```json'
       python3 -c "
@@ -577,10 +605,17 @@ print(json.dumps(t, indent=2))"
     echo "$evidence"
     echo '```'
     echo
-    echo "### EM diagnosis (schema-validated)"
-    echo '```json'
-    cat "$diag"
-    echo '```'
+    if [ "$diag" = "-" ]; then
+      echo "### EM diagnosis"
+      echo "(none — detected mechanically by the D-79 spec audit; no EM consult"
+      echo "was involved and none is needed: the defect is provable from the"
+      echo "spec alone.)"
+    else
+      echo "### EM diagnosis (schema-validated)"
+      echo '```json'
+      cat "$diag"
+      echo '```'
+    fi
     echo
     echo "### Frozen artifacts involved"
     python3 - "$id" "$evidence" <<'PYEOF'
@@ -591,7 +626,7 @@ tid, evidence = sys.argv[1], sys.argv[2]
 try:
     plan = json.load(open("tasks/plan.json"))
     contracts = json.load(open("scripts/.approved/contracts.json"))
-    if tid != "DRIFT":
+    if tid not in ("DRIFT", "SPEC-DEFECT"):
         t = next(t for t in plan["tasks"] if t["id"] == tid)
         refs = set(t["contracts"])
         print("Referenced contract entries:")

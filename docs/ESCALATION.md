@@ -15,12 +15,26 @@
 | consult | task fails twice | EM writes schema-bound diagnosis (verdict+reason only — the shell stamps `task_id`); an invalid reply earns one retry carrying the validator's errors (D-71) | 1 retry, then halt |
 | `brief_wrong` | EM verdict | revised brief, strikes reset | `MAX_BRIEF_REVISIONS` (default 1) |
 | `decomposition_wrong` | EM verdict | EM re-emits plan, re-validated | `MAX_PLAN_REVISIONS` (2) |
+| spec defect (D-79) | plan budget exhausted AND the D-78 satisfiability audit of the frozen spec fails | **batched TPM bundle** — no further EM strikes, no model swaps | human round-trip |
 | `contract_or_test_wrong` / caps exhausted / spec drift | EM verdict or shell signal | **batched TPM bundle** | human round-trip |
 | PRD ambiguous | TPM (in chat) | CEO decides | human |
 
 "Spec drift" is the mechanically detected case: every task passed its mapped
 tests but the full frozen suite is red. It routes EM→TPM and never to coder
 retries (D-28).
+
+"Spec defect" (D-79) is the other mechanically detected case, one phase
+earlier: when the plan gate has rejected `MAX_PLAN_REVISIONS` consecutive
+plans, the orchestrator audits the puzzle before the ladder blames the
+solver — it re-runs the D-78 satisfiability check on the frozen spec against
+the current tree. Two identical rejections are as much evidence about the
+spec as about the EM (testchat M28: two different EM models failed
+identically against v51/v52, which were unimplementable by ANY EM — the
+ladder burned ~75 minutes of model swaps against an impossible spec, a
+capability-independent failure no better model can fix). If the audit fails,
+the halt is a SPEC DEFECT routed straight to the TPM bundle; swapping EM
+models or refreshing the plan budget is explicitly the wrong move. If the
+audit passes, the normal actor-path halt applies unchanged.
 
 ## Outbound: the escalation bundle
 
@@ -34,12 +48,17 @@ aggregates them into a single copy-pasteable file:
 
 Each bundle contains, self-contained (the TPM has no repo access):
 
-1. **Header** — kind (`spec-wrong` | `caps-exhausted` | `spec-drift`), task id,
-   frozen spec version.
-2. **Task entry** — the full `plan.json` entry, verbatim JSON.
+1. **Header** — kind (`spec-wrong` | `caps-exhausted` | `spec-drift` |
+   `spec-defect`), task id (`DRIFT` and `SPEC-DEFECT` are run-level, not
+   task-level), frozen spec version.
+2. **Task entry** — the full `plan.json` entry, verbatim JSON (task-level
+   bundles only).
 3. **Evidence** — failing test node-ids / smoke command, plus the pytest JSON
-   report copied alongside the bundle.
-4. **EM diagnosis** — the schema-validated verdict and reason, verbatim.
+   report copied alongside the bundle; for `spec-defect`, the validator's
+   rejections and the D-78 audit output naming the unsatisfiable contracts.
+4. **EM diagnosis** — the schema-validated verdict and reason, verbatim
+   (`spec-defect` bundles carry none: the defect is proved mechanically,
+   no EM consult involved).
 5. **Frozen artifacts involved** — the referenced `contracts.json` entries and
    the full source of each failing frozen test file (capped at 200 lines).
 

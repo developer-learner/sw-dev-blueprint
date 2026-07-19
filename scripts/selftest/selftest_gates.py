@@ -1346,6 +1346,16 @@ def test_preflight_existing_symbol_outside_inventory_passes(tmp_path):
     assert r.returncode == 0, (r.stdout, r.stderr)
 
 
+def test_preflight_audit_form_old_empty_catches_v51(tmp_path):
+    """The D-79 form: old={} (whole frozen spec audited against the tree).
+    Sibling evidence must come from the NEW contracts' locatable routes,
+    or the mid-run audit would fail open and miss v51."""
+    repo = preflight_repo(tmp_path)
+    r = run_preflight(repo, {}, v51_new(["src/api/chat.py"]))
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "v51/M28 class" in r.stderr, r.stderr
+
+
 def test_preflight_initial_freeze_fails_open(tmp_path):
     """v1: no prior contracts, no source tree. Routes with an editable .py
     in the inventory must pass — everything is buildable from nothing."""
@@ -1354,6 +1364,84 @@ def test_preflight_initial_freeze_fails_open(tmp_path):
     new["erd_version"] = 1
     r = run_preflight(tmp_path, None, new)
     assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+# --- ensure_plan: D-79 spec-defect rung (bash, via drive-plan.sh) ------------
+# M28: two different EM models failed identically at the plan gate because
+# the spec was unimplementable — the ladder only knew how to escalate the
+# ACTOR. The rung audits the puzzle after the plan budget is exhausted:
+# audit fails -> exit 2 + TPM bundle, no more EM calls; audit passes ->
+# the pre-existing actor-path halt (exit 1), unchanged.
+
+DRIVE_PLAN = SCRIPTS / "selftest" / "drive-plan.sh"
+
+
+def plan_workdir(tmp_path, contracts, replies, src=None):
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    (approved / "contracts.json").write_text(json.dumps(contracts))
+    (approved / "test-nodeids").write_text("\n".join(NODEIDS) + "\n")
+    (approved / "VERSION").write_text(str(contracts["erd_version"]) + "\n")
+    (tmp_path / "replies").mkdir()
+    for i, reply in enumerate(replies, 1):
+        (tmp_path / "replies" / str(i)).write_text(reply)
+    if src is not None:
+        (tmp_path / "src" / "api").mkdir(parents=True)
+        (tmp_path / "src" / "api" / "models.py").write_text(src)
+    return tmp_path
+
+
+def run_drive_plan(workdir):
+    return subprocess.run(
+        ["bash", str(DRIVE_PLAN), str(workdir)],
+        capture_output=True, text=True,
+    )
+
+
+def test_plan_spec_defect_routes_to_tpm_bundle(tmp_path):
+    """Unsatisfiable spec + exhausted plan budget -> SPEC DEFECT: exit 2,
+    a spec-defect bundle in the batch, and exactly MAX_PLAN_REVISIONS EM
+    calls consumed — the rung must not invite more attempts."""
+    contracts = dict(v51_new(["src/api/chat.py"]), erd_version=1)
+    work = plan_workdir(tmp_path, contracts, ["{}", "{}"], src=V51_SRC)
+    r = run_drive_plan(work)
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)
+    assert "SPEC DEFECT (D-79)" in r.stdout, r.stdout
+    batch = work / ".pipeline-state" / "escalations" / "BATCH.md"
+    assert batch.is_file(), r.stdout
+    content = batch.read_text()
+    assert "spec-defect — SPEC-DEFECT" in content, content
+    assert "v51/M28 class" in content, content        # audit output embedded
+    assert "no EM consult" in content, content        # honest diagnosis section
+    assert (work / ".calls").read_text().strip() == "2", r.stdout
+
+
+def test_plan_exhaustion_satisfiable_spec_halts_actor_path(tmp_path):
+    """Same exhaustion, but the spec is fine (route already registered in
+    source) -> the pre-existing halt: exit 1, no bundle, and the message
+    says the audit cleared the spec."""
+    contracts = dict(v51_new(["src/api/chat.py"]), erd_version=1)
+    registered = V51_SRC.replace(
+        "@router.get('/models')",
+        "@router.get('/models')\ndef _list():\n    return []\n\n"
+        "@router.get('/models/catalog')")
+    work = plan_workdir(tmp_path, contracts, ["{}", "{}"], src=registered)
+    r = run_drive_plan(work)
+    assert r.returncode == 1, (r.returncode, r.stdout, r.stderr)
+    assert "plan invalid after 2 EM revisions" in r.stderr, r.stderr
+    assert "found no unsatisfiable contract" in r.stderr, r.stderr
+    assert not (work / ".pipeline-state" / "escalations" / "BATCH.md").exists()
+
+
+def test_plan_valid_first_emit_needs_no_rung(tmp_path):
+    """Harness sanity: a valid first plan exits 0 after one EM call and the
+    rung never runs."""
+    work = plan_workdir(tmp_path, dict(CONTRACTS, erd_version=1),
+                        [json.dumps(good_plan())])
+    r = run_drive_plan(work)
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+    assert "CALLS=1 PLAN=ok" in r.stdout, r.stdout
+    assert "SPEC DEFECT" not in r.stdout, r.stdout
 
 
 # --- refreeze.sh wires the preflight before approval (D-78) ------------------

@@ -714,20 +714,28 @@ def spec_preflight(old_path, new_path):
             return sorted({f for m, lit, f in regs
                            if literal_registers(method, route["path"], m, lit)})
 
-        old_impl = {rid: implementers(r) for rid, r in old_routes.items()}
+        # Sibling evidence comes from every route we can LOCATE in source —
+        # old and new alike. Restricting it to old routes would blind the
+        # old={} audit form (D-79 runs the preflight with no old contracts):
+        # v51's sibling, GET /api/v1/models, is in the new contracts too.
+        located = {}
+        for rid, r in {**old_routes, **new_routes}.items():
+            impl = implementers(r)
+            if impl:
+                located[rid] = (path_segs(r["path"]), impl)
         for r in changed:
             checked += 1
             rid, path = r["id"], r["path"]
-            if implementers(r):
+            if rid in located:
                 continue  # already registered somewhere; satisfiable
             segs = path_segs(path)
             sibling_files = []
             for k in range(len(segs) - 1, 0, -1):
                 sibs = sorted({
                     f
-                    for orid, ofiles in old_impl.items()
+                    for osegs, ofiles in located.values()
                     for f in ofiles
-                    if path_segs(old_routes[orid]["path"])[:k] == segs[:k]
+                    if osegs[:k] == segs[:k]
                 })
                 if sibs:
                     sibling_files = sibs
