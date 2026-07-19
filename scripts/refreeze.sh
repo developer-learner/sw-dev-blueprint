@@ -330,6 +330,34 @@ else
   echo "  D-56: $EXT_COUNT declared external interface(s); captures verified above."
 fi
 
+# --- D-80: D-68 debt sweep on the delta's inventory (advisory) ---------------
+# The D-68 gate fires on a file's FIRST post-D-68 pipeline edit, so
+# pre-existing unjustified handlers in a legacy inventory file fail the gate
+# mid-run regardless of the new work. Fired twice: app.js (2026-07-17,
+# cleared by live-fix) and models.py T11 (M28 — forced the v54 recut, and
+# both local EMs revised the WRONG handler during the escalation). The
+# 07-17 template-debt note recorded the class; recording is not mechanizing.
+# Surface the debt HERE, at spec time, so remediation directives (M28c
+# style) enter the spec on day one. Advisory by design: the right response
+# may be a justification comment, a remediation directive, or acceptance —
+# a TPM/CEO call, not a freeze blocker.
+SWEEP_FILES=$(SWBP_C="$INV4_CONTRACTS" python3 -c "
+import json, os, pathlib
+c = json.load(open(os.environ['SWBP_C']))
+print('\n'.join(f for f in c.get('files', []) if pathlib.Path(f).is_file()))" 2>/dev/null || true)
+if [ -n "$SWEEP_FILES" ]; then
+  SWEEP_ARGS=()
+  while IFS= read -r _f; do [ -n "$_f" ] && SWEEP_ARGS+=("$_f"); done <<< "$SWEEP_FILES"
+  if ! SWEEP_OUT=$(python3 scripts/check-swallowed-errors.py "${SWEEP_ARGS[@]}"); then
+    echo ""
+    echo "  WARNING (D-80): pre-existing D-68 debt in this delta's inventory —"
+    echo "  each file's first pipeline edit will FAIL the swallowed-error gate"
+    echo "  on these OLD handlers regardless of the new work (M28 v54 recut"
+    echo "  class). Get remediation directives into THIS spec, or bounce it:"
+    echo "$SWEEP_OUT" | sed 's/^/    /'
+  fi
+fi
+
 if [ "$MODE" = "diff" ]; then
   echo ""
   echo "DIFF-SHA: $DIFF_SHA"

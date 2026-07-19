@@ -1446,12 +1446,17 @@ def test_plan_valid_first_emit_needs_no_rung(tmp_path):
 
 # --- refreeze.sh wires the preflight before approval (D-78) ------------------
 
+def refreeze_scripts(repo):
+    for name in ("validate-plan.py", "check-test-surface.py",
+                 "check-swallowed-errors.py"):
+        (repo / "scripts" / name).write_bytes((SCRIPTS / name).read_bytes())
+
+
 def test_refreeze_diff_mode_runs_preflight(stageable_repo):
     """refreeze --diff must reject a v51-shaped delta BEFORE printing a
     DIFF-SHA — the CEO never reviews a doomed spec."""
     repo = stageable_repo
-    for name in ("validate-plan.py", "check-test-surface.py"):
-        (repo / "scripts" / name).write_bytes((SCRIPTS / name).read_bytes())
+    refreeze_scripts(repo)
     (repo / "src" / "api").mkdir(parents=True)
     (repo / "src" / "api" / "models.py").write_text(V51_SRC)
     (repo / "scripts" / ".approved" / "contracts.json").write_text(
@@ -1463,6 +1468,51 @@ def test_refreeze_diff_mode_runs_preflight(stageable_repo):
     combined = r.stdout + r.stderr
     assert "D-78" in combined, combined
     assert "DIFF-SHA" not in combined, combined
+
+
+# --- refreeze.sh D-68 debt sweep at freeze time (D-80) -----------------------
+# M28: models.py's pre-existing unjustified handler failed T11's D-68 gate
+# mid-run, forcing the v54 recut — the debt was on record since 07-17 but
+# nothing surfaced it at spec time. The sweep prints it at the human gate,
+# advisory: the freeze still proceeds (a DIFF-SHA is still offered).
+
+def debt_delta(repo, app_source):
+    """Stage a minimal contracts-only delta whose inventory holds src/app.py
+    with the given source. No routes/entry_points, so the D-78 preflight
+    stays out of the way."""
+    refreeze_scripts(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text(app_source)
+    contracts = {"erd_version": 2, "files": ["src/app.py"], "entry_points": []}
+    (repo / "scripts" / ".approved" / "incoming" / "contracts.json").write_text(
+        json.dumps(contracts))
+
+
+def test_refreeze_debt_sweep_warns_and_still_freezes(stageable_repo):
+    debt_delta(stageable_repo,
+               "def f():\n"
+               "    try:\n"
+               "        risky()\n"
+               "    except Exception:\n"
+               "        pass\n")
+    r = _run_refreeze_diff(stageable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "WARNING (D-80)" in r.stdout, r.stdout
+    assert "src/app.py:4" in r.stdout, r.stdout      # names file AND line
+    assert "DIFF-SHA" in r.stdout, r.stdout          # advisory, not a blocker
+
+
+def test_refreeze_debt_sweep_silent_on_justified_swallow(stageable_repo):
+    debt_delta(stageable_repo,
+               "def f():\n"
+               "    try:\n"
+               "        risky()\n"
+               "    except Exception:\n"
+               "        pass  # best-effort cleanup; failure is safe to drop\n")
+    r = _run_refreeze_diff(stageable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "WARNING (D-80)" not in r.stdout, r.stdout
+    assert "DIFF-SHA" in r.stdout, r.stdout
 
 
 # --- run_coder: gate-failure propagation (review blocker #1, drive-coder.sh) -

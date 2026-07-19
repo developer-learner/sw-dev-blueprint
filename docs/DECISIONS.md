@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-80 — 2026-07-19 — D-68 debt sweep at freeze time: pre-existing swallowed-error debt surfaces at the human gate
+
+**Decision:** `refreeze.sh` runs `check-swallowed-errors.py` over every on-disk file in the delta's effective `contracts.files` (staged contracts if present, else frozen) and prints any findings as a WARNING in the pre-approval report, next to the D-56 externals note — in `--diff`, interactive, and `--approve` modes alike. Advisory by design, never a freeze blocker: the right response may be a justification comment, an M28c-style remediation directive added to THIS spec, or explicit acceptance — a TPM/CEO call the gate cannot make. The point is only that the call happens on day one, at spec time, instead of mid-run.
+
+**Found by:** the class fired twice after D-68 shipped. app.js (2026-07-17, incident #2): a legacy file's first post-D-68 edit failed the gate on handlers that predated the gate, regardless of the new work; cleared by live-fix `1eb4054`, and the session's template-debt note named the class. models.py T11 (M28, 2026-07-19): same class forced the v54 recut, and during the escalation both local EMs revised the WRONG handler. The 07-17 note was recorded but not mechanized — "the correction log is memory, not enforcement" (CLAUDE.md 2026-06-04: mechanical gates over doc guards).
+
+**Alternatives considered:** fail-closed at freeze (rejected — the debt is in files the delta may not even touch, and a justified-swallow judgment belongs to humans; blocking every freeze on legacy debt would train operators to bypass the door); sweeping only files the delta's tests exercise (rejected — the D-68 gate fires on the file's first EDIT, and which files get edited is the EM's downstream decision, unknowable at freeze); auto-inserting a remediation directive into the spec (rejected — no agent writes frozen artifacts, D-31; the sweep informs the human who does).
+
+**Do not suggest:** promoting the WARNING to a halt without new evidence; scanning outside the inventory (out-of-delta debt is real but not this freeze's business — it enters when its file enters an inventory); treating a silent sweep as "no debt anywhere" (it sees only on-disk inventory members; files the delta will CREATE are checked at coder time by D-68 itself).
+
+---
+
 ## D-79 — 2026-07-19 — Escalation ladder audits the puzzle before blaming the solver: SPEC DEFECT rung at plan-budget exhaustion
 
 **Decision:** When the plan gate has rejected `MAX_PLAN_REVISIONS` consecutive EM plans, `orchestrate.sh` no longer halts straight onto the actor path. It first re-runs the D-78 satisfiability audit on the FROZEN spec against the current tree (`validate-plan.py --spec-preflight /dev/null contracts.json` — the old={} form: everything already registered or on disk passes; what remains must be buildable by the inventory). Audit fails → halt as SPEC DEFECT with a `spec-defect` TPM bundle (exit 2, batched per D-29): no further EM strikes, no model swaps — the halt text says so explicitly. Audit passes → the pre-existing actor-path halt, whose message now records that the spec was cleared. The rung is documented in `docs/ESCALATION.md` and selftested end-to-end via `drive-plan.sh` (real extracted functions, scripted fake EM — both exits plus the no-rung happy path).
