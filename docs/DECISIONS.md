@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-74 — 2026-07-18 — Coder output is linted per task, fail-closed, before acceptance
+
+**Decision:** After a coder attempt lands (and never for `no_edit_files`, D-65), the orchestrator runs `ruff check` on the ONE `.py` file the task wrote, before the mapped tests. A lint failure is a task failure like any other: `pass=0`, the findings (flattened, ≤600 chars) become the attempt's evidence — feeding the next retry brief and any EM consult — and the mapped tests are skipped for that attempt (the retry re-runs them). A missing ruff is a hard halt, same as D-67 at the freeze door: a gate that skips silently is not a gate. Non-Python files pass through untouched — ruff's domain is `.py`, and the browser oracle (D-58) plus smoke checks remain the acceptance surface for markup/CSS/JS.
+
+**Alternatives considered:** (a) Rely on CI — rejected: a gate that lives only in CI does not exist until a remote does (2026-07-14 meta-rule; testchat ran 40 spec versions with its type gate dark). (b) Lint as a warning — rejected: warnings in an unattended pipeline are noise nobody reads; the retry-with-feedback loop is the mechanism that actually consumes findings (D-71's validator-fed pattern, proven on plans and diagnoses). (c) Also run mypy per task — deferred: type-checking needs the whole tree and project config; per-file lint is the cheap, always-correct slice.
+
+**Reason:** Nothing in the pipeline lints what the coder writes. D-67 rejects lint debt in *staged tests* because frozen files cannot be cheaply fixed later; coder-written `src/` had no equivalent even though it is the highest-volume writer in the system. Lint findings are exact-location, machine-generated feedback — precisely the input shape a local coder handles best (Rule 8: precision tools, positive instructions), and far cheaper than a sandbox pytest round-trip. Catching an unused import or shadowed variable at the task that introduced it costs one retry; catching it post-merge costs a human review cycle.
+
+**Do not suggest:** widening the gate to files the task did not write (INV-2 owns the lane; lint debt elsewhere is not this task's evidence); demoting the halt-on-missing-ruff to a skip ("the gate ran zero times" and "the gate found zero issues" must stay distinguishable, Rule 6); bolting formatting (`ruff format`) onto the gate (style churn in a retry loop burns strikes on non-defects; the check gate flags real findings only).
+
+---
+
 ## D-73 — 2026-07-18 — Failure detail from the json-report reaches retry briefs and EM consults
 
 **Decision:** `run_tests` now extracts the crash message (or longrepr tail) of the first 3 failing tests — plus the first failing collector — from `.cache/test-report.json` into a bounded, single-line `FAIL_DETAIL` (≤240 chars per failure, ≤900 total), which rides along with the failing node-ids into the task's `lastfail` (and therefore the next attempt brief) and into EM consult evidence, including the drift consult. The shell owns the extraction end to end; no model gains any tool or access (D-53 intact).

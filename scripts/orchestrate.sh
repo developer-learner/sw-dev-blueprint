@@ -758,7 +758,29 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
   fi
   if [ "$coder_ok" = "1" ]; then
     git add "$file" && git commit -m "[task $id] attempt $((strikes + 1))" 2>/dev/null || true
-    if [ "${#mapped[@]}" -gt 0 ]; then
+    # D-74: lint the one file the coder wrote, BEFORE the mapped tests — lint
+    # findings are exact-location retry feedback (the D-71 validator-fed
+    # pattern) and cheaper than a sandbox pytest run. CI's src/ lint is dark
+    # in any child without a remote (2026-07-14 meta-rule); this gate runs
+    # where the pipeline runs. Only .py (ruff's domain) and only files the
+    # coder actually touched; staged tests get D-67 at the freeze door.
+    # Fail-closed on a missing ruff by design: a gate that skips silently is
+    # not a gate.
+    if [ "$no_edit" != "1" ]; then
+      case "$file" in
+        *.py)
+          command -v ruff >/dev/null 2>&1 \
+            || die "ruff not found — the coder-output lint gate (D-74) requires it: pip install ruff"
+          if ! LINT_OUT=$(ruff check --no-cache "$file" 2>&1); then
+            pass=0
+            evidence="lint failed (D-74): $(printf '%s' "$LINT_OUT" | tr '\n' ' ' | head -c 600)"
+          fi
+          ;;
+      esac
+    fi
+    if [ "$pass" != "1" ]; then
+      :  # lint evidence set above; skip tests — the retry re-runs them
+    elif [ "${#mapped[@]}" -gt 0 ]; then
       run_tests "${mapped[@]}"
       [ "$TESTS_RC" -eq 0 ] || { pass=0; }
       evidence="mapped tests failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
