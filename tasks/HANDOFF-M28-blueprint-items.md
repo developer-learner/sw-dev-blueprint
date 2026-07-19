@@ -13,7 +13,7 @@ Disposition ledger:
 |------|--------|-------|
 | 1 satisfiability preflight | DONE — D-78 | `48195a3` (ground-truthed against real v51/v53) |
 | 2 spec-defect ladder rung | DONE — D-79 | `5aac080` (drive-plan.sh end-to-end selftests) |
-| 3 flake-vs-drift (D-77) | DONE — D-77 | `eec11a4` (triage keyed on plan mapping, isolation as corroboration — per this doc's design correction) |
+| 3 flake-vs-drift (D-77) | DONE — D-77 | `eec11a4` keyed triage on plan mapping but left isolation GATING (2/2 passes required) — this row previously claimed the design correction was in; it was not. Corrected 2026-07-19 second pass: isolation demoted to recorded corroboration, D-77 entry amended. |
 | 4 D-68 debt sweep at freeze | DONE — D-80 | `57ee499` (advisory at the human gate) |
 | 5 gate-symmetry doctrine | DONE — D-81 | `3f9345a` (BLUEPRINT.md Rule 9) |
 | 6 EM diagnosis hardening | OPEN | tasks/BACKLOG.md (schema-retry half shipped as D-71; denser-brief half needs a design session) |
