@@ -149,6 +149,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-63**: Ratify milestones — catching up the spec after outside-band work
 - **D-64**: Browser-test mapping enforced mechanically in `validate-plan.py`
 - **D-67**: `refreeze` lints staged tests
+- **D-75**: Red-before-green — a refreeze runs the delta's tests pre-implementation, warns on early passes
 
 ### Escalation ladder & failure paths
 

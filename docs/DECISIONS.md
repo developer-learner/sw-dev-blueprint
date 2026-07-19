@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-75 — 2026-07-18 — Red-before-green check: a refreeze runs the delta's tests against the pre-implementation tree
+
+**Decision:** After a refreeze applies and computes `DELTA-vN.json`, `refreeze.sh` runs the delta's changed test node-ids (filtered to ids that exist in the new frozen set — `changed_tests` also lists removals) in the sandbox, against the tree as it stands BEFORE any implementation work. Tests that already PASS are printed as an explicit WARNING; all-red prints confirmation; a missing/unreadable report prints INCONCLUSIVE (Rule 4: a check that didn't run must say so). Warn-only by design — never a halt, never an exit-code change — because legitimate early passes exist: `no_edit_files` acceptance (D-65) and carried-forward behavior. The human at the freeze decides whether an early pass is one of those or a vacuous test to bounce back to the TPM.
+
+**Alternatives considered:** (a) Mutation testing per run — rejected: mutating and re-running the suite every orchestrate run is orders of magnitude more compute for the same signal, and flags noise on healthy tests. (b) Run the check pre-approval on the INV-4 merged preview — rejected for now: node-ids and the DELTA don't exist until after apply, and mounting the preview into the sandbox is new machinery; post-apply still lands the claim before any pipeline run, and a bad freeze reverses through the same delta protocol as any other spec defect. (c) Hard halt on early passes — rejected: D-65 makes some early passes spec-legitimate; a gate that halts on legitimate states trains people to bypass it.
+
+**Reason:** INV-1's premise is that tests are written before the code they gate — but nothing ever *observed* a new test failing. A test that passes against the pre-implementation tree gates nothing: its task's acceptance is green regardless of what the coder writes. That is the entry point of the green-suite/broken-app family (v6/M5 mocks built from imagination; M16's hit-counter counting collapsed-think DOM text), which the CEO's eyes caught only after shipping. The machinery was already in place — `DELTA-vN.json` names exactly the changed node-ids and the sandbox is warm from node-id collection — so the check costs one bounded pytest invocation per freeze, at the moment the TPM's output is cheapest to reject (Rule 6: "nothing went wrong" and "the safeguard works" are different claims; this makes the red state an observed fact instead of an assumption).
+
+**Do not suggest:** promoting the warning to a halt (D-65 legitimizes some early passes; the human gate is the right arbiter); running the check on every orchestrate run (the red state is meaningful exactly once, at freeze time — post-implementation, passing is the goal); skipping the check when the delta is "just one small test" (M16's vacuous hit-counter was one small test).
+
+---
+
 ## D-74 — 2026-07-18 — Coder output is linted per task, fail-closed, before acceptance
 
 **Decision:** After a coder attempt lands (and never for `no_edit_files`, D-65), the orchestrator runs `ruff check` on the ONE `.py` file the task wrote, before the mapped tests. A lint failure is a task failure like any other: `pass=0`, the findings (flattened, ≤600 chars) become the attempt's evidence — feeding the next retry brief and any EM consult — and the mapped tests are skipped for that attempt (the retry re-runs them). A missing ruff is a hard halt, same as D-67 at the freeze door: a gate that skips silently is not a gate. Non-Python files pass through untouched — ruff's domain is `.py`, and the browser oracle (D-58) plus smoke checks remain the acceptance surface for markup/CSS/JS.

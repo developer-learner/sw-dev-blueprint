@@ -474,6 +474,57 @@ with open(f"scripts/.approved/DELTA-v{new_v}.json", "w") as f:
 PYEOF
 rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-changed-contracts"
 
+# --- D-75: red-before-green check on the delta (warn-only) -------------------
+# INV-1 means a newly frozen test is written before the code it gates. Run the
+# delta's tests NOW, against the pre-implementation tree: any that already
+# PASS will never observe the milestone being built and gate nothing — the
+# green-suite/broken-app family (v6/M5 imagined mocks; M16's hit-counter
+# counting hidden DOM text). Legitimate early passes exist (no_edit_files
+# acceptance per D-65, carried-forward behavior), so this surfaces a claim
+# for the human, never a halt. changed_tests includes REMOVED node-ids —
+# filter to ids that exist in the new frozen set before running.
+RED_IDS=$(python3 - "$NEW" "$APPROVED/test-nodeids" <<'PYEOF'
+import json, sys
+from pathlib import Path
+new_v, nodeids_path = sys.argv[1], sys.argv[2]
+current = set(Path(nodeids_path).read_text().splitlines())
+delta = json.load(open(f"scripts/.approved/DELTA-v{new_v}.json"))
+print("\n".join(t for t in delta.get("changed_tests", []) if t in current))
+PYEOF
+)
+if [ -n "$RED_IDS" ]; then
+  echo "red-before-green check (D-75): running $(printf '%s\n' "$RED_IDS" | grep -c '::') delta test(s) against the pre-implementation tree..."
+  mkdir -p .cache
+  RED_ARGS=()
+  while IFS= read -r _t; do [ -n "$_t" ] && RED_ARGS+=("$_t"); done <<< "$RED_IDS"
+  scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
+    --json-report-file=.cache/redcheck-report.json "${RED_ARGS[@]}" >/dev/null 2>&1 || true
+  python3 - <<'PYEOF'
+import json
+try:
+    r = json.load(open(".cache/redcheck-report.json"))
+except (FileNotFoundError, json.JSONDecodeError):
+    print("  red-check INCONCLUSIVE: no readable report (sandbox or collection problem)"
+          " — verify manually that the new tests fail before their tasks run")
+else:
+    passed = sorted(t["nodeid"] for t in r.get("tests", [])
+                    if t.get("outcome") == "passed")
+    if passed:
+        print("")
+        print("  WARNING (D-75): delta test(s) ALREADY PASS with no implementation done:")
+        for n in passed:
+            print(f"    {n}")
+        print("  A test that never goes red gates nothing. Expected only for no_edit_files")
+        print("  acceptance (D-65) or carried-forward behavior — anything else is a vacuous")
+        print("  test: bounce it back to the TPM before running the pipeline.")
+    else:
+        print("  red-check: all delta tests red pre-implementation, as INV-1 expects")
+PYEOF
+  rm -f .cache/redcheck-report.json
+else
+  echo "red-before-green check (D-75): delta carries no runnable test changes — nothing to check"
+fi
+
 # --- Re-freeze: hash-pin every frozen artifact, bump VERSION ---
 {
   for f in PRD.md ERD.md contracts.json test-nodeids; do
