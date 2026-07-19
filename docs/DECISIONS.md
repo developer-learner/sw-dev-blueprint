@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-81 — 2026-07-19 — Gate-symmetry doctrine: gate strength proportional to blast radius
+
+**Decision:** Codified as BLUEPRINT.md Rule 9. Every seat's output artifact receives a mechanical validity check at handoff; gate density is proportional to the artifact's blast radius (downstream work an undetected defect destroys), never inversely proportional to the seat's capability. The rule is documentation-only — it changes no code, but establishes the design principle that D-78, D-80, D-75, INV-4, and D-56 collectively embody for the TPM lane, and that future gates must respect. Items 1 and 4 of the M28 handoff are the first two instances; future spec-level checks must satisfy this rule to be admitted.
+
+**Found by:** testchat M23 + M28 pattern. M23: all three spec bugs were the TPM's; the coder was blameless. M28: all four recuts (v51→v54) were spec-layer TPM defects. Both exposed the same structural flaw — the weakest seat (local coder) had four checks per task; the strongest seat (frontier TPM) had only hash-integrity checks (frozen-manifest, INV-4) and zero semantic-validity checks. Defects entered ungated at the top and burned the bottom of the ladder.
+
+**Alternatives considered:** (a) Adding a "TPM gate density" section without formalizing it as a numbered rule (rejected — numbered rules are the only ones that get read by agents at session start; an unnumbered section buried in Anti-Patterns would be ignored the way the M4 conductor compliance rule was). (b) Making this a code-level change instead of doctrine (rejected — the code changes already exist as D-78/D-80/D-75; this rule is the *principle* that explains why they exist and that governs what future gates are admitted).
+
+**Do not suggest:** exempting any seat from mechanical validation because it's "capable enough" (the rule exists specifically because capability arguments prevented gates on the TPM lane for the first 22 milestones); gating only downstream seats (that IS the anti-pattern this rule names); adding gates that are not proportional to blast radius (a trivially-costly gate on a low-blast artifact is ceremony, not safety).
+
+---
+
 ## D-80 — 2026-07-19 — D-68 debt sweep at freeze time: pre-existing swallowed-error debt surfaces at the human gate
 
 **Decision:** `refreeze.sh` runs `check-swallowed-errors.py` over every on-disk file in the delta's effective `contracts.files` (staged contracts if present, else frozen) and prints any findings as a WARNING in the pre-approval report, next to the D-56 externals note — in `--diff`, interactive, and `--approve` modes alike. Advisory by design, never a freeze blocker: the right response may be a justification comment, an M28c-style remediation directive added to THIS spec, or explicit acceptance — a TPM/CEO call the gate cannot make. The point is only that the call happens on day one, at spec time, instead of mid-run.

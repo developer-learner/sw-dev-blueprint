@@ -255,6 +255,33 @@ specified or they drift. The system absorbs this structurally:
 - **End every brief with an explicit self-verify action** ("re-open `<file>`
   and confirm `<condition>`") — it reduces retries; Rule 5 still decides.
 
+### Rule 9 — Gate strength proportional to blast radius (gate-symmetry)
+
+Every seat's output artifact receives a mechanical validity check at handoff.
+Gate density must be proportional to the artifact's blast radius — how much
+downstream work an undetected defect destroys — and never inversely
+proportional to the seat's capability:
+
+- **High blast radius:** the TPM's frozen spec gates an entire pipeline run
+  (all EM plans, all coder tasks, all test runs). D-78 (satisfiability
+  preflight), D-80 (debt sweep), INV-4 (test surface), D-75 (red-before-green),
+  and D-56 (external-capture verification) now apply BEFORE the spec is
+  installable.
+- **Medium blast radius:** the EM's plan gates the task DAG.
+  `validate-plan.py` checks atomicity, coverage, mapping, and budget.
+- **Lower blast radius:** the coder's single-file output gates one task.
+  Phase gate (INV-2), D-68 (swallowed errors), lint, and mapped frozen tests
+  all fire per task.
+
+The design failure this rule prevents: the weakest seat (coder) had four
+checks per task; the strongest seat (TPM) had only integrity checks (hashes,
+INV-4) and zero semantic-validity checks on its spec. Defects entered ungated
+at the top and burned the bottom of the ladder (M23's three TPM spec bugs;
+all four M28 recuts). The principle from the M4 conductor postmortem applies:
+capability changes the failure class, not the need for gates — strong models
+fail quietly upstream where gates are absent; weak models fail loudly
+downstream where they exist. Never omit a gate because the seat is capable.
+
 ---
 
 ## Step 0 — Pre-Flight Check (run BEFORE anything else)
