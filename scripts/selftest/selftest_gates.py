@@ -19,9 +19,11 @@ CI runs this in its own `selftest` job, unconditionally — the skeleton guard
 does not apply because these tests need no project src/ or requirements.
 """
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -1513,6 +1515,42 @@ def test_refreeze_debt_sweep_silent_on_justified_swallow(stageable_repo):
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "WARNING (D-80)" not in r.stdout, r.stdout
     assert "DIFF-SHA" in r.stdout, r.stdout
+
+
+# --- refreeze.sh freeze-hygiene advisory (D-83) -------------------------------
+# Both defect-bearing M28 freezes were authored minutes after the prior
+# milestone closed. The note fires when the last [success] is under an
+# hour old; it is advisory — the freeze proceeds either way.
+
+CLEAN_APP = "def f():\n    return 1\n"
+
+
+def success_commit(repo, epoch=None):
+    env = dict(os.environ,
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@local",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@local")
+    if epoch is not None:
+        env["GIT_COMMITTER_DATE"] = f"@{epoch} +0000"
+        env["GIT_AUTHOR_DATE"] = f"@{epoch} +0000"
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "[success] spec v1"],
+                   cwd=repo, env=env, check=True, capture_output=True)
+
+
+def test_refreeze_hygiene_note_on_fresh_success(stageable_repo):
+    debt_delta(stageable_repo, CLEAN_APP)
+    success_commit(stageable_repo)
+    r = _run_refreeze_diff(stageable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "NOTE (D-83)" in r.stdout, r.stdout
+    assert "DIFF-SHA" in r.stdout, r.stdout          # advisory, not a blocker
+
+
+def test_refreeze_hygiene_silent_on_old_success(stageable_repo):
+    debt_delta(stageable_repo, CLEAN_APP)
+    success_commit(stageable_repo, epoch=int(time.time()) - 7200)
+    r = _run_refreeze_diff(stageable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "NOTE (D-83)" not in r.stdout, r.stdout
 
 
 # --- run_coder: gate-failure propagation (review blocker #1, drive-coder.sh) -

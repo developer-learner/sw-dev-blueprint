@@ -358,6 +358,27 @@ if [ -n "$SWEEP_FILES" ]; then
   fi
 fi
 
+# --- D-83: freeze-hygiene advisory -------------------------------------------
+# Both defect-bearing M28 freezes (v51 23:34, v52 23:49) were authored
+# minutes after the prior milestone closed at 22:50, at the end of a long
+# day — and each sailed through its human approval. A new milestone's spec
+# is next-session work by default (CEO-PLAYBOOK); this note is that rule
+# firing at the moment it matters. Advisory only, human-rhythm issue, never
+# a gate: same-milestone fix deltas legitimately freeze minutes after a
+# close.
+LAST_SUCCESS_TS=$(git log -1 --grep='\[success\]' --format=%ct 2>/dev/null || true)
+if [ -n "$LAST_SUCCESS_TS" ]; then
+  SUCCESS_AGE=$(( $(date +%s) - LAST_SUCCESS_TS ))
+  if [ "$SUCCESS_AGE" -ge 0 ] && [ "$SUCCESS_AGE" -lt 3600 ]; then
+    echo ""
+    echo "  NOTE (D-83): the previous [success] landed $((SUCCESS_AGE / 60)) minute(s) ago."
+    echo "  If this delta specs a NEW milestone, consider making it next-session"
+    echo "  work — both defect-bearing M28 freezes were authored minutes after a"
+    echo "  close, and both passed human approval. A same-milestone fix delta is"
+    echo "  fine to proceed."
+  fi
+fi
+
 if [ "$MODE" = "diff" ]; then
   echo ""
   echo "DIFF-SHA: $DIFF_SHA"

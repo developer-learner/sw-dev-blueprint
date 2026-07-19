@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-83 — 2026-07-19 — Freeze hygiene: a new milestone's spec is next-session work by default
+
+**Decision:** Advisory, two halves. (1) CEO-PLAYBOOK rule: a new milestone's spec is next-session work by default — spec authoring is the highest blast-radius activity in the system (Rule 9) and deserves a fresh head; same-session freezes get a deliberate pause and a from-scratch contracts re-read. (2) The mechanical nudge: `refreeze.sh` prints a NOTE at the human gate when the most recent `[success]` commit is under an hour old, in all modes, before approval. Explicitly never a gate: same-milestone fix deltas (escalation replies, ratifies) legitimately freeze minutes after a close, and the actor being advised is the human — a hard block would train bypass, not rest.
+
+**Found by:** testchat M28 (2026-07-19): both defect-bearing freezes (v51 23:34, v52 23:49) were authored minutes after M27 closed at 22:50, at the end of a long day, across a pause/resume and multiple model changes — and both sailed through their human approvals. The postmortem's "soft" recommendation; kept soft, but given a mechanical voice at the exact moment it matters instead of living only in a doc nobody re-reads at 23:30.
+
+**Alternatives considered:** blocking new-milestone freezes within the window (rejected — "new milestone vs fix delta" is not mechanically decidable at freeze time, and a false block on an urgent escalation reply is worse than a fatigue-authored spec that D-78/D-75/INV-4 now partially backstop); keying on wall-clock hour instead of time-since-success (rejected — "late at night" is timezone- and person-dependent; distance from the previous close is the signal M28 actually exhibited); tracking "same session" (rejected — sessions are a chat-tool concept the repo cannot see; the <1h heuristic approximates it honestly).
+
+**Do not suggest:** promoting the NOTE to a y/N confirmation or hard halt (advisory by design — see above); suppressing it for `--approve` mode (the D-42 flow is exactly where a tired approval happens); treating its absence as "well-rested spec" (it measures recency, not fatigue).
+
+---
+
 ## D-82 — 2026-07-19 — Hand-fix ledger at close-out + interaction-path ACs for UI milestones
 
 **Decision:** Two halves, metric + spec-side, both documentation (no gate). (1) The milestone close-out records the post-`[success]` live-fix count in `tasks/CURRENT.md`'s Results (CEO-PLAYBOOK step 5; mirrored as a TPM operating discipline). Zero is the norm — testchat held it M7→M27 — and a spike is the honest measure of what leaked past the frozen ACs, surfaced as input to the next TPM intake instead of being silently absorbed. (2) TPM-ROLE duty 1: UI milestones must pin interaction-path ACs — cancel/abort reverts, status truthfulness, mid-operation gating, refresh/reload races, concurrent-operation indicator staleness — not only happy-path assertions.

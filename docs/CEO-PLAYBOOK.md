@@ -115,3 +115,12 @@ usual. Same trust model — you copy text between two chats, nothing more.
   never to hand-edit tests or gates — that's the "advisory safety" failure
   this system exists to prevent. Failures have one exit: the escalation
   bundle, through the TPM, through your y/N.
+- **A new milestone's spec is next-session work by default.** Both
+  defect-bearing M28 freezes (v51 23:34, v52 23:49) were authored minutes
+  after closing the prior milestone (22:50), at the end of a long session,
+  across a pause/resume and model changes. Spec authoring is the highest
+  blast-radius activity in the system (Rule 9); it deserves a fresh head.
+  If you must freeze same-session, at minimum pause and re-read the contracts
+  from scratch — fatigue-authored specs cost more to fix downstream than the
+  session-end urgency saves. refreeze prints a D-83 note when the previous
+  `[success]` is under an hour old — that note is this rule firing.
