@@ -8,12 +8,18 @@
 > orchestrator drives an EM (mid-tier) to plan and a local coder to execute, one
 > file per task. Git is the undo. The frozen tests are the truth.
 
+**New here?** Start with **`QUICKSTART.md`** — it takes you from zero to this
+pipeline building a real 21-test example project on one Linux box, before any
+theory. The rest of the docs are tiered (see BLUEPRINT.md → Document Map):
+what you must read grows with what you're doing, not all at once.
+
 ---
 
 ## What's in here
 
 ```
 sw-dev-blueprint/
+├── QUICKSTART.md              # ⚡ Zero to a green frozen suite on one Linux box — a human's first stop
 ├── BLUEPRINT.md               # 🌱 Master seed doc — read after this README; its Document Map sets the full order
 ├── CLAUDE.md                  # 🧠 Master LLM context (auto-read by OpenCode + Claude Code)
 ├── AGENTS.md                  # Symlink → CLAUDE.md (OpenCode's preferred filename)
@@ -180,5 +186,6 @@ configures OpenCode if you happen to use it as your conductor.
 
 ---
 
-*Read `BLUEPRINT.md` first — it is the entry point and contains the Hard Rules,
+*Humans: start with `QUICKSTART.md` and go deeper on demand. Agents: read
+`BLUEPRINT.md` first — it is the entry point and contains the Hard Rules,
 the Pre-Flight Check, and the full component inventory.*

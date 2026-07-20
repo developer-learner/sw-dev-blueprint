@@ -88,27 +88,46 @@ The full stack this system runs on. Know every object before operating it.
 
 ## Document Map
 
-Read these files from the repository in this exact order:
+Three tiers. An agent executing the Bootstrap Sequence reads every file
+below, tier by tier, in order. A human adopts progressively: **tier 1 before
+your first run** (`QUICKSTART.md` walks it), **tier 2 before authoring your
+first real spec**, **tier 3 on demand** — when a run fails, when you operate
+a fleet, or as reference. Reading everything up front is not the adoption
+path.
 
-| Order | File | Purpose | When to read |
-|-------|------|---------|--------------|
-| 1 | `README.md` | System overview + working loop | Always — first |
-| 2 | `CLAUDE.md` | Project identity, stack, guardrails, capability ladder | Always — every session |
-| 3 | `CONVENTIONS.md` | Code style and patterns | Always — every session |
-| 4 | `opencode.json` | OPTIONAL — only if the CEO uses OpenCode as their conductor; not part of the EM/coder execution path (D-53) | Setup, if using OpenCode as conductor |
-| 5 | `.opencode/prompts/*.md` | EM/coder system prompts, read directly by `scripts/llm-call.sh` — model-free by design (D-41/D-53) | Agent setup |
-| 6 | `docs/PRODUCT.md` | What we're building and why | New features |
-| 7 | `docs/ARCHITECTURE.md` | Data models, API, key flows | Any code change |
-| 8 | `docs/DECISIONS.md` | Why choices were made (the ladder: D-26..D-71) | Before suggesting alternatives |
-| 9 | `docs/TESTING.md` | How we test + machine-readable report format | Writing or running tests |
-| 10 | `docs/TPM-ROLE.md` | The top tier's job description | Operating the TPM chat |
-| 11 | `docs/ESCALATION.md` | The failure ladder + TPM bundle format | Any failed run |
-| 12 | `docs/CEO-PLAYBOOK.md` | Operator runbook for the human at the top of the ladder | Operating the pipeline day to day |
-| 13 | `docs/CONDUCTOR-ROLE.md` | System prompt for the conductor seat | Setting up a conductor |
-| 14 | `scripts/.approved/` | **The frozen spec** — PRD, ERD, contracts, VERSION | Every session — the oracle |
-| 15 | `tasks/CURRENT.md` | Session notes: active work, halt notes, status | Every session |
-| 16 | `tasks/BACKLOG.md` | Upcoming work queue | Planning sessions |
-| 17 | `scripts/orchestrate.sh` + `scripts/phase-gate.sh` | The procedure owner + the gate | Before running the pipeline |
+**Tier 1 — before your first run:**
+
+| Order | File | Purpose |
+|-------|------|---------|
+| 1 | `README.md` | System overview + working loop |
+| 2 | `QUICKSTART.md` | Zero to a green frozen suite on one Linux box — the example build |
+| 3 | `CLAUDE.md` | Project identity, stack, guardrails, capability ladder (every session) |
+| 4 | `CONVENTIONS.md` | Code style and patterns (every session) |
+| 5 | `examples/minimal-spec/` | What the TPM's four artifacts actually look like — a real frozen spec |
+
+**Tier 2 — before your first real spec:**
+
+| Order | File | Purpose |
+|-------|------|---------|
+| 6 | `docs/TPM-ROLE.md` | The top tier's job description — how to run the TPM chat |
+| 7 | `docs/CEO-PLAYBOOK.md` | Operator runbook for the human at the top of the ladder |
+| 8 | `docs/PRODUCT.md` | What we're building and why |
+| 9 | `docs/ARCHITECTURE.md` | Data models, API, key flows |
+| 10 | `docs/TESTING.md` | How we test + machine-readable report format |
+| 11 | `scripts/.approved/` | **The frozen spec** — PRD, ERD, contracts, VERSION (every session once it exists — the oracle) |
+| 12 | `tasks/CURRENT.md` | Session notes: active work, halt notes, status (every session) |
+| 13 | `tasks/BACKLOG.md` | Upcoming work queue (planning sessions) |
+
+**Tier 3 — when something fails, or reference:**
+
+| Order | File | Purpose | Trigger |
+|-------|------|---------|---------|
+| 14 | `docs/ESCALATION.md` | The failure ladder + TPM bundle format | First run that exits 2 |
+| 15 | `docs/DECISIONS.md` | Why choices were made (the ladder: D-26..D-84) | Before suggesting alternatives |
+| 16 | `scripts/orchestrate.sh` + `scripts/phase-gate.sh` | The procedure owner + the gate | Before hand-running the pipeline internals |
+| 17 | `docs/CONDUCTOR-ROLE.md` | System prompt for the conductor seat | Setting up a conductor |
+| 18 | `opencode.json` + `.opencode/prompts/*.md` | OpenCode conductor config (optional, D-53) + the EM/coder prompt surface read by `scripts/llm-call.sh` | Conductor setup; prompt work |
+| 19 | `docs/DEV-VM-SETUP.md` | The macOS host / Linux VM split | macOS hosts — required before any run there |
 
 > **Platform note:** `scripts/orchestrate.sh` hard-refuses to run on macOS
 > and requires a Linux environment (Lima VM on Apple Silicon, or bare
