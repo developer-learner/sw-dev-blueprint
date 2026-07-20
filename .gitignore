@@ -21,6 +21,9 @@ htmlcov/
 # Pipeline runtime state (crash recovery for the orchestrator)
 .pipeline-state/
 
+# EM call archive (prompt+reply pairs for offline bench-testing, backlog item 6)
+.em-archive/
+
 # EM consult output — consumed and archived by the orchestrator, never committed
 tasks/diagnosis.json
 

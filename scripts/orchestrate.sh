@@ -63,6 +63,13 @@ ESC_DIR="$STATE_DIR/escalations"
 APPROVED="scripts/.approved"
 mkdir -p "$STATE_DIR" "$TASK_STATE" "$BRIEF_DIR" "$LOG_DIR" "$ESC_DIR"
 
+# Durable archive of every EM call (survives rm -rf .pipeline-state on success).
+# Pure capture — nothing reads these during a run; they feed offline bench-testing
+# (scripts/em-bench.sh, backlog item 6).
+ARCHIVE_DIR=".em-archive"
+mkdir -p "$ARCHIVE_DIR"
+LAST_ARCHIVE_ENTRY=""
+
 die() { echo "FAIL: $*" >&2; exit 1; }
 
 # Single-writer lock on the state dir. Every counter in .pipeline-state/
@@ -105,6 +112,26 @@ check_budget() {  # check_budget <checkpoint> — between-phase gate, fail-close
   echo "  Phase timings ($LOG_DIR/timings.tsv):"
   sed 's/^/    /' "$LOG_DIR/timings.tsv"
   die "run over budget at '$1' — state persists; a re-run resumes from completed tasks. Healthy-but-slow (cold model load, big suite): raise SWBP_RUN_BUDGET or set 0. Otherwise the timing table names the phase that ate the clock — fix that, don't raise the budget."
+}
+
+# archive_em <out-file> — persist prompt + reply for offline replay (em-bench.sh).
+# Called after every successful em_call; consult_em appends verdict metadata.
+# Guarded: no-ops when ARCHIVE_DIR is unset (selftest extracts em_call without this).
+archive_em() {
+  [ -n "${ARCHIVE_DIR:-}" ] || return 0
+  local out="$1"
+  local ts; ts=$(date '+%Y-%m-%d_%H%M%S')
+  local tag; tag=$(basename "$out" .json)
+  local entry="$ARCHIVE_DIR/${ts}_${tag}"
+  mkdir -p "$entry" || return 0
+  cp "$LOG_DIR/em-last.prompt" "$entry/prompt.txt" 2>/dev/null || true
+  cp "$LOG_DIR/em-last.raw" "$entry/reply.json" 2>/dev/null || true
+  cp "$LOG_DIR/em-last.err" "$entry/stderr.log" 2>/dev/null || true
+  cp tasks/plan.json "$entry/plan.json" 2>/dev/null || true
+  cp "$APPROVED/contracts.json" "$entry/contracts.json" 2>/dev/null || true
+  printf 'spec_version=%s\nout=%s\ntimestamp=%s\n' \
+    "${FROZEN_V:-unknown}" "$out" "$ts" > "$entry/meta.txt"
+  LAST_ARCHIVE_ENTRY="$entry"
 }
 
 # --- Pre-flight ---
@@ -248,6 +275,7 @@ em_call() {
   write_state phase em
   mark "em-call start -> $out"
   { printf '%s\n' "$instr"; build_context "$@"; } \
+    | tee "$LOG_DIR/em-last.prompt" \
     | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh em .opencode/prompts/em.md \
         --schema "$schema" --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/em-last.raw" 2> "$LOG_DIR/em-last.err" \
@@ -266,6 +294,7 @@ em_call() {
   # Explicit die: em_call may run inside an if-condition (D-71), where set -e
   # is suppressed for the whole function body — the lane gate must stay fatal.
   bash scripts/phase-gate.sh em "$phase_start" || die "EM lane/integrity gate failed"
+  type archive_em &>/dev/null && archive_em "$out" || true
   write_state phase ""
   mark "em-call done -> $out"
 }
@@ -570,6 +599,9 @@ if isinstance(d, dict):
       if DIAG_VERDICT=$(python3 scripts/validate-plan.py --diagnosis tasks/diagnosis.json 2> "$LOG_DIR/diag-last.err"); then
         DIAG_FILE="$STATE_DIR/diagnosis-$id.json"
         mv tasks/diagnosis.json "$DIAG_FILE"
+        if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
+          printf 'verdict=%s\ntask_id=%s\n' "$DIAG_VERDICT" "$id" >> "$LAST_ARCHIVE_ENTRY/meta.txt"
+        fi
         return 0
       fi
       verrs=$(tr '\n' ' ' < "$LOG_DIR/diag-last.err")
