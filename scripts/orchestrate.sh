@@ -68,6 +68,13 @@ mkdir -p "$STATE_DIR" "$TASK_STATE" "$BRIEF_DIR" "$LOG_DIR" "$ESC_DIR"
 # (scripts/em-bench.sh, backlog item 6).
 ARCHIVE_DIR=".em-archive"
 mkdir -p "$ARCHIVE_DIR"
+# Self-ignoring: the archive must never surface in the clean-tree pre-flight
+# or the lane gates — including in children whose repo .gitignore predates
+# this feature (.gitignore is not template-owned and never syncs, the same
+# gap class as ci.yml). The directory carries its own ignore rule instead of
+# depending on one. testchat 2026-07-19 needed a hand-applied ignore line;
+# this removes that class.
+[ -f "$ARCHIVE_DIR/.gitignore" ] || printf '*\n' > "$ARCHIVE_DIR/.gitignore"
 LAST_ARCHIVE_ENTRY=""
 
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -114,23 +121,30 @@ check_budget() {  # check_budget <checkpoint> — between-phase gate, fail-close
   die "run over budget at '$1' — state persists; a re-run resumes from completed tasks. Healthy-but-slow (cold model load, big suite): raise SWBP_RUN_BUDGET or set 0. Otherwise the timing table names the phase that ate the clock — fix that, don't raise the budget."
 }
 
-# archive_em <out-file> — persist prompt + reply for offline replay (em-bench.sh).
-# Called after every successful em_call; consult_em appends verdict metadata.
+# archive_em <out-file> [<outcome>] — persist prompt + reply for offline
+# replay (em-bench.sh). Called after every em_call attempt, success AND
+# failure — the failed attempts (outcome=invalid_json, or a later
+# validation=schema_invalid append) are the corpus the diagnosis-brief work
+# (backlog item 6) needs most. consult_em / ensure_plan append verdict and
+# gate metadata afterwards.
 # Guarded: no-ops when ARCHIVE_DIR is unset (selftest extracts em_call without this).
 archive_em() {
   [ -n "${ARCHIVE_DIR:-}" ] || return 0
-  local out="$1"
+  local out="$1" outcome="${2:-ok}"
   local ts; ts=$(date '+%Y-%m-%d_%H%M%S')
   local tag; tag=$(basename "$out" .json)
-  local entry="$ARCHIVE_DIR/${ts}_${tag}"
+  # Same-second entries must not share a directory (a collision overwrites
+  # the earlier record silently) — suffix until unique.
+  local entry="$ARCHIVE_DIR/${ts}_${tag}" n=2
+  while [ -e "$entry" ]; do entry="$ARCHIVE_DIR/${ts}_${tag}_$n"; n=$((n + 1)); done
   mkdir -p "$entry" || return 0
   cp "$LOG_DIR/em-last.prompt" "$entry/prompt.txt" 2>/dev/null || true
   cp "$LOG_DIR/em-last.raw" "$entry/reply.json" 2>/dev/null || true
   cp "$LOG_DIR/em-last.err" "$entry/stderr.log" 2>/dev/null || true
   cp tasks/plan.json "$entry/plan.json" 2>/dev/null || true
   cp "$APPROVED/contracts.json" "$entry/contracts.json" 2>/dev/null || true
-  printf 'spec_version=%s\nout=%s\ntimestamp=%s\n' \
-    "${FROZEN_V:-unknown}" "$out" "$ts" > "$entry/meta.txt"
+  printf 'spec_version=%s\nout=%s\ntimestamp=%s\noutcome=%s\n' \
+    "${FROZEN_V:-unknown}" "$out" "$ts" "$outcome" > "$entry/meta.txt"
   LAST_ARCHIVE_ENTRY="$entry"
 }
 
@@ -281,6 +295,9 @@ em_call() {
     > "$LOG_DIR/em-last.raw" 2> "$LOG_DIR/em-last.err" \
     || { cat "$LOG_DIR/em-last.err" >&2; die "EM call failed (see $LOG_DIR/em-last.err)"; }
   if ! python3 -c "import json; json.load(open('$LOG_DIR/em-last.raw'))" 2>/dev/null; then
+    # Archive the failed attempt before any exit path — the invalid replies
+    # are the highest-value corpus entries for the brief-variant bench.
+    type archive_em &>/dev/null && archive_em "$out" invalid_json || true
     # EM_JSON_SOFT=1 (consult_em's D-71 retry loop): report failure to the
     # caller instead of halting — a malformed reply there earns one retry.
     [ "${EM_JSON_SOFT:-0}" = "1" ] \
@@ -515,10 +532,17 @@ ensure_plan() {
   while :; do
     if [ -f tasks/plan.json ] && verrs=$(python3 scripts/validate-plan.py 2>&1); then
       echo "plan ok (v$(python3 -c 'import json;print(json.load(open("tasks/plan.json"))["version"])'))"
+      if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
+        printf 'plan_gate=ok\n' >> "$LAST_ARCHIVE_ENTRY/meta.txt"
+      fi
       git add tasks/plan.json && git commit -m "[plan] validated against spec v$FROZEN_V" 2>/dev/null || true
       return 0
     fi
     verrs=$(python3 scripts/validate-plan.py 2>&1 || true)
+    if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
+      printf 'plan_gate=rejected\nplan_gate_errors=%s\n' \
+        "$(printf '%s' "$verrs" | tr '\n' ' ')" >> "$LAST_ARCHIVE_ENTRY/meta.txt"
+    fi
     revs=$(plan_revisions_used)
     [ "$revs" -lt "$MAX_PLAN_REVISIONS" ] || {
       echo "$verrs"
@@ -605,8 +629,15 @@ if isinstance(d, dict):
         return 0
       fi
       verrs=$(tr '\n' ' ' < "$LOG_DIR/diag-last.err")
+      if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
+        printf 'validation=schema_invalid\ntask_id=%s\nvalidator_errors=%s\n' \
+          "$id" "$verrs" >> "$LAST_ARCHIVE_ENTRY/meta.txt"
+      fi
     else
       verrs="the reply was not parseable JSON at all"
+      if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
+        printf 'task_id=%s\n' "$id" >> "$LAST_ARCHIVE_ENTRY/meta.txt"
+      fi
     fi
   done
   die "EM diagnosis for $id still invalid after one retry — halting (Rule 4): $verrs"

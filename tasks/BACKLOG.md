@@ -24,7 +24,7 @@
 **Priority:** P2
 **Why:** Mid-tier diagnosis is the ladder's weak rung, on record since M23 (schema-invalid diagnosis, empty task_id — gate refused correctly) and still thin on 2026-07-17 (first schema-valid production diagnosis, but rambling prose). The bounded schema-retry half already shipped (D-71: validator errors echoed back, one retry); the open half is the diagnosis BRIEF — what context makes a mid-tier model diagnose accurately (D-73's FAIL_DETAIL landed since; whether it closed the gap is unmeasured). Carried from the 07-15 open items via the M28 handoff (item 6, `tasks/HANDOFF-M28-blueprint-items.md`).
 **Rough size:** Medium (needs bench evidence — A/B the brief against recorded consult transcripts, not intuition)
-**Depends on:** entries accumulating in `.em-archive/` (capture + replay shipped 2026-07-19: `orchestrate.sh` archives every EM prompt/reply pair, `scripts/em-bench.sh` replays diagnosis entries with variant briefs — the corpus is empty until real runs happen); then a design session on the brief variants, not a quick commit
+**Depends on:** entries accumulating in `.em-archive/` (capture + replay shipped 2026-07-19; failure-path capture added same day — invalid-JSON and schema-invalid diagnoses now land in the corpus with outcome/validation metadata, and `em-bench.sh` scores them FIXED/STILL_INVALID under a variant brief, which is the A/B signal this item needs. First real entries collected in testchat's v56 run: 3 plan emissions including both 4-bit gate rejections, 1 diagnosis `verdict=brief_wrong`); then a design session on the brief variants, not a quick commit
 
 ### Escalation-ladder validation: observe the first run that climbs it
 **Priority:** P2
