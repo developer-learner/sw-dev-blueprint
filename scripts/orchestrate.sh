@@ -293,7 +293,13 @@ em_call() {
     | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh em .opencode/prompts/em.md \
         --schema "$schema" --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/em-last.raw" 2> "$LOG_DIR/em-last.err" \
-    || { cat "$LOG_DIR/em-last.err" >&2; die "EM call failed (see $LOG_DIR/em-last.err)"; }
+    || { cat "$LOG_DIR/em-last.err" >&2
+         # Archive the failed call too (outcome=call_failed): the prompt in
+         # em-last.prompt dies with .pipeline-state/ on the next success, and
+         # the archive exists precisely because that dir is ephemeral. Not
+         # replayable by em-bench (no reply), but the prompt survives.
+         type archive_em &>/dev/null && archive_em "$out" call_failed || true
+         die "EM call failed (see $LOG_DIR/em-last.err)"; }
   if ! python3 -c "import json; json.load(open('$LOG_DIR/em-last.raw'))" 2>/dev/null; then
     # Archive the failed attempt before any exit path — the invalid replies
     # are the highest-value corpus entries for the brief-variant bench.
