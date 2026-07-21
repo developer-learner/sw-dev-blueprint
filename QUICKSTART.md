@@ -141,7 +141,10 @@ Go deeper strictly on demand:
 - **Your own project (milestone 1):** a frontier web chat authors the four
   artifacts — read `docs/TPM-ROLE.md` (how to run that chat) and
   `docs/CEO-PLAYBOOK.md` (the operator rhythm), then repeat Steps 4–6 with
-  its output.
+  its output. Note: a real project also runs the curated cleanup
+  (BLUEPRINT.md Bootstrap Step 4 — delete the one-shot `bootstrap.sh` /
+  `new-project.sh`); this walkthrough project skipped it because it is
+  throwaway.
 - **The first time a run exits 2:** read `docs/ESCALATION.md` — the failure
   ladder and the TPM bundle round-trip. Not before.
 - **Several projects from this template:** now the fleet tools matter —
