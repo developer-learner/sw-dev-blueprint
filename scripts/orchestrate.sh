@@ -1015,6 +1015,15 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
   iso_evidence=""
   if [ "$all_carried" -eq 1 ]; then
     for fid in "${_fail_ids[@]}"; do
+      # Isolation is corroborating evidence only (never gating), so it is the
+      # one phase safe to skip over budget — each re-run is a full sandbox
+      # pytest start, and this loop runs after the last check_budget call.
+      # A budget die here would fail a run whose suite is flake-green; skip
+      # the evidence instead.
+      if [ "$SWBP_RUN_BUDGET" -gt 0 ] && [ "$(run_elapsed)" -gt "$SWBP_RUN_BUDGET" ]; then
+        iso_evidence="${iso_evidence:+$iso_evidence; }isolation runs skipped — over SWBP_RUN_BUDGET"
+        break
+      fi
       iso_pass=0
       for _try in 1 2; do
         run_tests "$fid"
