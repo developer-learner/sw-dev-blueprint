@@ -910,9 +910,10 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
   set_counter "$id" strikes "$strikes"
   [ "$strikes" -lt "$MAX_TASK_STRIKES" ] && continue   # plain retry with failure appended
 
-  # --- Fail-fast (default: MAX_TASK_STRIKES=1) ---
-  # Halt and lay out the failure for human review. The EM consult +
-  # escalation ladder below only fires when MAX_TASK_STRIKES > 1 (opt-in).
+  # --- Fail-fast (MAX_TASK_STRIKES=1, opt-in since D-70) ---
+  # Halt and lay out the failure for human review. Since D-70 the default is
+  # MAX_TASK_STRIKES=2, so the EM consult + escalation ladder below is the
+  # DEFAULT path; setting MAX_TASK_STRIKES=1 opts back into this bare halt.
   if [ "$MAX_TASK_STRIKES" -le 1 ]; then
     echo ""
     echo "=========================================="
