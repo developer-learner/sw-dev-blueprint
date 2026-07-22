@@ -19,11 +19,12 @@ case "$phase" in
     [ -n "$target" ] || { echo "pre-commit: task phase active but no task_target recorded"; exit 1; }
     exec bash scripts/phase-gate.sh task HEAD "$target"
     ;;
-  em|build|test|architect)
-    exec bash scripts/phase-gate.sh "$phase" HEAD
+  em)
+    exec bash scripts/phase-gate.sh em HEAD
     ;;
   *)
-    # No active phase: integrity checks only (control plane + frozen spec).
+    # No active phase (or a stale build/test/architect from before the
+    # 2026-07-22 retirement): integrity checks only.
     exec bash scripts/phase-gate.sh manifest HEAD
     ;;
 esac

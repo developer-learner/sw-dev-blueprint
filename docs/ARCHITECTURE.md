@@ -91,9 +91,11 @@ DELETE /api/v1/[resource]/:id       delete
 
 > **Not for child projects to edit.** This section indexes the template's own
 > pipeline decisions — see `docs/DECISIONS.md` for the full entries with
-> reasons, alternatives, and "do not suggest." INV-3 (the `architect`-phase
-> traceability gate in `scripts/phase-gate.sh`) requires every
-> non-documentation-only D-entry to appear here.
+> reasons, alternatives, and "do not suggest." INV-3 used to require every
+> non-documentation-only D-entry here and mechanically enforce it via the
+> `architect`-phase gate in `scripts/phase-gate.sh`; that phase was retired
+> 2026-07-22 (see D-25 amendment) because post-D-53 nothing invokes it.
+> Keeping this index maintained is now a PM-review discipline, not a gate.
 >
 > If your child project has never touched the pipeline, you can leave this
 > section alone. The sections *above* this line are the template skeleton
@@ -171,11 +173,11 @@ DELETE /api/v1/[resource]/:id       delete
 ### Gates, lanes & governance
 
 - **D-19**: `docs/.pm-last-review` — PM-owned ref marker
-- **D-25**: INV-3 — decision-traceability gate (this section satisfies it)
+- **D-25**: INV-3 — decision-traceability gate (retired 2026-07-22, see D-25 amendment; keeping this section current is now a PM-review discipline)
 - **D-33**: Fleet drift — birth-SHA identity, ownership-split manifests
 - **D-34**: Template propagation — `update-template.sh` applies the refreeze pattern to the control plane
 - **D-36**: Gate-script self-tests (`scripts/selftest/`)
-- **D-37**: `build_extra`/`test_extra` exact-file lane exceptions in `.gate-paths`
+- **D-37**: `build_extra`/`test_extra` exact-file lane exceptions in `.gate-paths` (retired 2026-07-22 with the `build`/`test` phase-gate phases that read them)
 - **D-45**: Conductor bash allowlist — pipeline scripts + read-only git; everything else asks
 - **D-47**: External TPM review of D-40..D-46 adjudicated
 - **D-59**: The coder edits existing files through anchored blocks

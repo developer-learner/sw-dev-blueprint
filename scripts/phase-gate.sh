@@ -1,46 +1,28 @@
 #!/usr/bin/env bash
-# phase-gate.sh <build|test|architect|em|task|manifest> [phase-start-ref] [task-target]
+# phase-gate.sh <em|task|manifest> [phase-start-ref] [task-target]
 # Inverted whitelist gate: fail if the phase touched anything outside its
 # permitted lane. Defaults to diffing against current HEAD; pass a
 # phase-start ref (recorded before the agent ran) to catch committed changes.
 #
 # Phases:
-#   build     — legacy lane: only the build dir may change (+ build_extra
-#               exact files from .gate-paths, e.g. package.json)
-#   test      — legacy lane: only the test dir may change (+ test_extra
-#               exact files from .gate-paths)
-#   architect — docs/ only, plus the INV-3 decision-traceability check
 #   em        — tasks/ only (the EM's sole write lane, D-26)
 #   task      — EXACTLY ONE file may change: the task target passed as $3
 #               (structural atomicity for the coder, D-26)
 #   manifest  — integrity checks only (control plane + frozen spec); used by
 #               the orchestrator pre-flight and the pre-commit hook
+#
+# Retired 2026-07-22 (D-25/D-37 amended): the `build`, `test`, and
+# `architect` phases + their INV-3 check ran under the pre-D-53 architecture
+# where distinct agent tiers wrote src/, tests/, and docs/. Post-D-53 only
+# the shell writes those paths (coder via `task`, EM via `em`, tests only
+# via refreeze); nothing invokes the retired phases and INV-3 sat unrun for
+# ~3 weeks, so keeping them was mechanical theater. The build_dir/test_dir
+# path readers here went with them — orchestrate.sh and validate-plan.py
+# read `build=` from `.gate-paths` themselves for their pathing needs.
 set -e
 
 PHASE="$1"
 PHASE_START="${2:-HEAD}"
-
-# Read .gate-paths config (defaults: src/ and tests/)
-# Falls back to built-in defaults if .gate-paths is tampered/missing.
-build_dir="src/"
-test_dir="tests/"
-build_extra=""
-test_extra=""
-if [ -f .gate-paths ]; then
-  _raw=$(grep '^build=' .gate-paths | cut -d= -f2- || true)
-  if [ -n "$_raw" ]; then
-    _raw="${_raw#./}"; _raw="${_raw%"${_raw##*[![:space:]]}"}"; build_dir="${_raw%/}/"
-  fi
-  _raw=$(grep '^test=' .gate-paths | cut -d= -f2- || true)
-  if [ -n "$_raw" ]; then
-    _raw="${_raw#./}"; _raw="${_raw%"${_raw##*[![:space:]]}"}"; test_dir="${_raw%/}/"
-  fi
-  # build_extra / test_extra: space-separated exact file paths a legacy phase
-  # may also touch outside its dir (e.g. package.json for a JS build lane).
-  # Exact-match only — no globs, no regex (see grep -vFx use below).
-  build_extra=$(grep '^build_extra=' .gate-paths | cut -d= -f2- || true)
-  test_extra=$(grep '^test_extra=' .gate-paths | cut -d= -f2- || true)
-fi
 
 # Control-plane hash check, split by ownership (D-33):
 #   .manifest-template — template-owned logic; drift against the template repo
@@ -126,57 +108,6 @@ CHANGED=$( {
 } | sort -u )
 
 case "$PHASE" in
-  build)
-    # Whitelist: only src/ (+ build_extra exact files) may change
-    violations=$(echo "$CHANGED" | { grep -v "^$build_dir" || true; } )
-    for pattern in $build_extra; do
-      violations=$(echo "$violations" | { grep -vFx "$pattern" || true; } )
-    done
-    if [ -n "$violations" ]; then
-      echo "GATE FAIL: build touched files outside $build_dir or build_extra (INV-2):"
-      echo "$violations"
-      exit 1
-    fi
-    ;;
-  test)
-    # Whitelist: only tests/ (+ test_extra exact files) may change
-    violations=$(echo "$CHANGED" | { grep -v "^$test_dir" || true; } )
-    for pattern in $test_extra; do
-      violations=$(echo "$violations" | { grep -vFx "$pattern" || true; } )
-    done
-    if [ -n "$violations" ]; then
-      echo "GATE FAIL: test touched files outside $test_dir or test_extra (INV-2):"
-      echo "$violations"
-      exit 1
-    fi
-    ;;
-  architect)
-    # Whitelist: only docs/ may change; anything outside docs/ → fail
-    violations=$(echo "$CHANGED" | { grep -v "^docs/" || true; } )
-    if [ -n "$violations" ]; then
-      echo "GATE FAIL: architect touched files outside docs/:"
-      echo "$violations"
-      exit 1
-    fi
-
-    # INV-3: Every non-documentation decision in DECISIONS.md must appear in ARCHITECTURE.md
-    if [ -f "docs/DECISIONS.md" ] && [ -f "docs/ARCHITECTURE.md" ]; then
-      all_ids=$(grep '^## D-' "docs/DECISIONS.md" | grep -oE 'D-[0-9]+' || true)
-      doc_only=$(awk '/^## D-/ {did=$2} /^\*\*Documentation-only:\*\*/ {print did}' "docs/DECISIONS.md")
-      missing=""
-      while IFS= read -r id; do
-        [ -z "$id" ] && continue
-        echo "$doc_only" | grep -qF "$id" && continue
-        if ! grep -qF "$id" "docs/ARCHITECTURE.md"; then
-          missing="$missing $id"
-        fi
-      done <<< "$all_ids"
-      if [ -n "$missing" ]; then
-        echo "GATE FAIL: INV-3 — decisions not referenced in ARCHITECTURE.md:$missing"
-        exit 1
-      fi
-    fi
-    ;;
   em)
     # Whitelist: only tasks/ may change (plan.json / diagnosis.json lane)
     violations=$(echo "$CHANGED" | { grep -v "^tasks/" || true; } )
@@ -200,7 +131,7 @@ case "$PHASE" in
     # Integrity checks above are the whole job.
     ;;
   *)
-    echo "usage: phase-gate.sh <build|test|architect|em|task|manifest> [phase-start-ref] [task-target]"
+    echo "usage: phase-gate.sh <em|task|manifest> [phase-start-ref] [task-target]"
     exit 2
     ;;
 esac

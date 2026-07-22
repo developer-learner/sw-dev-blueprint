@@ -1,10 +1,14 @@
-# .gate-paths — directory layout for INV-2 boundary enforcement
-# Used by scripts/phase-gate.sh. Change these if your project
-# uses a non-standard directory structure (e.g. app/ + spec/).
-# Format: <phase>=<directory>
-# Keys: build=  test=  (must match phase-gate.sh <build|test> argument)
-# Optional: build_extra= / test_extra= — space-separated list of exact file
-# paths outside the dir above that the phase may also touch (e.g. a JS
-# stack's package.json for build). Exact-match only, no globs/regex.
+# .gate-paths — directory layout metadata for the pipeline.
+# Change these if your project uses a non-standard directory structure
+# (e.g. app/ + spec/).
+#
+# `build=` is read by scripts/orchestrate.sh and scripts/validate-plan.py
+# for src-dir pathing (the build lane the coder writes into via the `task`
+# phase gate). `test=` is retained for child compatibility; the pipeline
+# reads tests/ directly.
+#
+# The `build_extra=` / `test_extra=` keys were used by the phase-gate.sh
+# `build` and `test` phases retired 2026-07-22 — see D-25/D-37 amendments.
+# Existing lines here are harmless; new keys serve no purpose.
 build=src/
 test=tests/
