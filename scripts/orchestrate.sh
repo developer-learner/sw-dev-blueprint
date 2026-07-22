@@ -998,6 +998,10 @@ run_tests
 # flake later failed 4/4 IN ISOLATION under host memory load, so an isolated
 # run measures the environment as much as the test. Any mapped node or
 # collection error keeps the DRIFT path exactly as before.
+#
+# The block between the BEGIN/END markers below is extracted verbatim by
+# scripts/selftest/drive-drift.sh — keep the markers on their own lines.
+# BEGIN D-77 flake triage (drive-drift.sh extracts this block)
 FLAKE_NOTE=""
 if [ "$TESTS_RC" -eq 1 ] && [ -n "$FAILING" ] \
   && [[ "$FAILING" != *COLLECTION_ERROR* ]]; then
@@ -1041,6 +1045,7 @@ WARNING (D-77): carried-forward node(s) failed in the full run — flake, not dr
     TESTS_RC=0
   fi
 fi
+# END D-77 flake triage
 
 if [ "$TESTS_RC" -eq 0 ]; then
   echo ""

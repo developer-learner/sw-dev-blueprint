@@ -1631,3 +1631,178 @@ def test_coder_wrong_path_reply_is_strike_not_commit(tmp_path):
     # pre-fix defect. The nonempty message names the wrong path so a retry
     # brief can actually diagnose.
     assert "EVIDENCE=coder wrote to 'src/other.py'" in r.stdout
+
+
+# --- D-77 flake triage: the highest-blast-radius branch in orchestrate.sh ----
+# This block is the ONLY code that converts a red frozen suite into `exit 0`
+# + `[success]` commit + `rm -rf` of `.pipeline-state`; per Rule 9 (D-81,
+# gate strength proportional to blast radius) it needs the same drive-*.sh
+# coverage the lower-consequence rungs already have. The 2026-07-22 review
+# flagged its zero-test state; these seven tests pin the five untested
+# behaviors from that finding:
+#   (a) one mapped node among many unmapped keeps the DRIFT path
+#   (b) COLLECTION_ERROR bypasses the flake path entirely
+#   (c) FAILING/FAIL_DETAIL survive the isolation loop's run_tests clobber
+#       (both when isolation ran, and when it never entered)
+#   (d) the fbfc1f0 budget-skip emits skip evidence instead of dying
+#   (e) the flake path builds FLAKE_NOTE for the [success] block downstream
+# Plus one core-invariant test (isolation is corroborating-only, never
+# gating — the fbfc1f0 amendment to D-77).
+
+DRIVE_DRIFT = SCRIPTS / "selftest" / "drive-drift.sh"
+
+FLAKE_PLAN = {
+    "version": 1,
+    "erd_version": 1,
+    "tasks": [
+        {"id": "T1", "file": "src/a.py", "brief": "atomic delta work",
+         "depends_on": [], "contracts": [],
+         "tests": ["tests/test_delta.py::test_new"]},
+    ],
+}
+
+
+def run_drive_drift(tmp_path, *, tests_rc=1, failing="", fail_detail="",
+                    rt_outcomes="", swbp_elapsed=0, swbp_budget=0,
+                    plan=None):
+    (tmp_path / "tasks").mkdir(exist_ok=True)
+    (tmp_path / "tasks" / "plan.json").write_text(
+        json.dumps(plan if plan is not None else FLAKE_PLAN))
+    env = {**os.environ,
+           "TESTS_RC": str(tests_rc),
+           "FAILING": failing,
+           "FAIL_DETAIL": fail_detail,
+           "RT_OUTCOMES": rt_outcomes,
+           "SWBP_ELAPSED": str(swbp_elapsed),
+           "SWBP_RUN_BUDGET": str(swbp_budget)}
+    return subprocess.run(
+        ["bash", str(DRIVE_DRIFT), str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+
+
+def _kv(stdout, key):
+    """Extract the harness's `KEY=value` line."""
+    for line in stdout.splitlines():
+        if line.startswith(f"{key}="):
+            return line[len(key) + 1:]
+    return None
+
+
+def test_flake_all_unmapped_flips_red_to_green(tmp_path):
+    """Every failure is a carried-forward, plan-unmapped node -> the block
+    treats the suite as flake-green: TESTS_RC flipped 0, FLAKE_NOTE populated,
+    WARNING printed. This is the one branch that overrides a red suite."""
+    r = run_drive_drift(
+        tmp_path, failing="tests/test_flake.py::test_a",
+        rt_outcomes="0:0",
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
+    assert "WARNING (D-77)" in r.stdout
+    assert _kv(r.stdout, "FLAKE_NOTE").startswith("WARNING (D-77)")
+    assert "2/2 isolated passes" in r.stdout
+    assert _kv(r.stdout, "RT_CALLS") == "2"
+
+
+def test_flake_isolation_is_evidence_only_never_gating(tmp_path):
+    """fbfc1f0 amendment to D-77: isolation is corroborating evidence, never
+    a gate. 0/2 isolated passes must NOT bounce the classification back to
+    DRIFT — a flake that reproduces under host memory load is still a flake
+    (M28's AC-42 failed 4/4 in isolation). Plan mapping is the SOLE
+    discriminator; the k/2 tally is recorded, nothing more."""
+    r = run_drive_drift(
+        tmp_path, failing="tests/test_flake.py::test_a",
+        rt_outcomes="1:1",   # both isolation retries fail
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"    # still flake
+    assert "0/2 isolated passes" in r.stdout
+    assert _kv(r.stdout, "FLAKE_NOTE").startswith("WARNING (D-77)")
+
+
+def test_flake_one_mapped_among_many_keeps_drift(tmp_path):
+    """A single delta-mapped failing node — even alongside many unmapped
+    ones — is real signal, not a flake candidate. The all_carried loop
+    breaks on the first mapped hit, the DRIFT path is preserved, and
+    isolation runs must NEVER fire (they would waste budget on a
+    known-drift case)."""
+    r = run_drive_drift(
+        tmp_path,
+        failing="tests/test_flake.py::test_a|tests/test_delta.py::test_new",
+        rt_outcomes="",   # must not be consumed — a call would go BAD
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"    # DRIFT preserved
+    assert _kv(r.stdout, "FLAKE_NOTE") == ""
+    assert _kv(r.stdout, "RT_CALLS") == "0"          # no isolation runs
+
+
+def test_flake_collection_error_bypasses_the_whole_block(tmp_path):
+    """A pytest collection error means we cannot even enumerate failures —
+    treating it as a flake would silently swallow syntax breakage in the
+    test suite. The block's guard bans COLLECTION_ERROR outright: the
+    whole flake branch is skipped, DRIFT stands, no isolation runs fire."""
+    r = run_drive_drift(
+        tmp_path,
+        failing="COLLECTION_ERROR (see .cache/test-report.json)",
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
+    assert _kv(r.stdout, "FLAKE_NOTE") == ""
+    assert _kv(r.stdout, "RT_CALLS") == "0"
+    assert "WARNING (D-77)" not in r.stdout
+
+
+def test_flake_budget_skip_records_evidence_not_die(tmp_path):
+    """fbfc1f0 finding: over SWBP_RUN_BUDGET the isolation runs are the
+    one phase safe to skip (isolation is corroborating-only, so dying
+    here would fail a flake-green suite). The skip must emit an evidence
+    string ('isolation runs skipped — over SWBP_RUN_BUDGET') and the
+    classification still flips to flake-green."""
+    r = run_drive_drift(
+        tmp_path,
+        failing="tests/test_flake.py::test_a|tests/test_flake.py::test_b",
+        rt_outcomes="",   # must not be consumed
+        swbp_elapsed=2000, swbp_budget=1000,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"    # still flipped
+    assert "isolation runs skipped — over SWBP_RUN_BUDGET" in r.stdout
+    assert _kv(r.stdout, "RT_CALLS") == "0"
+    assert _kv(r.stdout, "FLAKE_NOTE").startswith("WARNING (D-77)")
+
+
+def test_flake_failing_and_detail_survive_isolation_clobber(tmp_path):
+    """The real run_tests clobbers FAILING/FAIL_DETAIL on every call. The
+    block saves them before the isolation loop and restores after, so the
+    downstream DRIFT/[success] paths see the original evidence. Without
+    the restore, the DRIFT message would name only the LAST isolated
+    node-id and its detail would be empty. This test enters the isolation
+    loop (all unmapped) and asserts the restore fired."""
+    r = run_drive_drift(
+        tmp_path, failing="tests/test_flake.py::test_a",
+        fail_detail="original detail preserved across isolation",
+        rt_outcomes="0:0",
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_FAILING") == "tests/test_flake.py::test_a"
+    assert _kv(r.stdout, "FINAL_FAIL_DETAIL") == \
+        "original detail preserved across isolation"
+
+
+def test_flake_failing_and_detail_untouched_when_isolation_never_ran(tmp_path):
+    """When a mapped node short-circuits the flake path, the save/restore
+    dance is never reached — but nothing else touches FAILING/FAIL_DETAIL
+    either (RT_CALLS=0 above proves it), so the values arrive at the DRIFT
+    handler unmodified. This is the symmetric pin to the isolation-ran
+    case above: same guarantee, different code path."""
+    r = run_drive_drift(
+        tmp_path,
+        failing="tests/test_flake.py::test_a|tests/test_delta.py::test_new",
+        fail_detail="original detail",
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_FAILING") == \
+        "tests/test_flake.py::test_a|tests/test_delta.py::test_new"
+    assert _kv(r.stdout, "FINAL_FAIL_DETAIL") == "original detail"
