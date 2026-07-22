@@ -1613,7 +1613,13 @@ def test_coder_gate_failure_is_hard_halt_and_nothing_committed(tmp_path):
 
 def test_coder_wrong_path_reply_is_strike_not_commit(tmp_path):
     """Reply naming a different path than the task = coder FAILURE (return 1,
-    strike evidence), never a write and never a commit."""
+    strike evidence), never a write and never a commit. The parser's failure
+    reason must reach CODER_EVIDENCE — the sentinel-parser exits via
+    sys.exit(msg) to stderr, so the capture at orchestrate.sh:386 needs 2>&1
+    to reach the retry brief and the EM consult (D-73/D-71). Pre-fix
+    behavior: EVIDENCE was empty on every create-mode failure, the retry
+    brief carried no failure note, and the EM diagnosed from bare context
+    (the M25 misdiagnosis class D-73 also fixed)."""
     wrong = CODER_GOOD_REPLY.replace("src/x.py", "src/other.py")
     r = run_coder_drive(tmp_path, wrong, gate_rc=0)
     assert r.returncode == 0, (r.stdout, r.stderr)   # harness survives; strike path
@@ -1621,3 +1627,7 @@ def test_coder_wrong_path_reply_is_strike_not_commit(tmp_path):
     assert coder_commit_count(tmp_path) == 1
     assert not (tmp_path / "src" / "x.py").exists()
     assert not (tmp_path / "src" / "other.py").exists()
+    # EVIDENCE=- is drive-coder's sentinel for an empty capture — the exact
+    # pre-fix defect. The nonempty message names the wrong path so a retry
+    # brief can actually diagnose.
+    assert "EVIDENCE=coder wrote to 'src/other.py'" in r.stdout
