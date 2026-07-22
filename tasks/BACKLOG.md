@@ -20,6 +20,13 @@
 
 ## Up Next
 
+### D-77 flake branch selftest coverage
+**Priority:** P2
+**Why:** Under Rule 9 (gate strength ∝ blast radius, D-81), the D-77 flake branch (`scripts/orchestrate.sh:991-1043`) is the only code in the system that converts a red frozen suite into `exit 0` + `[success]` commit + `rm -rf` of state, and it is the only escalation rung without a `drive-*.sh` harness — every lower-consequence rung has one (D-71 consult: 5 tests via `drive-consult.sh`; D-79 spec-defect: 3 via `drive-plan.sh`; run_coder gate propagation: 3 via `drive-coder.sh`). Rule 9 shipped `3f9345a` three commits before `fbfc1f0` — the repo's own doctrine pointing at its own weakest-verified branch. Untested behaviors that matter: (a) one mapped node among many unmapped keeps DRIFT; (b) `COLLECTION_ERROR` never reaches the flake path; (c) `FAILING`/`FAIL_DETAIL` survive the isolation loop's `run_tests` clobber (`orchestrate.sh:1035`); (d) the `fbfc1f0` budget-skip emits the skip evidence rather than die; (e) the `[success]` path writes `FLAKE_NOTE` into `tasks/CURRENT.md` Results.
+**Rough size:** Medium (`drive-drift.sh` in the established extraction pattern + ~6 pytest cases). The flake branch is not a function — extract or drive the top-level block against a stub `pytest`/`sandbox-run.sh` the way `drive-consult.sh` stubs `llm-call.sh`.
+**Depends on:** —
+**Source:** 2026-07-22 review finding 2.
+
 ### EM diagnosis hardening: denser diagnosis brief (M28 handoff item 6)
 **Priority:** P2
 **Why:** Mid-tier diagnosis is the ladder's weak rung, on record since M23 (schema-invalid diagnosis, empty task_id — gate refused correctly) and still thin on 2026-07-17 (first schema-valid production diagnosis, but rambling prose). The bounded schema-retry half already shipped (D-71: validator errors echoed back, one retry); the open half is the diagnosis BRIEF — what context makes a mid-tier model diagnose accurately (D-73's FAIL_DETAIL landed since; whether it closed the gap is unmeasured). Carried from the 07-15 open items via the M28 handoff (item 6, `tasks/HANDOFF-M28-blueprint-items.md`).
