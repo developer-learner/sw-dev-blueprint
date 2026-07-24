@@ -1806,3 +1806,134 @@ def test_flake_failing_and_detail_untouched_when_isolation_never_ran(tmp_path):
     assert _kv(r.stdout, "FINAL_FAILING") == \
         "tests/test_flake.py::test_a|tests/test_delta.py::test_new"
     assert _kv(r.stdout, "FINAL_FAIL_DETAIL") == "original detail"
+
+
+# --- check_ci_health: D-85, the external verdict -----------------------------
+# CI is the only check running outside this pipeline's own gates, so it is the
+# only thing that catches what the gates structurally cannot (types, lint,
+# packaging). Nothing consumed its verdict until D-85: testchat ran RED for 7
+# days / 46 runs on one mypy error and shipped `[success] spec v56` during the
+# blackout (2026-07-24). These tests pin the verdict mapping, which is the part
+# of a CI-health gate that goes wrong: green passes, red halts, and every
+# "cannot tell" path says INCONCLUSIVE and proceeds rather than implying green
+# (Rule 4 / Rule 6 — an unobtainable answer is not a passing answer).
+
+DRIVE_CI = SCRIPTS / "selftest" / "drive-ci.sh"
+
+
+def run_drive_ci(tmp_path, *, runs=None, gh_rc=0, no_gh=False,
+                 no_remote=False, detached=False, env=None):
+    if runs is not None:
+        (tmp_path / "gh-output").write_text(json.dumps(runs))
+    if gh_rc:
+        (tmp_path / "gh-rc").write_text(str(gh_rc))
+    for flag, on in (("no-gh", no_gh), ("no-remote", no_remote),
+                     ("detached", detached)):
+        if on:
+            (tmp_path / flag).touch()
+    return subprocess.run(
+        ["bash", str(DRIVE_CI), str(tmp_path)],
+        capture_output=True, text=True, env={**os.environ, **(env or {})},
+    )
+
+
+def _run(name, conclusion, status="completed"):
+    return {"workflowName": name, "conclusion": conclusion, "status": status}
+
+
+def test_ci_green_passes(tmp_path):
+    r = run_drive_ci(tmp_path, runs=[_run("CI", "success")])
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "RC=0" in r.stdout
+    assert "green" in r.stdout
+
+
+def test_ci_red_halts_the_run(tmp_path):
+    """THE pin. A completed failing workflow must die before any model call —
+    pre-D-85 behavior was to proceed, which is how a [success] shipped on a
+    red build for seven days."""
+    r = run_drive_ci(tmp_path, runs=[_run("CI", "failure")])
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "RC=" not in r.stdout          # die fired; the caller never resumed
+    assert "CI is RED" in r.stderr
+    assert "SWBP_SKIP_CI_CHECK=1" in r.stderr   # the escape hatch is named
+
+
+def test_ci_red_not_masked_by_newer_green_sibling_workflow(tmp_path):
+    """gh returns newest-first across ALL workflows. Checking only the single
+    newest run would let a green check-drift (which runs on every push and
+    finishes in ~8s) mask a red CI — precisely the blackout D-85 exists to
+    prevent. The newest run of EACH workflow is what counts."""
+    r = run_drive_ci(tmp_path, runs=[
+        _run("check-drift", "success"),   # newer, green
+        _run("CI", "failure"),            # older, red — must still halt
+    ])
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "CI is RED" in r.stderr
+    assert "CI" in r.stderr
+
+
+def test_ci_stale_red_superseded_by_newer_green_same_workflow(tmp_path):
+    """The converse: a workflow that failed and was then re-run green is
+    green. Only the newest run per workflow is consulted, so an old red must
+    not halt a fixed build."""
+    r = run_drive_ci(tmp_path, runs=[
+        _run("CI", "success"),   # newest
+        _run("CI", "failure"),   # the earlier failure, already fixed
+    ])
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "RC=0" in r.stdout
+
+
+def test_ci_pending_is_not_a_failure(tmp_path):
+    """A run still in flight is unknown, not red — halting on it would block
+    every push-then-run sequence."""
+    r = run_drive_ci(tmp_path, runs=[_run("CI", None, status="in_progress")])
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "in flight" in r.stdout
+
+
+def test_ci_no_runs_yet_proceeds(tmp_path):
+    r = run_drive_ci(tmp_path, runs=[])
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "no CI runs" in r.stdout
+
+
+def test_ci_no_remote_skips(tmp_path):
+    """The 2026-07-14 meta-rule: a gate that lives only in CI does not exist
+    until a remote does. A child with no remote must not be blocked."""
+    r = run_drive_ci(tmp_path, no_remote=True, runs=[_run("CI", "failure")])
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "no 'origin' remote" in r.stdout
+
+
+def test_ci_missing_gh_is_inconclusive_not_green(tmp_path):
+    """Rule 4: a check that did not run must SAY so. The wording must not
+    imply the build is green."""
+    r = run_drive_ci(tmp_path, no_gh=True)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "INCONCLUSIVE" in r.stdout
+    assert "not installed" in r.stdout
+    assert "green" not in r.stdout
+
+
+def test_ci_gh_failure_is_inconclusive_not_green(tmp_path):
+    """Unauthenticated / offline gh exits nonzero and writes its complaint to
+    stderr, leaving stdout EMPTY — so no runs are supplied here. (Scripting a
+    failing gh that also emits valid JSON on stdout is not a real state; the
+    function would then have real data and rightly act on it.) Same contract:
+    inconclusive and proceed, never a silent pass presented as green."""
+    r = run_drive_ci(tmp_path, gh_rc=1)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "INCONCLUSIVE" in r.stdout
+    assert "green" not in r.stdout
+
+
+def test_ci_override_skips_even_a_red_build(tmp_path):
+    """Running the pipeline is often exactly how a red CI gets fixed; a gate
+    with no override there is a deadlock, not a safeguard."""
+    r = run_drive_ci(tmp_path, runs=[_run("CI", "failure")],
+                     env={"SWBP_SKIP_CI_CHECK": "1"})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "SKIPPED" in r.stdout
+    assert "RC=0" in r.stdout

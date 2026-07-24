@@ -121,6 +121,95 @@ check_budget() {  # check_budget <checkpoint> — between-phase gate, fail-close
   die "run over budget at '$1' — state persists; a re-run resumes from completed tasks. Healthy-but-slow (cold model load, big suite): raise SWBP_RUN_BUDGET or set 0. Otherwise the timing table names the phase that ate the clock — fix that, don't raise the budget."
 }
 
+# check_ci_health — D-85: a red CI stops the line.
+#
+# CI is the one check that runs OUTSIDE this pipeline's own gates, so it is
+# the only thing that catches what the gates structurally cannot (type errors,
+# lint, a stale lockfile, anything the frozen suite does not assert). Nothing
+# consumed its verdict until now: testchat ran RED for 7 days and 46 runs on a
+# single mypy error, and shipped `[success] spec v56` during the blackout —
+# every internal gate green and correct, the external one shouting into a void
+# (2026-07-24). The 2026-07-14 correction-log rule already said to verify CI
+# before trusting any quality claim; it had no teeth, so it decayed.
+#
+# Fail-closed on a RED verdict; explicitly INCONCLUSIVE (warn, proceed) when
+# the answer cannot be obtained. A check that did not run must say so rather
+# than imply green — Rule 4, and the D-75 precedent for advisory reporting.
+# The escape hatch is deliberate and named: running the pipeline is often
+# exactly how a red CI gets fixed, and a gate with no override in that
+# situation is a deadlock, not a safeguard.
+check_ci_health() {
+  if [ "${SWBP_SKIP_CI_CHECK:-0}" = "1" ]; then
+    echo "  CI health: SKIPPED (SWBP_SKIP_CI_CHECK=1)"
+    return 0
+  fi
+  local remote branch runs_json verdict state detail
+  remote=$(git remote get-url origin 2>/dev/null || true)
+  if [ -z "$remote" ]; then
+    echo "  CI health: no 'origin' remote — skipped (CI cannot exist yet; the 2026-07-14 meta-rule)"
+    return 0
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "  WARNING: CI health INCONCLUSIVE — 'gh' not installed, cannot read CI status. Proceeding."
+    return 0
+  fi
+  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  [ -n "$branch" ] && [ "$branch" != "HEAD" ] || {
+    echo "  WARNING: CI health INCONCLUSIVE — detached HEAD, no branch to query. Proceeding."
+    return 0
+  }
+  # One network call, bounded; python3 (already a hard requirement) parses it,
+  # so this adds no jq dependency.
+  runs_json=$(timeout 20 gh run list --branch "$branch" --limit 20 \
+      --json conclusion,status,workflowName 2>/dev/null || true)
+  if [ -z "$runs_json" ]; then
+    echo "  WARNING: CI health INCONCLUSIVE — 'gh run list' returned nothing (not authenticated, no runs, or network). Proceeding."
+    return 0
+  fi
+  verdict=$(printf '%s' "$runs_json" | python3 -c '
+import json, sys
+try:
+    runs = json.load(sys.stdin)
+except Exception:
+    print("INCONCLUSIVE|gh output was not valid JSON"); sys.exit(0)
+if not runs:
+    print("NONE|no CI runs on this branch yet"); sys.exit(0)
+# gh returns newest first; keep the newest run of EACH workflow. Checking only
+# the single newest run would let a green sibling workflow (check-drift) mask a
+# red CI, which is exactly the blackout this decision exists to prevent.
+latest = {}
+for r in runs:
+    latest.setdefault(r.get("workflowName") or "?", r)
+red = sorted(n for n, r in latest.items()
+             if r.get("status") == "completed" and r.get("conclusion") == "failure")
+pending = sorted(n for n, r in latest.items() if r.get("status") != "completed")
+if red:
+    print("RED|" + ", ".join(red))
+elif pending:
+    print("PENDING|" + ", ".join(pending))
+else:
+    print("GREEN|" + ", ".join(sorted(latest)))
+' 2>/dev/null || true)
+  state="${verdict%%|*}"; detail="${verdict#*|}"
+  case "$state" in
+    GREEN)   echo "  CI health: green on '$branch' ($detail)" ;;
+    PENDING) echo "  CI health: run(s) still in flight on '$branch' ($detail) — not a failure; proceeding" ;;
+    NONE)    echo "  CI health: $detail — proceeding" ;;
+    RED)
+      die "CI is RED on branch '$branch' — failing workflow(s): $detail.
+  The pipeline would build on a codebase whose external checks are failing.
+  CI catches what these gates structurally cannot (types, lint, packaging);
+  testchat shipped a [success] during a 7-day CI blackout because nothing
+  consumed this verdict (2026-07-24). That is what this check exists to stop.
+    see it:     gh run list --branch $branch --limit 5
+    diagnose:   gh run view --log-failed
+  If the failure is unrelated to this run — or you are running the pipeline
+  precisely in order to fix it — re-run with the override:
+    SWBP_SKIP_CI_CHECK=1 scripts/orchestrate.sh" ;;
+    *)       echo "  WARNING: CI health INCONCLUSIVE — ${detail:-unrecognized verdict}. Proceeding." ;;
+  esac
+}
+
 # archive_em <out-file> [<outcome>] — persist prompt + reply for offline
 # replay (em-bench.sh). Called after every em_call attempt, success AND
 # failure — the failed attempts (outcome=invalid_json, or a later
@@ -198,6 +287,10 @@ bash scripts/phase-gate.sh manifest HEAD
 [ -f "$APPROVED/frozen-manifest" ] || die "no frozen TPM spec — install PRD/ERD/contracts/tests via scripts/refreeze.sh"
 [ -f "$APPROVED/VERSION" ]         || die "$APPROVED/VERSION missing — run scripts/refreeze.sh"
 FROZEN_V=$(cat "$APPROVED/VERSION")
+# D-85: the external verdict. Placed after every free local check and before
+# the smoke test, so a red CI costs one bounded API call instead of a cold
+# model load.
+check_ci_health
 # D-55 round-trip smoke test: a bug in the model-call path is invisible to
 # static review — only a real round-trip catches it (correction log 2026-07-03).
 # Runs last in pre-flight: all free checks (hooksPath, clean tree, manifest)
