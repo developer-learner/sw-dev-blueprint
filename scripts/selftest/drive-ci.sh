@@ -59,18 +59,7 @@ STUB
   chmod +x fakebin/timeout
 fi
 
-if [ -e no-gh ]; then
-  # Scrub PATH down to the system dirs so `command -v gh` genuinely fails —
-  # merely omitting the stub would still find a real gh installed on the host
-  # and exercise a DIFFERENT branch than the one this case claims to test.
-  export PATH="$PWD/fakebin:/usr/bin:/bin:/usr/sbin:/sbin"
-  if command -v gh >/dev/null 2>&1; then
-    echo "drive-ci: cannot test the gh-absent branch — gh is on the scrubbed PATH ($(command -v gh))" >&2
-    exit 66
-  fi
-else
-  export PATH="$PWD/fakebin:$PATH"
-fi
+export PATH="$PWD/fakebin:$PATH"
 
 # --- A throwaway repo the function can interrogate ----------------------------
 git init -q . 2>/dev/null || true
@@ -84,6 +73,9 @@ git commit -qm fixture --allow-empty
 # --- Environment the extracted function expects ------------------------------
 die() { echo "FAIL: $*" >&2; exit 1; }
 
+# Extraction runs BEFORE any PATH scrubbing below — the harness's own machinery
+# (sed, grep) must not be constrained by the environment we build for the
+# function under test.
 extract() {
   local body
   body=$(sed -n "/^$1() {/,/^}/p" "$REPO/scripts/orchestrate.sh")
@@ -92,6 +84,32 @@ extract() {
   printf '%s\n' "$body"
 }
 eval "$(extract check_ci_health)"
+
+if [ -e no-gh ]; then
+  # `command -v gh` must genuinely fail. Omitting the stub is not enough — a
+  # real gh on the host would be found and would exercise a DIFFERENT branch
+  # than this case claims to test. Scrubbing to the system dirs is not enough
+  # either: GitHub Actions runners ship gh at /usr/bin/gh, which is exactly
+  # how CI caught this harness (2026-07-24).
+  # So: build a directory holding ONLY the tools the FUNCTION needs (git,
+  # python3, timeout) and make it the entire PATH, applied here — after
+  # extraction — so the harness keeps its own tools. Deterministic on any
+  # host, wherever gh happens to live.
+  mkdir -p minbin
+  for tool in git python3 timeout; do
+    real=$(command -v "$tool" 2>/dev/null || true)
+    if [ -n "$real" ]; then
+      ln -sf "$real" "minbin/$tool"
+    elif [ -x "fakebin/$tool" ]; then
+      cp "fakebin/$tool" "minbin/$tool"   # e.g. the timeout shim above
+    fi
+  done
+  export PATH="$PWD/minbin"
+  if command -v gh >/dev/null 2>&1; then
+    echo "drive-ci: cannot test the gh-absent branch — gh resolved on a PATH containing only $PWD/minbin ($(command -v gh))" >&2
+    exit 66
+  fi
+fi
 
 check_ci_health
 echo "RC=$?"
