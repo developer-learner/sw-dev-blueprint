@@ -125,6 +125,43 @@ run the orchestrator, and answer escalation batches by carrying
 
 ---
 
+## The gate layer — neurosymbolic, if you want the term
+
+The loop above rests on one bet: every seat generates probabilistically, so
+every seat's artifact gets a mechanical check before anything downstream
+consumes it. That is a **neurosymbolic** architecture — neural generation,
+symbolic validation — and the pieces map onto the usual split:
+
+| Layer | Where | What it catches |
+|-------|-------|-----------------|
+| **Types, at the door** | `scripts/schemas/*.json` (plan, contracts, diagnosis), enforced server-side via `response_format: json_schema` where the backend supports it | malformed artifacts: wrong shape, unknown keys, bad enum values |
+| **Logic, at the ledger** | `scripts/validate-plan.py` | well-formed artifacts that are still incoherent: duplicate file targets, dependency cycles, test node-ids mapped twice or never, contract ids that don't exist, a plan derived from a stale `erd_version` |
+| **Entailment, before the freeze** | `spec_preflight()` (D-78) | specs no plan could satisfy — a route whose implementing file is outside the inventory is unbuildable by *any* EM, and that is provable from the spec alone |
+
+`scripts/.approved/contracts.json` is the domain model those checks reason
+over: entities (`files`, `routes`, `schemas`, `errors`, `externals`,
+`entry_points`, `ui`), their relationships, and the constraints binding them —
+versioned, frozen, human-approved. Call it an ontology if the word helps.
+
+Two things this repo learned that the general form of the idea leaves out:
+
+1. **A validator only binds a seat that cannot route around it.** A capable
+   model under goal pressure doesn't emit invalid output — it bypasses the
+   validator. In one supervised run the conductor hand-wrote `src/`, authored
+   test fixes, and skipped escalation; every prose rule failed and every
+   structural gate held. Hence the sandbox, the lane gates, the pre-commit
+   hook. Symbolic checks guard the artifact; structure guards the road.
+2. **A verdict nobody consumes is not a gate** (D-85). Adding a checking layer
+   is the easy part. A child project's CI sat red for 46 consecutive runs on a
+   single type error — during which its 151-test suite never ran in CI at all,
+   and a `[success]` milestone shipped inside that window. Before adding any
+   check, name who reads the verdict.
+
+Constraint strength is priced against blast radius, not maximized —
+see BLUEPRINT.md Rule 9.
+
+---
+
 ## Keeping docs current
 
 | Trigger | Action |

@@ -49,6 +49,25 @@ touches trusted state (denied on `tests/`, `scripts/`, `src/`, the control
 plane); which chat tool plays that seat is a preference, not an architecture
 decision.
 
+**The shape of the whole thing is neurosymbolic — naming it, for once.** Every
+tier generates probabilistically and is checked symbolically before the next
+tier consumes anything: JSON Schema at the door (`scripts/schemas/`), semantic
+consistency at the ledger (`scripts/validate-plan.py` — target uniqueness, DAG
+acyclicity, the oracle-mapping bijection, referential integrity against frozen
+contract ids), and satisfiability entailment before a spec is installable at
+all (D-78 `spec_preflight`). `scripts/.approved/contracts.json` is the domain
+model those checks reason over — a versioned, human-approved formal
+specification of a feature's entities and their relationships.
+
+The door/ledger split is deliberate and load-bearing: schemas hold shape,
+`validate-plan.py` holds meaning, and the boundary is written into
+`plan.schema.json`'s own description field so neither layer drifts into the
+other. Two corollaries the generic form of this idea omits — a symbolic check
+binds only a seat that cannot route around it (hence Rule 7's write-boundaries
+being physical rather than requested), and a check whose verdict nothing
+consumes is decoration rather than a gate (D-85). Gate strength is priced
+against blast radius, never maximized: Rule 9.
+
 ---
 
 ## GitHub Repository
