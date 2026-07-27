@@ -1715,6 +1715,176 @@ def test_preflight_compound_command_bails(tmp_path):
     assert r.returncode == 0, (r.stdout, r.stderr)
 
 
+# --- preflight: per-file ERD prose mass advisory (D-89) ----------------------
+# testchat M31 v64: 12 behavioral items concentrated on src/static/app.js. The
+# EM's brief came out 2697 chars against MAX_BRIEF_CHARS=2500, but the plan-
+# gate cap fires AFTER two EM plan calls (~250-280s each on the 4-bit seat) —
+# ~10 min to learn what the ERD already implied at freeze time. This is
+# advisory, not blocking: the correlation between ERD mass and brief size is
+# strong but heuristic, and the plan gate is the hard backstop.
+
+# Derived from the script under test — a threshold bump must not require
+# retuning these tests (same discipline as MAX_BRIEF above).
+ERD_THRESHOLD = int(re.search(
+    r"^ERD_MASS_ADVISORY_THRESHOLD = (\d+)", VALIDATE_PLAN.read_text(),
+    re.M).group(1))
+
+
+def run_erd_mass(tmp_path, erd_text, contracts):
+    erd_p = tmp_path / "ERD.md"
+    erd_p.write_text(erd_text)
+    c_p = tmp_path / "contracts.json"
+    c_p.write_text(json.dumps(contracts))
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--erd-mass", str(erd_p), str(c_p)],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+
+
+def test_erd_mass_flags_oversized_section(tmp_path):
+    """The v64 shape: one inventory file's ERD section far exceeds the
+    threshold. The advisory must name that file and its char count."""
+    heavy = "x" * (ERD_THRESHOLD + 800)
+    erd = (
+        "# ERD\n\n"
+        "## As-built\n\n"
+        f"* `src/static/app.js` — {heavy}\n"
+        "* `src/static/threads.js` — small.\n"
+    )
+    r = run_erd_mass(tmp_path, erd, {
+        "files": ["src/static/app.js", "src/static/threads.js"]})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "ERD MASS ADVISORY" in r.stderr, r.stderr
+    assert "src/static/app.js" in r.stderr, r.stderr
+    assert "src/static/threads.js" not in r.stderr, r.stderr
+
+
+def test_erd_mass_within_threshold_stays_quiet(tmp_path):
+    """A well-scoped ERD makes no noise — no advisory to consume, no false
+    positives to train the CEO to ignore the message."""
+    erd = (
+        "# ERD\n\n"
+        "## As-built\n\n"
+        "* `src/main.py` — a compact description of the module.\n"
+        "* `src/util.py` — another compact description.\n"
+    )
+    r = run_erd_mass(tmp_path, erd, {"files": ["src/main.py", "src/util.py"]})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "ERD MASS ADVISORY" not in r.stderr, r.stderr
+
+
+def test_erd_mass_heading_caps_last_file_section(tmp_path):
+    """The last file in a list must NOT absorb every subsequent section —
+    if it did, threads.js in testchat's v65 ERD would report ~5.5KB and
+    a well-scoped file would false-positive on every freeze. A `#`-heading
+    ends the current file's section."""
+    trailing = "x" * (ERD_THRESHOLD + 500)
+    erd = (
+        "# ERD\n\n"
+        "## As-built\n\n"
+        "* `src/a.py` — compact.\n"
+        "* `src/b.py` — also compact.\n"
+        "\n## Behavior locked\n\n"
+        + trailing
+        + "\n"
+    )
+    r = run_erd_mass(tmp_path, erd, {"files": ["src/a.py", "src/b.py"]})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "ERD MASS ADVISORY" not in r.stderr, r.stderr
+
+
+def test_erd_mass_file_not_mentioned_no_signal(tmp_path):
+    """A file with no section-start mention yields no measurement — no
+    signal, no advisory (a mid-sentence mention or absence is not proof
+    the file is oversized OR undersized)."""
+    erd = "# ERD\n\n## As-built\n\n* `src/a.py` — small.\n"
+    r = run_erd_mass(tmp_path, erd,
+                     {"files": ["src/a.py", "src/never_mentioned.py"]})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "ERD MASS ADVISORY" not in r.stderr, r.stderr
+
+
+def test_erd_mass_table_format_recognized(tmp_path):
+    """sparkv3-style file inventory tables (`| \\`src/main.py\\` |`) must
+    match — the heuristic can't require a bullet marker or every non-
+    testchat spec silently produces zero measurements."""
+    heavy = "x" * (ERD_THRESHOLD + 400)
+    erd = (
+        "# ERD\n\n"
+        "## Inventory\n\n"
+        "| File | Purpose |\n"
+        "|---|---|\n"
+        f"| `src/main.py` | {heavy} |\n"
+        "| `src/util.py` | small. |\n"
+    )
+    r = run_erd_mass(tmp_path, erd, {"files": ["src/main.py", "src/util.py"]})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "ERD MASS ADVISORY" in r.stderr, r.stderr
+    assert "src/main.py" in r.stderr, r.stderr
+
+
+def test_erd_mass_missing_erd_file_is_not_an_error(tmp_path):
+    """A contracts-only delta may not stage ERD.md — the advisory has no
+    input, exits 0, prints nothing."""
+    c_p = tmp_path / "contracts.json"
+    c_p.write_text(json.dumps({"files": ["src/a.py"]}))
+    r = subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--erd-mass",
+         str(tmp_path / "no-such-ERD.md"), str(c_p)],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert r.stderr == "", r.stderr
+
+
+def test_plan_gate_brief_overflow_names_erd_mass(tmp_path):
+    """D-89 back-half: the plan-gate halt message for a >MAX_BRIEF_CHARS
+    brief names the file's ERD section size, so a future TPM restage
+    routes to spec size (`the spec is oversized`) rather than another
+    actor swap (`the EM wrote long`)."""
+    # Stand up a repo layout the plan gate expects: scripts/.approved/{VERSION,
+    # contracts.json, test-nodeids, ERD.md}, and tasks/plan.json.
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    (approved / "VERSION").write_text("2")
+    contracts = {
+        "erd_version": 2,
+        "files": ["src/app.py"],
+        "entry_points": [],
+        "routes": [],
+    }
+    (approved / "contracts.json").write_text(json.dumps(contracts))
+    (approved / "test-nodeids").write_text("tests/test_app.py::test_x\n")
+    heavy = "x" * (ERD_THRESHOLD + 700)
+    (approved / "ERD.md").write_text(
+        "# ERD\n\n## As-built\n\n"
+        f"* `src/app.py` — {heavy}\n"
+    )
+    (tmp_path / "tasks").mkdir()
+    long_brief = "y" * (MAX_BRIEF + 50)
+    plan = {
+        "erd_version": 2,
+        "tasks": [{
+            "id": "T1", "file": "src/app.py",
+            "depends_on": [], "brief": long_brief,
+            "contracts": [], "tests": ["tests/test_app.py::test_x"],
+        }],
+    }
+    (tmp_path / "tasks" / "plan.json").write_text(json.dumps(plan))
+    (tmp_path / ".gate-paths").write_text("src/\n")
+    r = subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN)],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    # The base error is still there — this is a plan-gate defect regardless.
+    assert "brief is" in combined and "max" in combined, combined
+    # The hint that D-89 adds: the file's ERD section size.
+    assert "ERD section for src/app.py" in combined, combined
+    assert "D-89" in combined, combined
+
+
 # --- refreeze.sh wires the preflight before approval (D-78) ------------------
 
 def refreeze_scripts(repo):
@@ -1739,6 +1909,34 @@ def test_refreeze_diff_mode_runs_preflight(stageable_repo):
     combined = r.stdout + r.stderr
     assert "D-78" in combined, combined
     assert "DIFF-SHA" not in combined, combined
+
+
+def test_refreeze_diff_mode_prints_erd_mass_advisory(stageable_repo):
+    """D-89: refreeze --diff must surface the ERD-mass advisory before the
+    human approval prompt on a staged ERD with an oversized file section,
+    so the CEO sees the size at the moment approval is possible."""
+    repo = stageable_repo
+    refreeze_scripts(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("# empty\n")
+    contracts = {"erd_version": 2, "files": ["src/app.py"],
+                 "entry_points": [], "routes": []}
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(contracts))
+    (repo / "scripts" / ".approved" / "ERD.md").write_text("# ERD v1\n")
+    heavy = "x" * (ERD_THRESHOLD + 800)
+    (repo / "scripts" / ".approved" / "incoming" / "contracts.json").write_text(
+        json.dumps(contracts))
+    (repo / "scripts" / ".approved" / "incoming" / "ERD.md").write_text(
+        "# ERD\n\n## As-built\n\n"
+        f"* `src/app.py` — {heavy}\n"
+    )
+    r = _run_refreeze_diff(repo)
+    combined = r.stdout + r.stderr
+    assert "ERD MASS ADVISORY" in combined, combined
+    assert "src/app.py" in combined, combined
+    # Advisory-only: --diff must still reach the DIFF-SHA gate.
+    assert "DIFF-SHA" in combined, combined
 
 
 # --- refreeze.sh D-68 debt sweep at freeze time (D-80) -----------------------

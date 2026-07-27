@@ -40,6 +40,14 @@ Modes:
                                             implementable by NEW's contracts.files;
                                             exit 0/1. Run by refreeze.sh BEFORE the
                                             human approval prompt.
+  validate-plan.py --erd-mass ERD CONTRACTS
+                                            D-89 freeze-time advisory: print a
+                                            warning for each inventory file whose
+                                            ERD prose section exceeds the advisory
+                                            threshold — the correlation with
+                                            brief-size overflow is heuristic; the
+                                            plan gate is the hard backstop. Exit 0
+                                            regardless. Run by refreeze.sh.
 """
 import ast
 import hashlib
@@ -59,6 +67,14 @@ VERSION = APPROVED / "VERSION"
 TASK_REQUIRED = {"id", "file", "depends_on", "brief", "contracts", "tests"}
 TASK_ALLOWED = TASK_REQUIRED
 MAX_BRIEF_CHARS = 2500
+# D-89: advisory threshold for per-file ERD prose mass at freeze time. Tuned
+# against testchat history: v63's app.js section transcribed to a brief that
+# fit the 2500-char plan-gate limit; v64's did not (12 behavioral items on
+# one file → 2697-char brief). No hard cap — the correlation between ERD
+# mass and brief size is strong but heuristic, and the plan gate is the hard
+# backstop. Never blocking; warnings only.
+ERD_MASS_ADVISORY_THRESHOLD = 2000
+ERD_PATH = APPROVED / "ERD.md"
 VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
 HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "options"}
 # Method-agnostic registration calls (Flask .route/.add_url_rule, FastAPI
@@ -214,9 +230,29 @@ def validate():
         if not isinstance(t["brief"], str) or not t["brief"].strip():
             errs.append(f"{where}: brief must be a non-empty string")
         elif len(t["brief"]) > MAX_BRIEF_CHARS:
+            # D-89: name the file's ERD prose mass if we can compute it —
+            # the future TPM should see "the spec is oversized," not "the EM
+            # wrote long," so a re-freeze routes to the spec rather than
+            # another actor swap.
+            hint = ""
+            try:
+                erd_text = ERD_PATH.read_text()
+                mass = _erd_mass_per_file(erd_text, contracts.get("files", []))
+                fm = mass.get(f)
+                if fm is not None:
+                    hint = (
+                        f" (the ERD section for {f} is {fm} chars"
+                        + (f", above the D-89 advisory threshold "
+                           f"{ERD_MASS_ADVISORY_THRESHOLD}"
+                           if fm > ERD_MASS_ADVISORY_THRESHOLD else "")
+                        + ")"
+                    )
+            except OSError:
+                pass
             errs.append(
                 f"{where}: brief is {len(t['brief'])} chars (max {MAX_BRIEF_CHARS}) "
                 f"— split the task or tighten the brief (Rule 8)"
+                + hint
             )
         for key in ("depends_on", "contracts", "tests"):
             if not isinstance(t[key], list) or not all(isinstance(x, str) for x in t[key]):
@@ -791,6 +827,86 @@ def _quote_agnostic_rewrite(pattern):
     return "".join(out)
 
 
+def _erd_mass_per_file(erd_text, inventory):
+    """Return {file: char_count} — the ERD prose mass attributed to each
+    inventory file. Heuristic: for each file, find its first "section-start"
+    mention (at line start, optionally after a bullet/heading marker,
+    optionally wrapped in backticks/bold), then the section extends from that
+    position to the next file's section-start (or end of text). Files with no
+    section-start mention yield no entry (no signal, no advisory).
+
+    The ERD is prose, not a schema; this is an approximation whose only job
+    is to name the file whose section is heaviest at freeze time so the same
+    signal doesn't have to travel through two EM plan calls (testchat M31 v64:
+    12 behavioral items concentrated on src/static/app.js, brief overshot
+    MAX_BRIEF_CHARS by 197 chars, ~10 min to discover post-plan)."""
+    positions = {}
+    for f in inventory:
+        if not isinstance(f, str):
+            continue
+        # Line-anchored: filename must sit near the start of a line, with
+        # optional list/heading markers and optional bold/backtick wrapping.
+        # A mid-sentence mention doesn't open a section.
+        pat = re.compile(
+            r"(?:\A|\n)[ \t]*"
+            r"(?:[-*+][ \t]+|\d+\.[ \t]+|#+[ \t]+|\|[ \t]*)?"
+            r"(?:\*\*[ \t]*)?"
+            r"[`'\"]?"
+            + re.escape(f)
+            + r"[`'\"]?"
+        )
+        m = pat.search(erd_text)
+        if m:
+            positions[f] = m.start()
+    if not positions:
+        return {}
+    # A `#`-heading closes the current file's section — otherwise the last
+    # file in an "As-built architecture" list absorbs the whole "Behavior
+    # locked" section that follows and every file after, dominating the mass
+    # measurement of the file that actually has the most prose.
+    heading_positions = [m.start() for m in
+                         re.finditer(r"\n#{1,6}[ \t]+", erd_text)]
+    order = sorted(positions.items(), key=lambda kv: kv[1])
+    mass = {}
+    for i, (f, start) in enumerate(order):
+        next_file = order[i + 1][1] if i + 1 < len(order) else len(erd_text)
+        next_heading = next((h for h in heading_positions if h > start),
+                            len(erd_text))
+        mass[f] = min(next_file, next_heading) - start
+    return mass
+
+
+def cmd_erd_mass(erd_path, contracts_path):
+    """D-89 advisory: warn on inventory files whose ERD section prose exceeds
+    the threshold. Never fails — exits 0 whether or not any file is flagged.
+    Called by refreeze.sh after --spec-preflight, before the human sees the
+    approval prompt."""
+    erd_p = Path(erd_path)
+    if not erd_p.is_file():
+        return  # no staged ERD (contracts-only delta); no advisory possible
+    try:
+        erd_text = erd_p.read_text()
+    except OSError:
+        return
+    contracts = load_json(Path(contracts_path), "staged contracts")
+    inventory = contracts.get("files", [])
+    mass = _erd_mass_per_file(erd_text, inventory)
+    flagged = sorted(((f, m) for f, m in mass.items()
+                      if m > ERD_MASS_ADVISORY_THRESHOLD),
+                     key=lambda kv: -kv[1])
+    if not flagged:
+        return
+    for f, m in flagged:
+        print(
+            f"ERD MASS ADVISORY (D-89): {f} carries {m} chars of ERD prose "
+            f"(threshold {ERD_MASS_ADVISORY_THRESHOLD}). The EM will attempt "
+            f"to transcribe this into a single brief; the plan gate rejects "
+            f"briefs over {MAX_BRIEF_CHARS} chars (Rule 8: one concern per "
+            f"brief — split the feature into its own file).",
+            file=sys.stderr,
+        )
+
+
 def spec_preflight(old_path, new_path):
     """D-78: freeze-time satisfiability. The plan gate's exact plan↔inventory
     bijection means a task may only target contracts.files members — so a
@@ -1145,6 +1261,9 @@ def main(argv):
         return
     if argv[0] == "--spec-preflight" and len(argv) == 3:
         spec_preflight(argv[1], argv[2])
+        return
+    if argv[0] == "--erd-mass" and len(argv) == 3:
+        cmd_erd_mass(argv[1], argv[2])
         return
     fail([f"usage error: {' '.join(argv)} (see module docstring)"])
 

@@ -265,6 +265,21 @@ if [ -f "$IN/contracts.json" ]; then
     || die "satisfiability preflight rejected the delta (D-78) — add the named implementing file(s) to contracts.files (or fix the entry_point) and restage"
 fi
 
+# --- D-89: per-file ERD prose mass advisory ---
+# The plan gate's MAX_BRIEF_CHARS cap fires AFTER the EM has produced the
+# whole plan (~250-280s per call on the 4-bit seat) — ~10 minutes to learn
+# what the ERD already implied at freeze time (testchat M31 v64). The freeze-
+# time signal is spec mass per inventory file: warn when any file's ERD
+# prose section is too big to transcribe into a passing brief. Advisory only;
+# the plan-gate cap is the hard backstop.
+ERD_MASS_ERD="$APPROVED/ERD.md"
+ERD_MASS_CONTRACTS="$APPROVED/contracts.json"
+[ -f "$IN/ERD.md" ] && ERD_MASS_ERD="$IN/ERD.md"
+[ -f "$IN/contracts.json" ] && ERD_MASS_CONTRACTS="$IN/contracts.json"
+if [ -f "$ERD_MASS_ERD" ] && [ -f "$ERD_MASS_CONTRACTS" ]; then
+  python3 scripts/validate-plan.py --erd-mass "$ERD_MASS_ERD" "$ERD_MASS_CONTRACTS" || true
+fi
+
 # --- Build the full diff (deterministic — its hash is the approval token) ---
 DIFF_FILE=".pipeline-state/refreeze-pending.diff"
 mkdir -p .pipeline-state
