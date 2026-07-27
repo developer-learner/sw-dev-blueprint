@@ -155,6 +155,25 @@ standing doc's version it was authored against. The 2026-06-30
 stale-manifest correction is the precedent: two artifacts that can drift
 must be pinned under one manifest. No new machinery.
 
+## Landed (same day)
+
+Both fixes implemented in the reviewed order, selftests 145 → 157 green:
+
+* **Fix B** → `228cc26` (D-90): collection + D-75 red-check host
+  fallbacks, junitxml on the host path, TESTING.md full-suite-at-freeze
+  rule, 2 selftests running the real `--diff`/`--approve` apply path in a
+  sandbox-less fixture. CI selftest job gains ruff (`32ba044`) — the
+  fixture tests hit the D-67 gate.
+* **Fix A** → `ae4d8ce` (D-91): `--subtree-scope` / `--merge-subtree`
+  modes, `plan_subtree_prepare` + subtree branch in `ensure_plan`, em.md
+  delta-re-plan clause, 12 selftests incl. two end-to-end `ensure_plan`
+  drives (one-call subtree re-plan; zero-call docs-only merge).
+* Fix C unchanged — testchat P2 backlog.
+* The three cuts remain design-approved, not implemented: Cut 1 and Cut 3
+  are TPM-prompt/spec-shape changes for the next spec cycle; Cut 2
+  composes with D-91's machinery.
+* Not yet synced to testchat — `update-template.sh` relay pending.
+
 ## Revised ordering (supersedes the Fix A-first note above)
 
 **Fix B before Fix A.** Fix A buys latency; Fix B closes a live silent
