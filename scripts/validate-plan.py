@@ -45,6 +45,7 @@ import ast
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -624,6 +625,172 @@ def literal_registers(method, path, reg_method, literal):
     return all(seg_matches(ts, ls) for ts, ls in zip(tail, l_segs))
 
 
+GREP_FAMILY = {"grep", "egrep", "rg", "ripgrep", "ack"}
+
+
+def _grep_pattern(cmd):
+    """If cmd is a single grep-family invocation, return (pattern, mode) where
+    mode is 'fixed' for -F/fgrep and 'regex' otherwise. Return (None, None) for
+    anything else — compound commands (|, ;, &&), non-grep tools, or grep
+    invocations we cannot confidently parse (a shell substitution as the
+    pattern, `-e` with no argument). Silent no-signal by design: this check
+    only speaks about patterns it can read.
+    """
+    try:
+        toks = shlex.split(cmd, posix=True)
+    except ValueError:
+        return None, None
+    if not toks:
+        return None, None
+    # Bail on anything that isn't a single simple command. shlex.split does not
+    # split on shell operators; a literal `|`/`;`/`&&`/`||` token means the
+    # command has more than one clause and we can't reason about the pattern.
+    if any(t in ("|", ";", "&&", "||", "&") for t in toks):
+        return None, None
+    i = 0
+    # `git grep …` — accept the same flag surface.
+    if toks[0] == "git" and len(toks) > 1 and toks[1] == "grep":
+        i = 2
+        head = "grep"
+    elif toks[0] == "fgrep":
+        return None, "fixed"  # legacy alias; treat as fixed-string, no signal
+    elif toks[0] in GREP_FAMILY:
+        head = toks[0]
+        i = 1
+    else:
+        return None, None
+    mode = "regex"
+    if head == "grep":
+        mode = "basic"
+    # Walk flags. `-e PATTERN` explicitly names the pattern; otherwise the
+    # first non-flag argument is the pattern.
+    while i < len(toks):
+        t = toks[i]
+        if t == "--":
+            i += 1
+            if i < len(toks):
+                return toks[i], mode
+            return None, None
+        if t in ("-e", "--regexp"):
+            if i + 1 < len(toks):
+                return toks[i + 1], mode
+            return None, None
+        if t.startswith("--"):
+            # Long options with =value are self-contained; without =, we don't
+            # know if the next token is a value or the pattern. Conservative:
+            # if it's a known value-taking option, skip its argument.
+            if "=" not in t and t in ("--file", "--regexp", "--include",
+                                       "--exclude", "--exclude-dir"):
+                i += 2
+                continue
+            i += 1
+            continue
+        if t.startswith("-") and len(t) > 1:
+            if "F" in t[1:]:
+                mode = "fixed"
+            if "E" in t[1:] or "P" in t[1:]:
+                mode = "regex"
+            i += 1
+            continue
+        return t, mode
+    return None, None
+
+
+_BRIGHT_QUOTES = ('"', "'")
+
+
+def _quote_brittle(pattern):
+    """Return the literal quote character in `pattern` that makes it
+    quote-brittle, or None if the pattern is safe.
+
+    Safe forms:
+      - no literal quote characters at all
+      - every literal quote appears inside a bracket expression `[...]` that
+        contains BOTH `'` and `"` (so either quote in source matches)
+
+    Brittle forms (any is enough to flag):
+      - a literal quote outside any bracket expression
+      - a bracket expression containing only one quote type
+    """
+    i, n = 0, len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == "\\" and i + 1 < n:
+            # backslash-escape: the escaped char is literal, so a `\"` counts
+            # as a literal quote just as a bare `"` would.
+            nxt = pattern[i + 1]
+            if nxt in _BRIGHT_QUOTES:
+                return nxt
+            i += 2
+            continue
+        if c == "[":
+            j = i + 1
+            if j < n and pattern[j] == "^":
+                j += 1
+            # A `]` as the first character of a bracket expression is literal.
+            if j < n and pattern[j] == "]":
+                j += 1
+            has_dq = has_sq = False
+            end = None
+            while j < n:
+                if pattern[j] == "\\" and j + 1 < n:
+                    if pattern[j + 1] == '"':
+                        has_dq = True
+                    elif pattern[j + 1] == "'":
+                        has_sq = True
+                    j += 2
+                    continue
+                if pattern[j] == "]":
+                    end = j
+                    break
+                if pattern[j] == '"':
+                    has_dq = True
+                elif pattern[j] == "'":
+                    has_sq = True
+                j += 1
+            if end is None:
+                # Unterminated bracket: treat the rest as ordinary chars and
+                # let any bare quote fail via the outer branch.
+                i += 1
+                continue
+            if (has_dq or has_sq) and not (has_dq and has_sq):
+                return '"' if has_dq else "'"
+            i = end + 1
+            continue
+        if c in _BRIGHT_QUOTES:
+            return c
+        i += 1
+    return None
+
+
+def _quote_agnostic_rewrite(pattern):
+    """Rewrite `pattern` so every literal `'`/`"` becomes a `['\"]` char class.
+    Purely advisory — printed in the failure to save the TPM a moment of
+    guessing at the fix. Preserves backslash escaping so the caller can drop
+    the string straight into their command."""
+    out = []
+    i, n = 0, len(pattern)
+    while i < n:
+        c = pattern[i]
+        if c == "\\" and i + 1 < n:
+            nxt = pattern[i + 1]
+            if nxt in _BRIGHT_QUOTES:
+                out.append("['\\\"]")
+                i += 2
+                continue
+            out.append(c)
+            out.append(nxt)
+            i += 2
+            continue
+        if c in _BRIGHT_QUOTES:
+            out.append("['\\\"]")
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def spec_preflight(old_path, new_path):
     """D-78: freeze-time satisfiability. The plan gate's exact plan↔inventory
     bijection means a task may only target contracts.files members — so a
@@ -827,6 +994,54 @@ def spec_preflight(old_path, new_path):
                     f"or fold this content into a file already in scope."
                 )
             # else: no host references this asset type — no signal, fail open.
+
+    # D-88: quote-brittle smoke_checks. A spec-authored grep pattern that
+    # names a literal `"` or `'` in the matched source rejects a
+    # semantically-equivalent implementation using the other quote character —
+    # the failure mode is a spec oracle failing a correct file, which the
+    # ladder cannot recover from below the TPM (testchat M31 v61:
+    # `grep -q '[data-active="true"]' …` failed a CSS that wrote
+    # `[data-active='true']`; 4 coder strikes + 2 EM diagnosis calls + an
+    # escalation halt, all against a file that satisfied the spec).
+    # Only checked for smoke_checks that are new or changed vs `old` — a
+    # carried-forward entry has already earned its way through a freeze.
+    old_sc = old.get("smoke_checks", {}) if isinstance(
+        old.get("smoke_checks"), dict) else {}
+    for sc_file, sc_cmd in sorted(new.get("smoke_checks", {}).items()):
+        if not isinstance(sc_cmd, str):
+            continue
+        if old_sc.get(sc_file) == sc_cmd:
+            continue  # unchanged
+        pattern, mode = _grep_pattern(sc_cmd)
+        if pattern is None:
+            continue  # not a grep-family invocation we can reason about
+        if mode == "fixed":
+            # -F/fgrep: char classes don't apply. Any literal quote is
+            # brittle by construction; the fix is to switch to -E.
+            if any(q in pattern for q in _BRIGHT_QUOTES):
+                checked += 1
+                errs.append(
+                    f"smoke_checks['{sc_file}'] uses fixed-string matching "
+                    f"(-F) on a pattern containing a literal quote, which "
+                    f"rejects a semantically-equivalent implementation using "
+                    f"the other quote character (the M31 v61 class). Switch "
+                    f"to `grep -qE` and use a `['\\\"]` character class."
+                )
+            continue
+        checked += 1
+        offender = _quote_brittle(pattern)
+        if offender is not None:
+            rewrite = _quote_agnostic_rewrite(pattern)
+            errs.append(
+                f"smoke_checks['{sc_file}'] pattern contains a literal "
+                f"{offender!r} that would reject an implementation using the "
+                f"other quote character (the M31 v61 class: "
+                f"`[data-active=\"true\"]` vs `[data-active='true']` is "
+                f"semantically identical in HTML/CSS but byte-different, and "
+                f"grep sees only bytes). Rewrite the quote(s) as a `['\\\"]` "
+                f"character class, e.g. `{rewrite}`. If -E is not already set, "
+                f"add it (`grep -qE`)."
+            )
 
     if errs:
         for e in errs:

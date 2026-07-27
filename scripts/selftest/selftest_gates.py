@@ -1579,6 +1579,142 @@ def test_preflight_new_python_file_is_not_an_asset(tmp_path):
     assert r.returncode == 0, (r.stdout, r.stderr)
 
 
+# --- preflight: quote-brittle smoke_checks (D-88) ----------------------------
+# testchat M31 v61: the frozen contract carried
+#   grep -q '[data-active="true"]' src/static/current-chat.css
+# The coder wrote `[data-active='true']` — byte-different, semantically
+# identical CSS. The spec oracle failed a correct file; the ladder cannot
+# recover from a spec defect below the TPM rung. Cost: 4 coder strikes + 2 EM
+# diagnosis calls + an escalation halt. Provable at freeze time: only the
+# robustness class of the pattern is checkable, and that is exactly what
+# failed.
+
+BRITTLE_CONTRACT = {
+    "erd_version": 2,
+    "files": ["src/static/current-chat.css"],
+    "entry_points": [],
+    "smoke_checks": {
+        "src/static/current-chat.css":
+            "grep -q '\\[data-active=\"true\"\\]' src/static/current-chat.css"
+    },
+}
+SAFE_CONTRACT = {
+    "erd_version": 2,
+    "files": ["src/static/current-chat.css"],
+    "entry_points": [],
+    "smoke_checks": {
+        "src/static/current-chat.css":
+            "grep -qE \"\\[data-active=['\\\"]true['\\\"]\\]\""
+            " src/static/current-chat.css"
+    },
+}
+
+
+def test_preflight_v61_double_quote_in_grep_pattern_fails(tmp_path):
+    """The exact v61 shape: a literal `\"` inside a grep pattern rejects a
+    single-quoted implementation. The failure must name the entry AND print
+    a quote-agnostic rewrite — the rewrite IS the fix."""
+    r = run_preflight(tmp_path, {}, BRITTLE_CONTRACT)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "src/static/current-chat.css" in r.stderr, r.stderr
+    assert "M31 v61" in r.stderr, r.stderr
+    # The rewrite guidance carries the char class that would have worked.
+    assert "['\\\"]" in r.stderr, r.stderr
+
+
+def test_preflight_v61_fix_char_class_passes(tmp_path):
+    """The corrected form: `['\"]` covers either quote character. Same delta
+    that failed above must pass once rewritten."""
+    r = run_preflight(tmp_path, {}, SAFE_CONTRACT)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_brittle_single_quote_pattern_fails(tmp_path):
+    """Symmetric direction: literal `'` in the pattern is equally brittle."""
+    contract = {
+        "erd_version": 2, "files": ["src/x.py"], "entry_points": [],
+        "smoke_checks": {"src/x.py": "grep -q \"attr='val'\" src/x.py"},
+    }
+    r = run_preflight(tmp_path, {}, contract)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+
+
+def test_preflight_single_quote_only_bracket_class_fails(tmp_path):
+    """A bracket expression with only ONE quote type is still brittle — the
+    fix requires BOTH quotes so the alternative implementation matches."""
+    contract = {
+        "erd_version": 2, "files": ["src/x.py"], "entry_points": [],
+        "smoke_checks": {"src/x.py": "grep -qE \"attr=[']val[']\" src/x.py"},
+    }
+    r = run_preflight(tmp_path, {}, contract)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+
+
+def test_preflight_no_quotes_in_pattern_passes(tmp_path):
+    """A pattern that names no quote at all is not this class of defect."""
+    contract = {
+        "erd_version": 2, "files": ["src/x.py"], "entry_points": [],
+        "smoke_checks": {"src/x.py": "grep -q handler src/x.py"},
+    }
+    r = run_preflight(tmp_path, {}, contract)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_fixed_string_grep_with_quote_fails(tmp_path):
+    """`grep -F` cannot express a character class; a literal quote in a
+    fixed-string pattern is brittle by construction. The fix is to switch
+    to `-E`, which the failure names."""
+    contract = {
+        "erd_version": 2, "files": ["src/x.py"], "entry_points": [],
+        "smoke_checks": {
+            "src/x.py": "grep -qF 'attr=\"true\"' src/x.py"},
+    }
+    r = run_preflight(tmp_path, {}, contract)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "grep -qE" in r.stderr, r.stderr
+
+
+def test_preflight_carried_forward_brittle_pattern_passes(tmp_path):
+    """A pre-existing brittle smoke_check unchanged in the delta must NOT
+    fail the freeze — the class is grandfathered, same convention as
+    entry_points/routes only checking new/changed."""
+    old = {
+        "erd_version": 1,
+        "files": ["src/static/current-chat.css"],
+        "entry_points": [],
+        "smoke_checks": BRITTLE_CONTRACT["smoke_checks"],
+    }
+    new = {**BRITTLE_CONTRACT, "erd_version": 2}
+    r = run_preflight(tmp_path, old, new)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_non_grep_smoke_check_passes(tmp_path):
+    """A smoke_check that isn't a grep-family invocation carries no signal
+    for this gate — fail open (no false positives on `python3 -c ...`,
+    `test -f …`, compound pipelines)."""
+    contract = {
+        "erd_version": 2, "files": ["src/x.py"], "entry_points": [],
+        "smoke_checks": {
+            "src/x.py": "python3 -c 'import src.x; assert src.x.OK == \"yes\"'"},
+    }
+    r = run_preflight(tmp_path, {}, contract)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_compound_command_bails(tmp_path):
+    """A compound command (`grep … && grep …`) has more than one pattern and
+    reasoning about it correctly is out of scope — bail rather than
+    false-positive on a legitimate multi-step check."""
+    contract = {
+        "erd_version": 2, "files": ["src/x.py"], "entry_points": [],
+        "smoke_checks": {
+            "src/x.py": "grep -q handler src/x.py && grep -q result src/x.py"},
+    }
+    r = run_preflight(tmp_path, {}, contract)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
 # --- refreeze.sh wires the preflight before approval (D-78) ------------------
 
 def refreeze_scripts(repo):
