@@ -643,18 +643,72 @@ PYEOF
 # --- Plan phase: EM emits/revises, validator gates, bounded retries ----------
 plan_revisions_used() { read_state plan_revisions | grep . || echo 0; }
 
+# Subtree re-plan (proportionality Fix A): on a re-freeze, the EM re-plans
+# ONLY what the delta invalidated. The prior VALIDATED plan is carried
+# forward verbatim by the shell; the EM emits tasks only for the affected
+# files (plus genuinely new inventory files); the merge is mechanical
+# (validate-plan.py --merge-subtree, id discipline rejected-not-repaired);
+# and the EXISTING full validate() runs unchanged on the merged artifact —
+# the D-64 bijection is a property of the validated artifact, not of who
+# authored which part. Plan cost follows delta size instead of inventory
+# size (testchat M31: 282s = 68% of the run re-emitting a 19,572-char plan
+# for a 3-task delta), and a subtree revision fits the mtplx 32k window
+# that a full-plan revision overflows. Greenfield, malformed prior plans,
+# inventory removals, missing intermediate deltas, and mappings that cannot
+# land on subtree tasks all fall back to full emission — the scope
+# computation refuses them, loudly (Rule 4).
+plan_subtree_prepare() {
+  SUBTREE_MODE=0
+  SUBTREE_ATTEMPTS=0
+  local prior_v v deltas=()
+  [ -f tasks/plan.json ] || return 0
+  prior_v=$(python3 -c 'import json;v=json.load(open("tasks/plan.json")).get("erd_version");print(v if isinstance(v,int) else "")' 2>/dev/null) || return 0
+  { [ -n "$prior_v" ] && [ "$prior_v" -ge 1 ] && [ "$prior_v" -lt "$FROZEN_V" ]; } || return 0
+  for v in $(seq $((prior_v + 1)) "$FROZEN_V"); do
+    if [ ! -f "$APPROVED/DELTA-v$v.json" ]; then
+      echo "subtree re-plan unavailable: $APPROVED/DELTA-v$v.json missing — full emission"
+      return 0
+    fi
+    deltas+=("$APPROVED/DELTA-v$v.json")
+  done
+  cp tasks/plan.json "$STATE_DIR/plan-prior.json"
+  if ! python3 scripts/validate-plan.py --subtree-scope "$STATE_DIR/plan-prior.json" "${deltas[@]}" \
+       > "$STATE_DIR/subtree-scope.json" 2> "$STATE_DIR/subtree-scope.err"; then
+    echo "subtree re-plan unavailable ($(tr '\n' ' ' < "$STATE_DIR/subtree-scope.err")) — full emission"
+    rm -f "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" "$STATE_DIR/subtree-scope.err"
+    return 0
+  fi
+  rm -f "$STATE_DIR/subtree-scope.err" tasks/plan-subtree.json
+  python3 -c "import json;print(json.dumps(json.load(open('$STATE_DIR/subtree-scope.json'))['carried'], indent=1))" \
+    > "$STATE_DIR/carried-summary.json"
+  SUBTREE_MODE=1
+  echo "subtree re-plan armed: spec v$prior_v -> v$FROZEN_V ($(python3 -c "
+import json
+s = json.load(open('$STATE_DIR/subtree-scope.json'))
+print(f\"{len(s['reemit'])} re-plan + {len(s['new_files'])} new file(s), {len(s['map_nodeids'])} node-id(s) to map, {len(s['carried'])} carried\")"))"
+}
+
 ensure_plan() {
-  local verrs revs
+  local verrs revs subtree_feedback=""
+  plan_subtree_prepare
   while :; do
     if [ -f tasks/plan.json ] && verrs=$(python3 scripts/validate-plan.py 2>&1); then
       echo "plan ok (v$(python3 -c 'import json;print(json.load(open("tasks/plan.json"))["version"])'))"
       if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
         printf 'plan_gate=ok\n' >> "$LAST_ARCHIVE_ENTRY/meta.txt"
       fi
+      rm -f "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" \
+        "$STATE_DIR/carried-summary.json" tasks/plan-subtree.json
       git add tasks/plan.json && git commit -m "[plan] validated against spec v$FROZEN_V" 2>/dev/null || true
       return 0
     fi
     verrs=$(python3 scripts/validate-plan.py 2>&1 || true)
+    if [ -n "$subtree_feedback" ]; then
+      # a rejected merge is the actionable feedback; the on-disk plan is
+      # still the stale prior, whose errors would only mislead the EM
+      verrs="$subtree_feedback"
+      subtree_feedback=""
+    fi
     if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
       printf 'plan_gate=rejected\nplan_gate_errors=%s\n' \
         "$(printf '%s' "$verrs" | tr '\n' ' ')" >> "$LAST_ARCHIVE_ENTRY/meta.txt"
@@ -695,12 +749,49 @@ $audit" "-"
   may refresh the budget: rm .pipeline-state/plan_revisions*   — otherwise the
   fix belongs in a re-freeze, which refreshes it automatically."
     }
+    if [ "${SUBTREE_MODE:-0}" = "1" ] && [ "${SUBTREE_ATTEMPTS:-0}" -ge 2 ]; then
+      SUBTREE_MODE=0
+      echo "subtree re-plan abandoned after $SUBTREE_ATTEMPTS attempts — full plan emission (the delta may need mapping beyond the affected subtree)"
+    fi
+    if [ "${SUBTREE_MODE:-0}" = "1" ] && \
+       [ "$(python3 -c "import json;print(int(json.load(open('$STATE_DIR/subtree-scope.json'))['em_needed']))")" = "0" ]; then
+      # docs-only / test-retirement delta: nothing to decompose, so nothing
+      # for the EM to decide — merge the carried plan mechanically, consume
+      # no plan-revision budget, and let the full gate judge the artifact.
+      echo "=== delta needs no re-decomposition — carried plan merged mechanically (no EM call) ==="
+      SUBTREE_MODE=0   # one shot; if the merged plan fails the gate, full emission takes over
+      python3 scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" - "$STATE_DIR/subtree-scope.json" \
+        || echo "mechanical merge failed — falling back to full emission"
+      continue
+    fi
     check_budget "plan revision $((revs + 1))"
     write_state plan_revisions $((revs + 1))
-    echo "=== EM: emit/revise plan (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
-    em_call tasks/plan.json scripts/schemas/plan.schema.json \
-      "Decompose the frozen ERD into atomic ONE-FILE tasks and reply with ONLY the plan as JSON matching the schema you were given — no prose, no markdown fence. Requirements: exactly one task per file in contracts.json's files array; every test node-id in test-nodeids that exercises a file in contracts.json's files array mapped to exactly one task (the task after which it should pass, given its depends_on) — node-ids testing only carried-forward files are handled by the shell: do NOT map them and do NOT emit a 'regression' key (the validator rejects it); when unsure, omit the node-id — the validator names any you must map; every task's contracts list uses ids that exist in contracts.json; every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance) — the coder sees only the brief. Do NOT include a smoke_check field — smoke checks are TPM-authored and live in contracts.json. Set erd_version to $FROZEN_V. Set the top-level version key to an integer >= 1 (1 for a fresh plan; bump it on every re-emit). NO status fields.${verrs:+ The previous plan failed validation with these errors — fix all of them: $verrs}" \
-      "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
+    if [ "${SUBTREE_MODE:-0}" = "1" ]; then
+      SUBTREE_ATTEMPTS=$((${SUBTREE_ATTEMPTS:-0} + 1))
+      local scope_files map_ids
+      scope_files=$(python3 -c "
+import json
+s = json.load(open('$STATE_DIR/subtree-scope.json'))
+parts = [f\"{r['file']} (keep id {r['keep_id']})\" for r in s['reemit']]
+parts += [f'{f} (new file)' for f in s['new_files']]
+print('; '.join(parts))")
+      map_ids=$(python3 -c "import json;print(', '.join(json.load(open('$STATE_DIR/subtree-scope.json'))['map_nodeids']) or '(none)')")
+      echo "=== EM: re-plan delta subtree (revision $((revs + 1))/$MAX_PLAN_REVISIONS, subtree attempt $SUBTREE_ATTEMPTS) ==="
+      em_call tasks/plan-subtree.json scripts/schemas/plan.schema.json \
+        "Delta re-plan. The validated plan for the previous spec version is carried forward by the shell; its tasks are immutable and keep their ids (see the carried-plan context: id, file, depends_on only — briefs omitted deliberately). The spec has advanced; you re-plan ONLY the delta. Reply with ONLY a plan JSON matching the schema whose tasks array contains EXACTLY one task per file in this list and NO others: $scope_files. A task for a re-planned file MUST reuse the stated keep id; tasks for new files use fresh T-ids not present in the carried plan. depends_on may reference carried task ids. Map ONLY node-ids from this list, each to exactly one of your tasks: $map_ids. If a listed node-id is not exercised by any file you are planning, OMIT it — the shell routes carried coverage itself; do NOT emit a 'regression' key (the validator rejects it), NO status fields. Every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance; constraints first) — the coder sees only the brief. Do NOT include a smoke_check field. Set erd_version to $FROZEN_V and version to any integer >= 1 — the shell renumbers the merged plan.${verrs:+ The previous attempt failed validation with these errors — fix all of them: $verrs}" \
+        "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json" "carried-plan:$STATE_DIR/carried-summary.json" "subtree-being-revised:tasks/plan-subtree.json"
+      if ! subtree_feedback=$(python3 scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
+        echo "$subtree_feedback"
+        continue
+      fi
+      echo "$subtree_feedback"
+      subtree_feedback=""
+    else
+      echo "=== EM: emit/revise plan (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
+      em_call tasks/plan.json scripts/schemas/plan.schema.json \
+        "Decompose the frozen ERD into atomic ONE-FILE tasks and reply with ONLY the plan as JSON matching the schema you were given — no prose, no markdown fence. Requirements: exactly one task per file in contracts.json's files array; every test node-id in test-nodeids that exercises a file in contracts.json's files array mapped to exactly one task (the task after which it should pass, given its depends_on) — node-ids testing only carried-forward files are handled by the shell: do NOT map them and do NOT emit a 'regression' key (the validator rejects it); when unsure, omit the node-id — the validator names any you must map; every task's contracts list uses ids that exist in contracts.json; every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance) — the coder sees only the brief. Do NOT include a smoke_check field — smoke checks are TPM-authored and live in contracts.json. Set erd_version to $FROZEN_V. Set the top-level version key to an integer >= 1 (1 for a fresh plan; bump it on every re-emit). NO status fields.${verrs:+ The previous plan failed validation with these errors — fix all of them: $verrs}" \
+        "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
+    fi
   done
 }
 

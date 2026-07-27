@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# drive-plan.sh — D-79 selftest harness for orchestrate.sh's ensure_plan.
+# drive-plan.sh — selftest harness for orchestrate.sh's ensure_plan
+# (D-79 spec-defect rung + the Fix A subtree re-plan path).
 #
 # Exercises the REAL functions (extracted from orchestrate.sh at run time,
 # never copied — a copy would silently drift) against a scripted fake EM,
@@ -86,6 +87,7 @@ eval "$(extract build_context)"
 eval "$(extract em_call)"
 eval "$(extract check_budget)"
 eval "$(extract plan_revisions_used)"
+eval "$(extract plan_subtree_prepare)"
 eval "$(extract ensure_plan)"
 eval "$(extract package_escalation)"
 eval "$(extract finalize_batch)"

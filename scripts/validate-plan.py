@@ -48,6 +48,27 @@ Modes:
                                             brief-size overflow is heuristic; the
                                             plan gate is the hard backstop. Exit 0
                                             regardless. Run by refreeze.sh.
+  validate-plan.py --subtree-scope PRIOR DELTA [DELTA...]
+                                            print the delta re-plan scope (JSON)
+                                            for a re-freeze: which prior tasks the
+                                            delta(s) invalidate, which inventory
+                                            files are new, which node-ids the EM
+                                            must map. Loads PRIOR leniently (it
+                                            validated against the PREVIOUS spec,
+                                            not this one). Exits 1 with the reason
+                                            whenever a subtree re-plan cannot
+                                            soundly express the delta — the
+                                            orchestrator then falls back to full
+                                            emission.
+  validate-plan.py --merge-subtree PRIOR SUBTREE SCOPE
+                                            merge the EM's subtree reply over the
+                                            carried-forward PRIOR plan and write
+                                            tasks/plan.json ('-' as SUBTREE = the
+                                            delta needed no EM tasks). The merged
+                                            artifact then faces the FULL validate()
+                                            gate unchanged — the D-64 bijection is
+                                            a property of the validated artifact,
+                                            not of who authored which part.
 """
 import ast
 import hashlib
@@ -1167,16 +1188,17 @@ def spec_preflight(old_path, new_path):
           f"implementable by the inventory")
 
 
-def cmd_affected(delta_path):
-    plan, _ = validate()
-    delta = load_json(Path(delta_path), "delta")
+def _hit_task_ids(tasks, delta):
+    """Task ids a delta invalidates: direct hits (a mapped test changed, a
+    referenced contract changed, or the task's file is in the declared
+    changed_files) plus transitive dependents."""
     changed_tests = set(delta.get("changed_tests", []))
     changed_contracts = set(delta.get("changed_contract_ids", []))
     changed_files = set(delta.get("changed_files", []))
-    tasks = {t["id"]: t for t in plan["tasks"]}
+    by_id = {t["id"]: t for t in tasks}
     hit = {
         tid
-        for tid, t in tasks.items()
+        for tid, t in by_id.items()
         if set(t["tests"]) & changed_tests
         or set(t["contracts"]) & changed_contracts
         or t["file"] in changed_files
@@ -1185,12 +1207,189 @@ def cmd_affected(delta_path):
     grew = True
     while grew:
         grew = False
-        for tid, t in tasks.items():
+        for tid, t in by_id.items():
             if tid not in hit and set(t["depends_on"]) & hit:
                 hit.add(tid)
                 grew = True
-    for tid in sorted(hit):
+    return hit
+
+
+def cmd_affected(delta_path):
+    plan, _ = validate()
+    delta = load_json(Path(delta_path), "delta")
+    for tid in sorted(_hit_task_ids(plan["tasks"], delta)):
         print(tid)
+
+
+def _load_plan_lenient(path, what="prior plan"):
+    """Structural load of a plan that validated against a PREVIOUS spec —
+    the full validate() would rightly reject it as stale, but the subtree
+    machinery only needs its task graph to be well-formed."""
+    plan = load_json(Path(path), what)
+    if not isinstance(plan, dict) or not isinstance(plan.get("tasks"), list) \
+            or not plan["tasks"]:
+        fail([f"{what}: not a plan-shaped object (non-empty tasks array required)"])
+    errs = []
+    for i, t in enumerate(plan["tasks"]):
+        if not isinstance(t, dict) or TASK_REQUIRED - set(t):
+            errs.append(f"{what}: tasks[{i}] is not a complete task object")
+            continue
+        if not isinstance(t["id"], str) or not isinstance(t["file"], str):
+            errs.append(f"{what}: tasks[{i}]: id and file must be strings")
+        for key in ("depends_on", "contracts", "tests"):
+            if not isinstance(t[key], list) \
+                    or not all(isinstance(x, str) for x in t[key]):
+                errs.append(f"{what}: task {t.get('id')}: {key} must be an "
+                            f"array of strings")
+    if errs:
+        fail(errs)
+    return plan
+
+
+def cmd_subtree_scope(prior_path, delta_paths):
+    """What must a delta re-plan cover? Computed against the prior plan and
+    the CURRENT frozen spec. Prints a scope JSON for the orchestrator.
+    Refuses (exit 1, reason on stderr) whenever a subtree re-plan cannot
+    soundly express the delta; the caller falls back to full emission."""
+    prior = _load_plan_lenient(prior_path)
+    contracts = load_json(CONTRACTS, "frozen contracts")
+    if not NODEIDS.exists():
+        fail(["frozen test-nodeids missing — run scripts/refreeze.sh first"])
+    current_ids = {l.strip() for l in NODEIDS.read_text().splitlines() if l.strip()}
+    inventory = list(contracts.get("files", []))
+    tasks = prior["tasks"]
+    prior_files = {t["file"] for t in tasks}
+    removed = sorted(prior_files - set(inventory))
+    if removed:
+        fail([f"subtree scope refused: file(s) left the inventory: {removed} "
+              f"— carried briefs and dependencies may assume them; re-plan "
+              f"in full"])
+    deltas = [load_json(Path(p), f"delta {p}") for p in delta_paths]
+    hit = set()
+    changed_tests = set()
+    for d in deltas:
+        hit |= _hit_task_ids(tasks, d)
+        changed_tests |= set(d.get("changed_tests", []))
+    reemit = [{"file": t["file"], "keep_id": t["id"]}
+              for t in tasks if t["id"] in hit]
+    new_files = sorted(set(inventory) - prior_files)
+    # Node-ids the EM must (re)map: the deltas' still-current changed tests,
+    # plus everything previously mapped to a task being re-emitted. Any
+    # changed id that was previously mapped belongs to a hit task by
+    # construction (the mapping intersection is what made the task hit), so
+    # nothing here is still mapped on a carried task — no overmap possible.
+    map_ids = sorted(
+        (changed_tests & current_ids)
+        | {n for t in tasks if t["id"] in hit for n in t["tests"]
+           if n in current_ids}
+    )
+    if map_ids and not (reemit or new_files):
+        fail(["subtree scope refused: the delta changes mapped/new tests but "
+              "re-plans no file — the mappings would have to land on carried "
+              "tasks, which a subtree reply cannot express; re-plan in full"])
+    carried = [{"id": t["id"], "file": t["file"], "depends_on": t["depends_on"]}
+               for t in tasks if t["id"] not in hit]
+    print(json.dumps({
+        "prior_version": prior.get("version", 1),
+        "reemit": reemit,
+        "new_files": new_files,
+        "map_nodeids": map_ids,
+        "carried": carried,
+        "em_needed": bool(reemit or new_files),
+    }, indent=2))
+
+
+def cmd_merge_subtree(prior_path, subtree_path, scope_path):
+    """Merge the EM's subtree reply over the carried-forward prior plan and
+    write tasks/plan.json. '-' as SUBTREE means the delta needed no EM
+    tasks (docs-only / test-removal-only re-freeze): carried tasks merge
+    mechanically with zero EM involvement.
+
+    Id discipline is REJECTED, never repaired: a task for a re-planned file
+    must carry that file's prior id (carried depends_on references stay
+    valid by construction), and a new-file task id must collide with
+    nothing. Silent renumbering would make depends_on references ambiguous
+    — a wrong id is validator feedback for the EM's revision, not something
+    to guess around. The merged artifact then faces the FULL validate()
+    gate, unchanged."""
+    prior = _load_plan_lenient(prior_path)
+    scope = load_json(Path(scope_path), "subtree scope")
+    if not VERSION.exists():
+        fail(["frozen VERSION missing — run scripts/refreeze.sh first"])
+    frozen_v = int(VERSION.read_text().strip())
+    current_ids = set()
+    if NODEIDS.exists():
+        current_ids = {l.strip() for l in NODEIDS.read_text().splitlines()
+                       if l.strip()}
+    keep_id = {r["file"]: r["keep_id"] for r in scope.get("reemit", [])}
+    allowed = set(keep_id) | set(scope.get("new_files", []))
+    hit_ids = set(keep_id.values())
+    carried = [t for t in prior["tasks"] if t["id"] not in hit_ids]
+    carried_ids = {t["id"] for t in carried}
+
+    sub_tasks = []
+    if subtree_path == "-":
+        if allowed:
+            fail([f"empty subtree ('-') but the scope requires tasks for: "
+                  f"{sorted(allowed)}"])
+    else:
+        sub = load_json(Path(subtree_path), "subtree reply")
+        if not isinstance(sub, dict) or not isinstance(sub.get("tasks"), list):
+            fail(["subtree reply: a tasks array is required"])
+        sub_tasks = sub["tasks"]
+        errs = []
+        for i, t in enumerate(sub_tasks):
+            if not isinstance(t, dict) or TASK_REQUIRED - set(t):
+                errs.append(f"subtree reply: tasks[{i}] is not a complete "
+                            f"task object")
+        if errs:
+            fail(errs)
+        sub_files = [t["file"] for t in sub_tasks]
+        dupes = sorted({f for f in sub_files if sub_files.count(f) > 1})
+        if dupes:
+            fail([f"subtree reply plans the same file twice: {dupes}"])
+        over = sorted(set(sub_files) - allowed)
+        if over:
+            fail([f"subtree reply plans file(s) outside the delta scope: "
+                  f"{over} — emit tasks ONLY for: {sorted(allowed)}"])
+        missing = sorted(allowed - set(sub_files))
+        if missing:
+            fail([f"subtree reply is missing task(s) for: {missing}"])
+        errs = []
+        used = set(carried_ids)
+        for t in sub_tasks:
+            if t["file"] in keep_id:
+                if t["id"] != keep_id[t["file"]]:
+                    errs.append(
+                        f"subtree reply: the task for {t['file']} must keep "
+                        f"the carried plan's id {keep_id[t['file']]}, got "
+                        f"{t['id']} — carried tasks reference that id")
+            elif t["id"] in used:
+                errs.append(
+                    f"subtree reply: new-file task id {t['id']} collides "
+                    f"with a carried task id — use a fresh T-id")
+            used.add(t["id"])
+        if errs:
+            fail(errs)
+
+    all_ids = carried_ids | {t["id"] for t in sub_tasks}
+    for t in carried:
+        # Stale mappings cannot survive on carried tasks by construction
+        # (a removed id was mapped -> its task was hit -> re-emitted), but
+        # the delta files are computed by refreeze.sh — filter defensively
+        # rather than trust a second tool's invariant.
+        t["tests"] = [n for n in t["tests"] if n in current_ids]
+        t["depends_on"] = [d for d in t["depends_on"] if d in all_ids]
+    merged = {
+        "version": int(prior.get("version", 1)) + 1,
+        "erd_version": frozen_v,
+        "tasks": carried + sub_tasks,
+    }
+    PLAN.parent.mkdir(parents=True, exist_ok=True)
+    PLAN.write_text(json.dumps(merged, indent=2) + "\n")
+    print(f"merged: {len(carried)} carried + {len(sub_tasks)} subtree "
+          f"task(s) -> {PLAN} (erd_version {frozen_v}, "
+          f"version {merged['version']})")
 
 
 def cmd_diagnosis(path):
@@ -1255,6 +1454,12 @@ def main(argv):
         return
     if argv[0] == "--affected" and len(argv) == 2:
         cmd_affected(argv[1])
+        return
+    if argv[0] == "--subtree-scope" and len(argv) >= 3:
+        cmd_subtree_scope(argv[1], argv[2:])
+        return
+    if argv[0] == "--merge-subtree" and len(argv) == 4:
+        cmd_merge_subtree(argv[1], argv[2], argv[3])
         return
     if argv[0] == "--diagnosis" and len(argv) == 2:
         cmd_diagnosis(argv[1])

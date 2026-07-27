@@ -2504,3 +2504,316 @@ def test_refreeze_redcheck_falls_back_to_host(freezable_repo):
     assert "INCONCLUSIVE" not in r.stdout, r.stdout
     assert "ALREADY PASS" in r.stdout, r.stdout
     assert "test_param" in r.stdout, r.stdout
+
+
+# --- subtree re-plan: --subtree-scope / --merge-subtree (Fix A) --------------
+# On a re-freeze the EM used to re-emit the ENTIRE plan — O(inventory) cost
+# for an O(delta) change (testchat M31: 282s = 68% of the run, re-emitting
+# 19,572 chars for a 3-task delta). Fix A: the shell computes the delta's
+# scope against the prior validated plan, the EM emits only that subtree,
+# the shell merges, and the full validate() gate judges the merged artifact
+# unchanged — the D-64 bijection is a property of the artifact, not of who
+# authored which part. Id discipline is rejected, never repaired: silent
+# renumbering would make depends_on references ambiguous.
+
+SUB_CONTRACTS = {
+    "files": ["src/a.py", "src/b.py", "src/c.py"],   # c is NEW at v2
+    "entry_points": [],
+    "routes": [],
+    "erd_version": 2,
+}
+SUB_NODEIDS = [
+    "tests/test_a.py::test_one",
+    "tests/test_b.py::test_two",
+    "tests/test_b.py::test_three",                    # new at v2
+    "tests/test_c.py::test_four",                     # new at v2
+]
+SUB_PRIOR = {
+    "version": 3,
+    "erd_version": 1,
+    "tasks": [
+        {"id": "T1", "file": "src/a.py", "depends_on": [],
+         "brief": "build a", "contracts": [],
+         "tests": ["tests/test_a.py::test_one"]},
+        {"id": "T2", "file": "src/b.py", "depends_on": ["T1"],
+         "brief": "build b", "contracts": [],
+         "tests": ["tests/test_b.py::test_two"]},
+    ],
+}
+SUB_DELTA = {
+    "changed_contract_ids": [],
+    "changed_tests": ["tests/test_b.py::test_two",
+                      "tests/test_b.py::test_three",
+                      "tests/test_c.py::test_four"],
+    "changed_files": ["src/b.py"],
+}
+SUB_GOOD_REPLY = {
+    "version": 1,
+    "erd_version": 2,
+    "tasks": [
+        {"id": "T2", "file": "src/b.py", "depends_on": ["T1"],
+         "brief": "rebuild b", "contracts": [],
+         "tests": ["tests/test_b.py::test_two",
+                   "tests/test_b.py::test_three"]},
+        {"id": "T3", "file": "src/c.py", "depends_on": ["T2"],
+         "brief": "build c", "contracts": [],
+         "tests": ["tests/test_c.py::test_four"]},
+    ],
+}
+
+
+@pytest.fixture()
+def subtree_repo(tmp_path):
+    """Spec frozen at v2 with a still-on-disk plan validated against v1 —
+    the exact state ensure_plan sees right after a re-freeze."""
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    (approved / "contracts.json").write_text(json.dumps(SUB_CONTRACTS))
+    (approved / "test-nodeids").write_text("\n".join(SUB_NODEIDS) + "\n")
+    (approved / "VERSION").write_text("2\n")
+    (approved / "DELTA-v2.json").write_text(json.dumps(SUB_DELTA))
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / ".pipeline-state").mkdir()
+    (tmp_path / ".pipeline-state" / "plan-prior.json").write_text(
+        json.dumps(SUB_PRIOR))
+    return tmp_path
+
+
+def run_scope(repo, *deltas):
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--subtree-scope",
+         ".pipeline-state/plan-prior.json", *deltas],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def _scoped(repo, *deltas):
+    """Run --subtree-scope and stage its output where the merge reads it,
+    exactly as orchestrate.sh does."""
+    r = run_scope(repo, *(deltas or ("scripts/.approved/DELTA-v2.json",)))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    (repo / ".pipeline-state" / "subtree-scope.json").write_text(r.stdout)
+    return json.loads(r.stdout)
+
+
+def run_merge(repo, subtree):
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--merge-subtree",
+         ".pipeline-state/plan-prior.json", subtree,
+         ".pipeline-state/subtree-scope.json"],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_subtree_scope_computes_delta(subtree_repo):
+    """Direct hit via changed_files, a new inventory file, and the map list
+    = still-current changed tests ∪ everything the re-emitted task had."""
+    s = _scoped(subtree_repo)
+    assert s["reemit"] == [{"file": "src/b.py", "keep_id": "T2"}]
+    assert s["new_files"] == ["src/c.py"]
+    assert set(s["map_nodeids"]) == {
+        "tests/test_b.py::test_two", "tests/test_b.py::test_three",
+        "tests/test_c.py::test_four"}
+    assert s["carried"] == [{"id": "T1", "file": "src/a.py", "depends_on": []}]
+    assert s["em_needed"] is True
+
+
+def test_subtree_scope_transitive_dependents(subtree_repo):
+    """A delta hitting T1 drags its dependent T2 into the re-emit set —
+    same closure rule cmd_affected applies to task-state resets."""
+    (subtree_repo / "d.json").write_text(json.dumps(
+        {"changed_contract_ids": [], "changed_tests": [],
+         "changed_files": ["src/a.py"]}))
+    s = json.loads(run_scope(subtree_repo, "d.json").stdout)
+    assert {e["keep_id"] for e in s["reemit"]} == {"T1", "T2"}
+    assert s["carried"] == []
+
+
+def test_subtree_scope_refuses_inventory_removal(subtree_repo):
+    """A file leaving the inventory can invalidate carried briefs and
+    dependencies in ways no subtree can express — full emission."""
+    c = dict(SUB_CONTRACTS, files=["src/b.py", "src/c.py"])
+    (subtree_repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(c))
+    r = run_scope(subtree_repo, "scripts/.approved/DELTA-v2.json")
+    assert r.returncode == 1
+    assert "left the inventory" in r.stderr, r.stderr
+
+
+def test_subtree_scope_refuses_unhomeable_mappings(subtree_repo):
+    """A changed current test with NO file re-planned would need its
+    mapping to land on a carried task — a subtree reply cannot express
+    that; refuse so the caller re-plans in full."""
+    c = dict(SUB_CONTRACTS, files=["src/a.py", "src/b.py"])
+    (subtree_repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(c))
+    (subtree_repo / "d.json").write_text(json.dumps(
+        {"changed_contract_ids": [],
+         "changed_tests": ["tests/test_b.py::test_three"],
+         "changed_files": []}))
+    r = run_scope(subtree_repo, "d.json")
+    assert r.returncode == 1
+    assert "re-plans no file" in r.stderr, r.stderr
+
+
+def test_subtree_scope_docs_only_em_not_needed(subtree_repo):
+    """A delta that invalidates nothing (docs-only re-freeze) yields an
+    empty scope with em_needed=False — the D-86 empty-delta class gets a
+    zero-EM-call path instead of a full re-emission."""
+    c = dict(SUB_CONTRACTS, files=["src/a.py", "src/b.py"])
+    (subtree_repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(c))
+    (subtree_repo / "d.json").write_text(json.dumps(
+        {"changed_contract_ids": [], "changed_tests": [],
+         "changed_files": []}))
+    s = json.loads(run_scope(subtree_repo, "d.json").stdout)
+    assert s["reemit"] == [] and s["new_files"] == []
+    assert s["map_nodeids"] == []
+    assert s["em_needed"] is False
+
+
+def test_merge_subtree_produces_fully_valid_plan(subtree_repo):
+    """THE Fix A property: carried tasks verbatim + EM subtree, and the
+    merged artifact passes the FULL validate() gate unchanged — bijection,
+    mapping, DAG — proving the gate never weakened."""
+    _scoped(subtree_repo)
+    (subtree_repo / "tasks" / "plan-subtree.json").write_text(
+        json.dumps(SUB_GOOD_REPLY))
+    r = run_merge(subtree_repo, "tasks/plan-subtree.json")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "1 carried + 2 subtree" in r.stdout, r.stdout
+    v = subprocess.run([sys.executable, str(VALIDATE_PLAN)],
+                       cwd=subtree_repo, capture_output=True, text=True)
+    assert v.returncode == 0, (v.stdout, v.stderr)
+    merged = json.loads((subtree_repo / "tasks" / "plan.json").read_text())
+    assert merged["erd_version"] == 2
+    assert merged["version"] == 4                     # prior 3, shell-bumped
+    by_id = {t["id"]: t for t in merged["tasks"]}
+    assert by_id["T1"]["brief"] == "build a"          # carried byte-identical
+    assert by_id["T2"]["brief"] == "rebuild b"
+    assert set(by_id) == {"T1", "T2", "T3"}
+
+
+def test_merge_rejects_wrong_keep_id(subtree_repo):
+    """A re-planned file under a different id would dangle every carried
+    depends_on reference — rejected with the id named, never renumbered."""
+    _scoped(subtree_repo)
+    bad = json.loads(json.dumps(SUB_GOOD_REPLY))
+    bad["tasks"][0]["id"] = "T9"
+    (subtree_repo / "tasks" / "plan-subtree.json").write_text(json.dumps(bad))
+    r = run_merge(subtree_repo, "tasks/plan-subtree.json")
+    assert r.returncode == 1
+    assert "must keep the carried plan's id T2" in r.stderr, r.stderr
+
+
+def test_merge_rejects_new_file_id_collision(subtree_repo):
+    """A new-file task reusing a carried id would make its references
+    ambiguous (carried T1 or this task?) — rejected, never repaired."""
+    _scoped(subtree_repo)
+    bad = json.loads(json.dumps(SUB_GOOD_REPLY))
+    bad["tasks"][1]["id"] = "T1"
+    bad["tasks"][1]["depends_on"] = ["T2"]
+    (subtree_repo / "tasks" / "plan-subtree.json").write_text(json.dumps(bad))
+    r = run_merge(subtree_repo, "tasks/plan-subtree.json")
+    assert r.returncode == 1
+    assert "collides with a carried task id" in r.stderr, r.stderr
+
+
+def test_merge_rejects_overreach_and_omission(subtree_repo):
+    """The subtree must cover the scope exactly: a task outside it is
+    overreach (the D-65 no-edit philosophy applied to planning), a scope
+    file without a task is an incomplete reply. Both are named."""
+    _scoped(subtree_repo)
+    over = json.loads(json.dumps(SUB_GOOD_REPLY))
+    over["tasks"].append({"id": "T4", "file": "src/z.py", "depends_on": [],
+                          "brief": "sneak", "contracts": [], "tests": []})
+    (subtree_repo / "tasks" / "plan-subtree.json").write_text(json.dumps(over))
+    r = run_merge(subtree_repo, "tasks/plan-subtree.json")
+    assert r.returncode == 1
+    assert "outside the delta scope" in r.stderr and "src/z.py" in r.stderr
+
+    short = json.loads(json.dumps(SUB_GOOD_REPLY))
+    del short["tasks"][1]                             # no task for new src/c.py
+    (subtree_repo / "tasks" / "plan-subtree.json").write_text(json.dumps(short))
+    r = run_merge(subtree_repo, "tasks/plan-subtree.json")
+    assert r.returncode == 1
+    assert "missing task(s)" in r.stderr and "src/c.py" in r.stderr
+
+
+def test_merge_empty_subtree_docs_only(subtree_repo):
+    """'-' merge: carried tasks only, versions stamped, defensively
+    stripped stale mappings — and the result passes the full gate."""
+    c = dict(SUB_CONTRACTS, files=["src/a.py", "src/b.py"])
+    (subtree_repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(c))
+    prior = json.loads(json.dumps(SUB_PRIOR))
+    prior["tasks"][0]["tests"].append("tests/test_gone.py::test_gone")
+    (subtree_repo / ".pipeline-state" / "plan-prior.json").write_text(
+        json.dumps(prior))
+    (subtree_repo / "d.json").write_text(json.dumps(
+        {"changed_contract_ids": [], "changed_tests": [],
+         "changed_files": []}))
+    _scoped(subtree_repo, "d.json")
+    r = run_merge(subtree_repo, "-")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "2 carried + 0 subtree" in r.stdout, r.stdout
+    merged = json.loads((subtree_repo / "tasks" / "plan.json").read_text())
+    assert merged["erd_version"] == 2 and merged["version"] == 4
+    by_id = {t["id"]: t for t in merged["tasks"]}
+    assert by_id["T1"]["tests"] == ["tests/test_a.py::test_one"]  # stale gone
+    v = subprocess.run([sys.executable, str(VALIDATE_PLAN)],
+                       cwd=subtree_repo, capture_output=True, text=True)
+    assert v.returncode == 0, (v.stdout, v.stderr)
+
+
+# --- ensure_plan drives the subtree path end-to-end (bash, drive-plan.sh) ----
+
+def test_plan_subtree_replan_one_em_call(tmp_path):
+    """Fix A through the REAL ensure_plan: a re-freeze with a valid prior
+    plan takes ONE subtree EM call whose prompt is the delta instruction
+    (carried briefs deliberately absent), the merge lands, the full gate
+    passes, carried briefs survive byte-identical, temps are cleaned."""
+    work = plan_workdir(tmp_path, dict(SUB_CONTRACTS),
+                        [json.dumps(SUB_GOOD_REPLY)])
+    (work / "scripts" / ".approved" / "test-nodeids").write_text(
+        "\n".join(SUB_NODEIDS) + "\n")
+    (work / "scripts" / ".approved" / "DELTA-v2.json").write_text(
+        json.dumps(SUB_DELTA))
+    (work / "tasks").mkdir()
+    (work / "tasks" / "plan.json").write_text(json.dumps(SUB_PRIOR))
+    r = run_drive_plan(work)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "subtree re-plan armed" in r.stdout, r.stdout
+    assert (work / ".calls").read_text().strip() == "1", r.stdout
+    prompt = (work / "prompts" / "1").read_text()
+    assert "Delta re-plan" in prompt
+    assert "src/b.py (keep id T2)" in prompt
+    assert "src/c.py (new file)" in prompt
+    assert "build a" not in prompt        # carried briefs stay out of the call
+    merged = json.loads((work / "tasks" / "plan.json").read_text())
+    assert merged["erd_version"] == 2 and merged["version"] == 4
+    by_id = {t["id"]: t for t in merged["tasks"]}
+    assert by_id["T1"]["brief"] == "build a"
+    assert by_id["T2"]["brief"] == "rebuild b"
+    assert not (work / ".pipeline-state" / "plan-prior.json").exists()
+    assert not (work / "tasks" / "plan-subtree.json").exists()
+
+
+def test_plan_docs_only_delta_zero_em_calls(tmp_path):
+    """A delta invalidating nothing merges the carried plan mechanically:
+    ZERO EM calls, no plan-revision budget consumed, gate green."""
+    contracts = dict(SUB_CONTRACTS, files=["src/a.py", "src/b.py"])
+    work = plan_workdir(tmp_path, contracts, ["SHOULD-NEVER-BE-CALLED"])
+    (work / "scripts" / ".approved" / "DELTA-v2.json").write_text(json.dumps(
+        {"changed_contract_ids": [], "changed_tests": [],
+         "changed_files": []}))
+    (work / "tasks").mkdir()
+    (work / "tasks" / "plan.json").write_text(json.dumps(SUB_PRIOR))
+    r = run_drive_plan(work)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "no EM call" in r.stdout, r.stdout
+    assert not (work / ".calls").exists(), r.stdout
+    merged = json.loads((work / "tasks" / "plan.json").read_text())
+    assert merged["erd_version"] == 2 and merged["version"] == 4
+    # budget untouched: the mechanical path never writes the counter
+    assert not (work / ".pipeline-state" / "plan_revisions").exists()
