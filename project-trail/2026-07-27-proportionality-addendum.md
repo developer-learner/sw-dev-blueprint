@@ -157,7 +157,7 @@ must be pinned under one manifest. No new machinery.
 
 ## Landed (same day)
 
-Both fixes implemented in the reviewed order, selftests 145 → 157 green:
+Fixes and cuts implemented in the reviewed order, selftests 145 → 167 green:
 
 * **Fix B** → `228cc26` (D-90): collection + D-75 red-check host
   fallbacks, junitxml on the host path, TESTING.md full-suite-at-freeze
@@ -168,11 +168,27 @@ Both fixes implemented in the reviewed order, selftests 145 → 157 green:
   modes, `plan_subtree_prepare` + subtree branch in `ensure_plan`, em.md
   delta-re-plan clause, 12 selftests incl. two end-to-end `ensure_plan`
   drives (one-call subtree re-plan; zero-call docs-only merge).
+* **Cut 1** → `70f0c0c` (D-92): the delta-only-brief rule lands identically
+  in em.md and both EM prompt strings (full + subtree). Bare wording — no
+  "change nothing else" compensation, because Rule 8 forbids that framing.
+* **Cut 2** → `fa01ad6` (D-93): `--subtree-scope` gained `trivial_construct`;
+  `--construct-one-file` builds the subtree mechanically from the prior
+  task; ensure_plan takes zero EM calls when 1 re-emit + 0 new files + 0
+  contract changes; falls through to EM subtree on rejection. Refactored
+  the mechanical builder out of a shell heredoc into validate-plan.py to
+  keep drive-plan.sh's sed extractor happy. 7 new selftests.
+* **Cut 3** → `d033991` (D-94): optional `ERD-DELTA.md` accepted alongside
+  `ERD.md` — whitelist, CHANGED_DOCS, diff-show, manifest pin, EM context
+  (backward-compat via `build_context` skip-missing), D-89 union so
+  moving prose can't silence the mass advisory. TPM-ROLE.md documents the
+  adoption threshold (~20KB, wherever the y/N diff stops being
+  reviewable). 3 selftests: accept+pin, whitelist rejects strays,
+  backward-compat when no delta doc staged.
 * Fix C unchanged — testchat P2 backlog.
-* The three cuts remain design-approved, not implemented: Cut 1 and Cut 3
-  are TPM-prompt/spec-shape changes for the next spec cycle; Cut 2
-  composes with D-91's machinery.
-* Not yet synced to testchat — `update-template.sh` relay pending.
+* Template sync: D-88..D-91 relayed into testchat by a parallel CEO
+  session earlier (testchat `4990cf7 [template-update 2e6dece]`); Cut
+  1/2/3 (blueprint HEAD after this session) awaits the next
+  `update-template.sh` run — mechanism unchanged.
 
 ## Revised ordering (supersedes the Fix A-first note above)
 
