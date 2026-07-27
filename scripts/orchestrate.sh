@@ -764,6 +764,33 @@ $audit" "-"
         || echo "mechanical merge failed — falling back to full emission"
       continue
     fi
+    # --- Cut 2: trivial one-file re-plan — construct mechanically, no EM ---
+    # Fires when the delta re-plans exactly one existing file with no contract
+    # changes across the delta range (--subtree-scope's trivial_construct).
+    # The carried task's brief and contracts still describe what the file
+    # does; the coder receives the file's current content anyway (D-59); the
+    # only thing that shifts is which node-ids gate acceptance. If the new
+    # tests demand behavior the carried brief doesn't cover, mapped tests go
+    # red and the escalation ladder (D-70) summons the EM at its consult
+    # rung — where its judgment is real, unlike the happy-path emission this
+    # replaces. Consumes no plan-revision budget; on merge failure, falls
+    # through to the EM subtree branch below (SUBTREE_MODE stays 1).
+    if [ "${SUBTREE_MODE:-0}" = "1" ] && \
+       [ "$(python3 -c "import json;print(int(json.load(open('$STATE_DIR/subtree-scope.json'))['trivial_construct']))")" = "1" ]; then
+      echo "=== delta is one-file re-plan, no contract changes — subtree constructed mechanically (no EM call) ==="
+      if python3 scripts/validate-plan.py --construct-one-file "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" > tasks/plan-subtree.json 2> "$LOG_DIR/construct-one-file.err" \
+         && merge_out=$(python3 scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
+        echo "$merge_out"
+        SUBTREE_MODE=0                  # merged plan will validate on next loop iter
+        continue
+      else
+        echo "mechanical construction rejected — falling through to EM subtree emission"
+        [ -s "$LOG_DIR/construct-one-file.err" ] && sed 's/^/  /' "$LOG_DIR/construct-one-file.err"
+        [ -n "${merge_out:-}" ] && printf '%s\n' "$merge_out" | sed 's/^/  /'
+        rm -f tasks/plan-subtree.json "$LOG_DIR/construct-one-file.err"
+        # Fall through with SUBTREE_MODE=1 so the EM branch below fires.
+      fi
+    fi
     check_budget "plan revision $((revs + 1))"
     write_state plan_revisions $((revs + 1))
     if [ "${SUBTREE_MODE:-0}" = "1" ]; then

@@ -2817,3 +2817,165 @@ def test_plan_docs_only_delta_zero_em_calls(tmp_path):
     assert merged["erd_version"] == 2 and merged["version"] == 4
     # budget untouched: the mechanical path never writes the counter
     assert not (work / ".pipeline-state" / "plan_revisions").exists()
+
+
+# --- Cut 2: trivial one-file re-plan constructed mechanically (no EM) --------
+# When the delta re-plans exactly ONE existing file with no contract changes
+# and no new inventory files, no judgment survives for the EM to add: the
+# carried task's brief and contracts still describe what the file does, the
+# D-59 coder receives the file's current content anyway, and only the mapped
+# node-ids change. --subtree-scope's trivial_construct flag drives this;
+# --construct-one-file is the mechanical builder; ensure_plan wires them so
+# a real trivial re-freeze consumes ZERO EM calls and no plan-revision
+# budget. If the constructed plan fails validation, the escalation ladder
+# (D-70) summons the EM at its consult rung — exactly where its judgment is
+# real, not on the happy path where it isn't.
+
+TRIVIAL_CONTRACTS = dict(SUB_CONTRACTS, files=["src/a.py", "src/b.py"])
+TRIVIAL_DELTA = {                                    # only tests change
+    "changed_contract_ids": [],
+    "changed_tests": ["tests/test_b.py::test_two",
+                      "tests/test_b.py::test_three"],
+    "changed_files": ["src/b.py"],
+}
+
+
+def _trivial_scope_repo(tmp_path):
+    """Same shape as subtree_repo but tuned to the trivial precondition:
+    no new inventory files, no contract changes across the delta range."""
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    (approved / "contracts.json").write_text(json.dumps(TRIVIAL_CONTRACTS))
+    (approved / "test-nodeids").write_text("\n".join(SUB_NODEIDS[:3]) + "\n")
+    (approved / "VERSION").write_text("2\n")
+    (approved / "DELTA-v2.json").write_text(json.dumps(TRIVIAL_DELTA))
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / ".pipeline-state").mkdir()
+    (tmp_path / ".pipeline-state" / "plan-prior.json").write_text(
+        json.dumps(SUB_PRIOR))
+    return tmp_path
+
+
+def test_subtree_scope_flags_trivial_construct(tmp_path):
+    """One re-emit, no new files, no contract changes across any delta —
+    trivial_construct fires."""
+    repo = _trivial_scope_repo(tmp_path)
+    s = json.loads(run_scope(repo, "scripts/.approved/DELTA-v2.json").stdout)
+    assert s["trivial_construct"] is True
+    assert s["reemit"] == [{"file": "src/b.py", "keep_id": "T2"}]
+    assert s["new_files"] == []
+    assert s["em_needed"] is True                    # still an EM path in principle
+
+
+def test_subtree_scope_trivial_off_when_contracts_change(tmp_path):
+    """Contract changes are the exact case a carried brief may not still
+    describe — trivial_construct must NOT fire even for a one-file re-plan.
+    Checked across MULTIPLE deltas (skip-behind restart)."""
+    repo = _trivial_scope_repo(tmp_path)
+    # A second delta in the range carrying a contract change — nothing to
+    # hit in the tasks (no ids overlap), so scope still has one reemit,
+    # but trivial_construct must recognize the contract shift.
+    (repo / "d2.json").write_text(json.dumps(
+        {"changed_contract_ids": ["route-nonexistent"],
+         "changed_tests": [], "changed_files": []}))
+    s = json.loads(run_scope(
+        repo, "scripts/.approved/DELTA-v2.json", "d2.json").stdout)
+    assert s["reemit"] == [{"file": "src/b.py", "keep_id": "T2"}]
+    assert s["trivial_construct"] is False
+
+
+def test_subtree_scope_trivial_off_with_new_files(subtree_repo):
+    """A new inventory file needs contract selection judgment (which
+    contract ids does it implement?) — the shell cannot make that call, so
+    trivial_construct stays False when new_files is non-empty."""
+    s = _scoped(subtree_repo)
+    assert s["new_files"] == ["src/c.py"]
+    assert s["trivial_construct"] is False
+
+
+def run_construct(repo):
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--construct-one-file",
+         ".pipeline-state/plan-prior.json",
+         ".pipeline-state/subtree-scope.json"],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_construct_one_file_carries_prior_brief_and_contracts(tmp_path):
+    """The mechanical builder reuses the prior task's brief, contracts,
+    and depends_on verbatim; only tests are refreshed. The output is
+    subtree-shaped so --merge-subtree consumes it exactly as an EM reply."""
+    repo = _trivial_scope_repo(tmp_path)
+    _scoped(repo, "scripts/.approved/DELTA-v2.json")
+    r = run_construct(repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    reply = json.loads(r.stdout)
+    assert len(reply["tasks"]) == 1
+    t = reply["tasks"][0]
+    assert t["id"] == "T2" and t["file"] == "src/b.py"
+    assert t["brief"] == "build b"                   # prior brief carried
+    assert t["depends_on"] == ["T1"]
+    assert set(t["tests"]) == {                      # scope's map_nodeids
+        "tests/test_b.py::test_two",
+        "tests/test_b.py::test_three"}
+
+
+def test_construct_one_file_refuses_non_trivial_scope(subtree_repo):
+    """A scope with a new file (or contract changes) is not trivial —
+    the mode refuses so callers cannot hand-fabricate over EM judgment."""
+    _scoped(subtree_repo)                            # SUB scope has new_files
+    r = run_construct(subtree_repo)
+    assert r.returncode == 1
+    assert "not trivial_construct" in r.stderr, r.stderr
+
+
+def test_construct_one_file_merges_to_valid_plan(tmp_path):
+    """End-to-end mechanical path: construct + merge = a plan that passes
+    the FULL validate() gate unchanged, same guarantee as the EM path."""
+    repo = _trivial_scope_repo(tmp_path)
+    _scoped(repo, "scripts/.approved/DELTA-v2.json")
+    r = run_construct(repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    (repo / "tasks" / "plan-subtree.json").write_text(r.stdout)
+    m = run_merge(repo, "tasks/plan-subtree.json")
+    assert m.returncode == 0, (m.stdout, m.stderr)
+    v = subprocess.run([sys.executable, str(VALIDATE_PLAN)],
+                       cwd=repo, capture_output=True, text=True)
+    assert v.returncode == 0, (v.stdout, v.stderr)
+    merged = json.loads((repo / "tasks" / "plan.json").read_text())
+    by_id = {t["id"]: t for t in merged["tasks"]}
+    assert by_id["T1"]["brief"] == "build a"         # carried byte-identical
+    assert by_id["T2"]["brief"] == "build b"         # prior brief reused
+    assert set(by_id["T2"]["tests"]) == {
+        "tests/test_b.py::test_two",
+        "tests/test_b.py::test_three"}
+
+
+def test_plan_trivial_one_file_zero_em_calls(tmp_path):
+    """Cut 2 through the REAL ensure_plan: a trivial one-file re-freeze
+    takes ZERO EM calls, no plan-revision budget spent, gate green,
+    carried and re-planned tasks both intact — the escalation ladder is
+    what catches the case where the carried brief no longer fits, not a
+    speculative EM re-emission."""
+    work = plan_workdir(tmp_path, dict(TRIVIAL_CONTRACTS),
+                        ["SHOULD-NEVER-BE-CALLED"])
+    (work / "scripts" / ".approved" / "test-nodeids").write_text(
+        "\n".join(SUB_NODEIDS[:3]) + "\n")
+    (work / "scripts" / ".approved" / "DELTA-v2.json").write_text(
+        json.dumps(TRIVIAL_DELTA))
+    (work / "tasks").mkdir()
+    (work / "tasks" / "plan.json").write_text(json.dumps(SUB_PRIOR))
+    r = run_drive_plan(work)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "constructed mechanically (no EM call)" in r.stdout, r.stdout
+    assert not (work / ".calls").exists(), r.stdout
+    assert not (work / ".pipeline-state" / "plan_revisions").exists()
+    merged = json.loads((work / "tasks" / "plan.json").read_text())
+    assert merged["erd_version"] == 2 and merged["version"] == 4
+    by_id = {t["id"]: t for t in merged["tasks"]}
+    assert by_id["T1"]["brief"] == "build a"
+    assert by_id["T2"]["brief"] == "build b"         # prior brief carried
+    assert set(by_id["T2"]["tests"]) == {
+        "tests/test_b.py::test_two",
+        "tests/test_b.py::test_three"}

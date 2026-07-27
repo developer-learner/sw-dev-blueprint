@@ -53,13 +53,18 @@ Modes:
                                             for a re-freeze: which prior tasks the
                                             delta(s) invalidate, which inventory
                                             files are new, which node-ids the EM
-                                            must map. Loads PRIOR leniently (it
-                                            validated against the PREVIOUS spec,
-                                            not this one). Exits 1 with the reason
-                                            whenever a subtree re-plan cannot
-                                            soundly express the delta — the
-                                            orchestrator then falls back to full
-                                            emission.
+                                            must map, and whether the scope is
+                                            trivially mechanically constructible
+                                            (Cut 2: exactly one re-emit, no new
+                                            files, no contract changes across any
+                                            delta — the shell can build the
+                                            subtree without an EM call). Loads
+                                            PRIOR leniently (it validated against
+                                            the PREVIOUS spec, not this one).
+                                            Exits 1 with the reason whenever a
+                                            subtree re-plan cannot soundly express
+                                            the delta — the orchestrator then
+                                            falls back to full emission.
   validate-plan.py --merge-subtree PRIOR SUBTREE SCOPE
                                             merge the EM's subtree reply over the
                                             carried-forward PRIOR plan and write
@@ -69,6 +74,17 @@ Modes:
                                             gate unchanged — the D-64 bijection is
                                             a property of the validated artifact,
                                             not of who authored which part.
+  validate-plan.py --construct-one-file PRIOR SCOPE
+                                            Cut 2: print the mechanically-
+                                            constructed subtree JSON for a
+                                            trivial_construct scope — the prior
+                                            task's brief, contracts and
+                                            depends_on carried through, only
+                                            tests updated to scope.map_nodeids.
+                                            Refuses (exit 1) if the scope is not
+                                            trivial_construct. The output is fed
+                                            to --merge-subtree exactly as an EM
+                                            subtree reply would be.
 """
 import ast
 import hashlib
@@ -1267,9 +1283,12 @@ def cmd_subtree_scope(prior_path, delta_paths):
     deltas = [load_json(Path(p), f"delta {p}") for p in delta_paths]
     hit = set()
     changed_tests = set()
+    contract_changed = False
     for d in deltas:
         hit |= _hit_task_ids(tasks, d)
         changed_tests |= set(d.get("changed_tests", []))
+        if d.get("changed_contract_ids"):
+            contract_changed = True
     reemit = [{"file": t["file"], "keep_id": t["id"]}
               for t in tasks if t["id"] in hit]
     new_files = sorted(set(inventory) - prior_files)
@@ -1289,6 +1308,21 @@ def cmd_subtree_scope(prior_path, delta_paths):
               "tasks, which a subtree reply cannot express; re-plan in full"])
     carried = [{"id": t["id"], "file": t["file"], "depends_on": t["depends_on"]}
                for t in tasks if t["id"] not in hit]
+    # Cut 2: mechanical-construction eligibility. When the delta re-plans
+    # exactly ONE existing file with no contract changes across any delta in
+    # the range, no judgment survives for the EM to add — the file's carried
+    # brief and contracts still describe what it does, and the D-59 edit-mode
+    # coder receives its current content anyway. The shell can build the
+    # subtree from the prior task + the delta's new node-ids; if the new
+    # tests demand behavior the carried brief doesn't cover, mapped tests
+    # go red and the escalation ladder summons the EM at its consult rung
+    # (D-70) — exactly where its judgment is real. New files stay EM-only
+    # (contract selection is a semantic call the shell can't make).
+    trivial_construct = (
+        len(reemit) == 1
+        and not new_files
+        and not contract_changed
+    )
     print(json.dumps({
         "prior_version": prior.get("version", 1),
         "reemit": reemit,
@@ -1296,7 +1330,43 @@ def cmd_subtree_scope(prior_path, delta_paths):
         "map_nodeids": map_ids,
         "carried": carried,
         "em_needed": bool(reemit or new_files),
+        "trivial_construct": trivial_construct,
     }, indent=2))
+
+
+def cmd_construct_one_file(prior_path, scope_path):
+    """Cut 2 mechanical constructor. Reads the prior plan + subtree scope and
+    prints a subtree JSON with exactly one task — the prior task's brief,
+    contracts and depends_on carried through, tests updated to the delta's
+    scope.map_nodeids. Refuses non-trivial scopes so the eligibility check
+    lives with the scope logic (single source of truth)."""
+    scope = load_json(Path(scope_path), "subtree scope")
+    if not scope.get("trivial_construct"):
+        fail(["scope is not trivial_construct — mechanical construction "
+              "refused; the EM subtree emission path applies"])
+    if not VERSION.exists():
+        fail(["frozen VERSION missing — run scripts/refreeze.sh first"])
+    frozen_v = int(VERSION.read_text().strip())
+    prior = _load_plan_lenient(prior_path)
+    r = scope["reemit"][0]
+    prior_task = next((t for t in prior["tasks"] if t["id"] == r["keep_id"]),
+                      None)
+    if prior_task is None:
+        fail([f"scope.reemit references keep_id {r['keep_id']} which is not "
+              f"in the prior plan"])
+    task = {
+        "id": r["keep_id"],
+        "file": r["file"],
+        "depends_on": prior_task["depends_on"],
+        "brief": prior_task["brief"],
+        "contracts": prior_task["contracts"],
+        "tests": scope["map_nodeids"],
+    }
+    print(json.dumps({
+        "version": 1,               # --merge-subtree renumbers
+        "erd_version": frozen_v,    # --merge-subtree overwrites
+        "tasks": [task],
+    }))
 
 
 def cmd_merge_subtree(prior_path, subtree_path, scope_path):
@@ -1460,6 +1530,9 @@ def main(argv):
         return
     if argv[0] == "--merge-subtree" and len(argv) == 4:
         cmd_merge_subtree(argv[1], argv[2], argv[3])
+        return
+    if argv[0] == "--construct-one-file" and len(argv) == 3:
+        cmd_construct_one_file(argv[1], argv[2])
         return
     if argv[0] == "--diagnosis" and len(argv) == 2:
         cmd_diagnosis(argv[1])
