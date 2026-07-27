@@ -1516,6 +1516,69 @@ def test_preflight_absent_changed_files_is_not_an_error(tmp_path):
     assert r.returncode == 0, (r.stdout, r.stderr)
 
 
+# --- preflight: static-asset reachability (D-87) -----------------------------
+# testchat M31 v62: the spec added src/static/current-chat.css to the
+# inventory. The only <link> lives in index.html, which the delta could not
+# reach, and style.css was no_edit — so the coder would have written a correct
+# stylesheet nothing could ever load, the task would go green, and the ACs
+# would fail naming nothing. Routes and entry_points are proved reachable by
+# registration and import; an asset's only signal is a textual reference.
+
+def test_preflight_new_asset_with_no_editable_host_fails(tmp_path):
+    """The exact v62 shape. The failure must name the host file — it IS the
+    fix (put index.html in the inventory, or fold the content into scope)."""
+    r = run_preflight(
+        asset_repo(tmp_path), ASSET_OLD,
+        asset_contracts(["src/static/style.css", "src/static/current-chat.css"],
+                        no_edit=["src/static/style.css"]))
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "current-chat.css" in r.stderr, r.stderr
+    assert "src/static/index.html" in r.stderr, r.stderr
+
+
+def test_preflight_new_asset_with_editable_host_passes(tmp_path):
+    """Same delta with index.html pulled into the inventory: a task can add
+    the <link>, so the asset is reachable."""
+    r = run_preflight(
+        asset_repo(tmp_path), ASSET_OLD,
+        asset_contracts(["src/static/index.html", "src/static/style.css",
+                         "src/static/current-chat.css"],
+                        no_edit=["src/static/style.css"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_new_asset_already_referenced_passes(tmp_path):
+    """A host that already names the asset needs no edit at all."""
+    repo = asset_repo(tmp_path, index=INDEX_HTML.replace(
+        "</head>", '<link rel="stylesheet" href="/static/current-chat.css">\n</head>'))
+    r = run_preflight(
+        repo, ASSET_OLD,
+        asset_contracts(["src/static/style.css", "src/static/current-chat.css"],
+                        no_edit=["src/static/style.css"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_new_asset_no_host_fails_open(tmp_path):
+    """No file in the tree references assets of this type — the spec carries
+    no signal about where the reference belongs. Fail open, as D-78 does for
+    a brand-new route family."""
+    repo = asset_repo(tmp_path, index="<html><head></head><body></body></html>")
+    r = run_preflight(
+        repo, ASSET_OLD,
+        asset_contracts(["src/static/style.css", "src/static/current-chat.css"],
+                        no_edit=["src/static/style.css"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_new_python_file_is_not_an_asset(tmp_path):
+    """.py files are reached by import, which the entry_point check already
+    proves — the asset rule must not double-gate them."""
+    r = run_preflight(
+        asset_repo(tmp_path), ASSET_OLD,
+        asset_contracts(["src/static/index.html", "src/services/new.py"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
 # --- refreeze.sh wires the preflight before approval (D-78) ------------------
 
 def refreeze_scripts(repo):

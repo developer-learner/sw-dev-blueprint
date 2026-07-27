@@ -781,6 +781,53 @@ def spec_preflight(old_path, new_path):
             # else: new route family with editable .py present — the spec
             # names no natural implementing file; no signal, fail open.
 
+    # D-87: static-asset reachability. entry_points and routes are reached by
+    # import and registration, both proved above. A stylesheet/script/template
+    # is reached only by a textual reference from another file — and nothing
+    # checks it, so a new asset whose only possible host is uneditable gets
+    # written correctly and never loaded: the task goes green, the ACs fail,
+    # and no error names the cause (testchat M31 v62 — src/static/current-chat.css,
+    # linkable only from index.html, which was frozen out of the delta).
+    # Same shape as the route check: reference found → satisfiable; no
+    # reference and every same-suffix host uneditable → provably dead; no
+    # host at all → no signal, fail open.
+    old_files = set(old.get("files", []))
+    new_assets = [f for f in new.get("files", [])
+                  if isinstance(f, str) and f not in old_files
+                  and not f.endswith(".py") and not Path(f).is_file()]
+    if new_assets:
+        corpus = {}
+        root = Path(build_dir())
+        if root.is_dir():
+            for p in sorted(root.rglob("*")):
+                if not p.is_file():
+                    continue
+                try:
+                    corpus[str(p)] = p.read_text(errors="ignore")
+                except OSError:
+                    continue
+        for f in new_assets:
+            checked += 1
+            base = Path(f).name
+            suffix = Path(f).suffix
+            if any(base in text for p, text in corpus.items() if p != f):
+                continue  # something already references it
+            if not suffix:
+                continue  # no suffix, no sibling signal
+            pat = re.compile(r"[\w./-]+" + re.escape(suffix) + r"(?![\w])")
+            hosts = sorted({p for p, text in corpus.items()
+                            if p != f and pat.search(text)})
+            if hosts and not set(hosts) & editable:
+                errs.append(
+                    f"file '{f}' is new and referenced nowhere; the file(s) "
+                    f"that reference {suffix} assets ({', '.join(hosts)}) are "
+                    f"not editable contracts.files members — no task can wire "
+                    f"it in, so it would be written and never loaded (the "
+                    f"M31 class). Add the referencing file to contracts.files, "
+                    f"or fold this content into a file already in scope."
+                )
+            # else: no host references this asset type — no signal, fail open.
+
     if errs:
         for e in errs:
             print(f"SPEC PREFLIGHT FAIL (D-78): {e}", file=sys.stderr)
