@@ -18,8 +18,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install pytest
-        run: pip install pytest
+      - name: Install pytest + ruff
+        # ruff: the refreeze fixture selftests run the real apply path,
+        # whose D-67 staged-test lint gate fails closed without it.
+        run: pip install pytest ruff
       - name: Gate-script self-tests
         run: pytest scripts/selftest/selftest_gates.py -q
 
