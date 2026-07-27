@@ -2952,6 +2952,60 @@ def test_construct_one_file_merges_to_valid_plan(tmp_path):
         "tests/test_b.py::test_three"}
 
 
+# --- Cut 3: ERD-DELTA.md is an optional frozen artifact ----------------------
+# The standing ERD grew big enough that per-milestone freeze diffs were no
+# longer reviewable — testchat let five straight refreezes (v60-v64) through
+# a rubber-stamped y/N. Split: ERD.md carries the standing architecture,
+# ERD-DELTA.md carries the per-delta ACs/mapping/inventory changes; both
+# pinned in one freeze. Machinery is minimal (accept, whitelist, diff-show,
+# manifest-pin, D-89 union) and OPTIONAL — a child that keeps everything in
+# ERD.md works exactly as before, so these tests pin both branches.
+
+
+def test_refreeze_accepts_and_pins_erd_delta(freezable_repo):
+    """Stage an ERD-DELTA.md alongside the existing artifacts. The whole
+    apply path must complete and the manifest must pin the new file, so
+    any post-freeze mutation of ERD-DELTA.md would trip the same
+    tamper-detection gate that guards every other frozen artifact."""
+    (freezable_repo / "scripts" / ".approved" / "incoming"
+     / "ERD-DELTA.md").write_text(
+        "# Delta v2\n\n- AC-1: something new\n")
+    r = _run_refreeze_approve(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    approved = freezable_repo / "scripts" / ".approved"
+    assert (approved / "ERD-DELTA.md").read_text().startswith("# Delta v2"), \
+        "ERD-DELTA.md must install to scripts/.approved/"
+    manifest = (approved / "frozen-manifest").read_text()
+    assert "scripts/.approved/ERD-DELTA.md" in manifest, manifest
+
+
+def test_refreeze_rejects_unexpected_staging_path(freezable_repo):
+    """The whitelist keeps every other filename out — staging a stray
+    file must still fail-closed, not slip through because we widened the
+    whitelist for ERD-DELTA.md."""
+    (freezable_repo / "scripts" / ".approved" / "incoming"
+     / "ERD-OTHER.md").write_text("stray\n")
+    d = subprocess.run(
+        ["bash", "scripts/refreeze.sh", "--diff", "scripts/.approved/incoming"],
+        cwd=freezable_repo, capture_output=True, text=True,
+    )
+    assert d.returncode != 0, (d.stdout, d.stderr)
+    combined = d.stdout + d.stderr
+    assert "unexpected files" in combined and "ERD-OTHER.md" in combined
+
+
+def test_refreeze_without_erd_delta_still_works(freezable_repo):
+    """Backward-compat: children that never adopt the split freeze exactly
+    as before — no ERD-DELTA.md in staging, no ERD-DELTA.md in the
+    manifest, apply path unchanged."""
+    r = _run_refreeze_approve(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    approved = freezable_repo / "scripts" / ".approved"
+    assert not (approved / "ERD-DELTA.md").exists()
+    manifest = (approved / "frozen-manifest").read_text()
+    assert "ERD-DELTA.md" not in manifest, manifest
+
+
 def test_plan_trivial_one_file_zero_em_calls(tmp_path):
     """Cut 2 through the REAL ensure_plan: a trivial one-file re-freeze
     takes ZERO EM calls, no plan-revision budget spent, gate green,

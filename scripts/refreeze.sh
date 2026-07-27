@@ -31,7 +31,14 @@
 #                                           carrying the hash of the diff they read.
 # Default staging dir: scripts/.approved/incoming
 # Staging layout — ONLY the changed files, full new content, paths preserved:
-#   PRD.md  ERD.md  contracts.json          -> installed to scripts/.approved/
+#   PRD.md  ERD.md  ERD-DELTA.md  contracts.json
+#                                           -> installed to scripts/.approved/
+#                                              (ERD-DELTA.md is optional per
+#                                              Cut 3 — the per-milestone spec
+#                                              carrying ACs/mapping/inventory
+#                                              changes; ERD.md carries the
+#                                              standing architecture. Both
+#                                              are pinned in the same freeze.)
 #   tests/<file>.py ...                     -> installed to tests/
 #   REMOVED                                 -> repo paths to retire (one per
 #                                              line, tests/*.py only), deleted
@@ -61,15 +68,16 @@ mkdir -p "$APPROVED" tests
 
 # --- Validate staging contents: only known artifact paths ---
 BAD=$(cd "$IN" && find . -type f \
-  ! -path "./PRD.md" ! -path "./ERD.md" ! -path "./contracts.json" \
+  ! -path "./PRD.md" ! -path "./ERD.md" ! -path "./ERD-DELTA.md" \
+  ! -path "./contracts.json" \
   ! -path "./REMOVED" ! -path "./tests/*" ! -path "./captures/*" | sed 's|^\./||')
 if [ -n "$BAD" ]; then
-  die "staging contains unexpected files (only PRD.md, ERD.md, contracts.json, REMOVED, tests/*, captures/* are frozen artifacts):
+  die "staging contains unexpected files (only PRD.md, ERD.md, ERD-DELTA.md, contracts.json, REMOVED, tests/*, captures/* are frozen artifacts):
 $BAD"
 fi
 
 CHANGED_DOCS=""
-for f in PRD.md ERD.md contracts.json; do
+for f in PRD.md ERD.md ERD-DELTA.md contracts.json; do
   [ -f "$IN/$f" ] && CHANGED_DOCS="$CHANGED_DOCS $f"
 done
 CHANGED_TEST_FILES=$(cd "$IN" && find tests -type f 2>/dev/null | sed 's|^\./||' || true)
@@ -161,6 +169,11 @@ $BAD
 done
 
 # --- First freeze must be a complete spec ---
+# ERD-DELTA.md is deliberately NOT required at v1: a child project's initial
+# freeze is a whole-project spec, not a delta. The split becomes valuable
+# once a project accumulates enough standing content that per-milestone diffs
+# would otherwise be un-reviewable — an opportunistic upgrade at the next
+# spec cycle, not a machinery requirement.
 if [ "$V" -eq 0 ]; then
   for f in PRD.md ERD.md contracts.json; do
     [ -f "$IN/$f" ] || die "initial freeze (v1) requires $f in $IN"
@@ -273,11 +286,26 @@ fi
 # prose section is too big to transcribe into a passing brief. Advisory only;
 # the plan-gate cap is the hard backstop.
 ERD_MASS_ERD="$APPROVED/ERD.md"
+ERD_MASS_DELTA="$APPROVED/ERD-DELTA.md"
 ERD_MASS_CONTRACTS="$APPROVED/contracts.json"
 [ -f "$IN/ERD.md" ] && ERD_MASS_ERD="$IN/ERD.md"
+[ -f "$IN/ERD-DELTA.md" ] && ERD_MASS_DELTA="$IN/ERD-DELTA.md"
 [ -f "$IN/contracts.json" ] && ERD_MASS_CONTRACTS="$IN/contracts.json"
 if [ -f "$ERD_MASS_ERD" ] && [ -f "$ERD_MASS_CONTRACTS" ]; then
-  python3 scripts/validate-plan.py --erd-mass "$ERD_MASS_ERD" "$ERD_MASS_CONTRACTS" || true
+  # Cut 3: both ERD.md and ERD-DELTA.md reach the EM as combined context, so
+  # the D-89 per-file mass must scan the union — otherwise moving prose
+  # from one to the other silences the warning without lowering the actual
+  # brief-cap pressure the EM will face. Concat at the callsite so
+  # --erd-mass keeps its single-file interface.
+  ERD_MASS_TMP=".pipeline-state/refreeze-erd-mass.md"
+  mkdir -p .pipeline-state
+  if [ -f "$ERD_MASS_DELTA" ]; then
+    cat "$ERD_MASS_ERD" "$ERD_MASS_DELTA" > "$ERD_MASS_TMP"
+    python3 scripts/validate-plan.py --erd-mass "$ERD_MASS_TMP" "$ERD_MASS_CONTRACTS" || true
+    rm -f "$ERD_MASS_TMP"
+  else
+    python3 scripts/validate-plan.py --erd-mass "$ERD_MASS_ERD" "$ERD_MASS_CONTRACTS" || true
+  fi
 fi
 
 # --- Build the full diff (deterministic — its hash is the approval token) ---
@@ -673,7 +701,7 @@ fi
 
 # --- Re-freeze: hash-pin every frozen artifact, bump VERSION ---
 {
-  for f in PRD.md ERD.md contracts.json test-nodeids; do
+  for f in PRD.md ERD.md ERD-DELTA.md contracts.json test-nodeids; do
     [ -f "$APPROVED/$f" ] && sha256sum "$APPROVED/$f"
   done
   # Pin every file under tests/ (not only .py): non-.py fixtures a TPM

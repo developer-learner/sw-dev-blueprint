@@ -135,9 +135,33 @@ every test was green because no AC ever asked). The mechanical backstop
 (`check-swallowed-errors.py`) rejects silent swallows in code — this rule is
 the spec-side half: decide what the user sees, don't leave it to the coder.
 
+**The ERD may split into a standing doc and a per-delta doc (optional).**
+Once the standing content has grown enough that per-milestone freeze diffs
+would otherwise be un-reviewable — the failure mode that quietly turned the
+CEO's y/N approval into a rubber-stamp for five straight testchat refreezes
+(v60–v64) — split the ERD:
+
+- **`ERD.md`** (standing) — architecture, file inventory, conventions, suite
+  properties, standing risks. Changes rarely; a freeze that only bumps
+  `ERD-DELTA.md` leaves this file's hash and content untouched.
+- **`ERD-DELTA.md`** (per-delta) — this milestone's ACs, test-to-file
+  mapping notes, inventory diffs, and per-file behavioral detail. Replaced
+  each freeze; this is the doc the CEO actually reads at the approval gate.
+
+Both are staged in `scripts/.approved/incoming/`, pinned together in
+`scripts/.approved/frozen-manifest` under a single freeze, and both reach
+the EM as combined context — treat them as one logical ERD. The plan
+gate's `MAX_BRIEF_CHARS` and D-89's per-file mass advisory both scan the
+union, so moving prose from one doc to the other does not silence either
+signal (`refreeze.sh` concatenates before running D-89). The split is
+opportunistic — introduce it at the next spec cut when the current ERD
+crosses roughly the ~20 KB size where the freeze diff stops being
+reviewable at a glance; child projects that keep everything in `ERD.md`
+work exactly as before.
+
 Deliver all artifacts as complete files (never fragments) in the staging
-layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`, `contracts.json`,
-`tests/<file>.py`.
+layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`,
+`ERD-DELTA.md` (optional), `contracts.json`, `tests/<file>.py`.
 
 **Delivery format (mandatory):** wrap every artifact in sentinels, exactly —
 

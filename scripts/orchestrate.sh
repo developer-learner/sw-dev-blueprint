@@ -806,7 +806,7 @@ print('; '.join(parts))")
       echo "=== EM: re-plan delta subtree (revision $((revs + 1))/$MAX_PLAN_REVISIONS, subtree attempt $SUBTREE_ATTEMPTS) ==="
       em_call tasks/plan-subtree.json scripts/schemas/plan.schema.json \
         "Delta re-plan. The validated plan for the previous spec version is carried forward by the shell; its tasks are immutable and keep their ids (see the carried-plan context: id, file, depends_on only — briefs omitted deliberately). The spec has advanced; you re-plan ONLY the delta. Reply with ONLY a plan JSON matching the schema whose tasks array contains EXACTLY one task per file in this list and NO others: $scope_files. A task for a re-planned file MUST reuse the stated keep id; tasks for new files use fresh T-ids not present in the carried plan. depends_on may reference carried task ids. Map ONLY node-ids from this list, each to exactly one of your tasks: $map_ids. If a listed node-id is not exercised by any file you are planning, OMIT it — the shell routes carried coverage itself; do NOT emit a 'regression' key (the validator rejects it), NO status fields. Every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance; constraints first) — the coder sees only the brief. For a re-planned EXISTING file the brief describes ONLY the change from current behavior (the coder gets the file content and emits anchored edits per D-59 — carried behavior is structurally untouched, so do NOT restate what the file already does); for a NEW file the brief describes the whole file (target under 150 lines). Do NOT include a smoke_check field. Set erd_version to $FROZEN_V and version to any integer >= 1 — the shell renumbers the merged plan.${verrs:+ The previous attempt failed validation with these errors — fix all of them: $verrs}" \
-        "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json" "carried-plan:$STATE_DIR/carried-summary.json" "subtree-being-revised:tasks/plan-subtree.json"
+        "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "carried-plan:$STATE_DIR/carried-summary.json" "subtree-being-revised:tasks/plan-subtree.json"
       if ! subtree_feedback=$(python3 scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
         echo "$subtree_feedback"
         continue
@@ -817,7 +817,7 @@ print('; '.join(parts))")
       echo "=== EM: emit/revise plan (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
       em_call tasks/plan.json scripts/schemas/plan.schema.json \
         "Decompose the frozen ERD into atomic ONE-FILE tasks and reply with ONLY the plan as JSON matching the schema you were given — no prose, no markdown fence. Requirements: exactly one task per file in contracts.json's files array; every test node-id in test-nodeids that exercises a file in contracts.json's files array mapped to exactly one task (the task after which it should pass, given its depends_on) — node-ids testing only carried-forward files are handled by the shell: do NOT map them and do NOT emit a 'regression' key (the validator rejects it); when unsure, omit the node-id — the validator names any you must map; every task's contracts list uses ids that exist in contracts.json; every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance) — the coder sees only the brief. For an EXISTING file (D-59 edit mode: the coder gets the file content and emits anchored SEARCH/REPLACE blocks; carried behavior is structurally untouched) the brief describes ONLY the change from current behavior — do NOT restate what the file already does; for a NEW file the brief describes the whole file (target under 150 lines). Do NOT include a smoke_check field — smoke checks are TPM-authored and live in contracts.json. Set erd_version to $FROZEN_V. Set the top-level version key to an integer >= 1 (1 for a fresh plan; bump it on every re-emit). NO status fields.${verrs:+ The previous plan failed validation with these errors — fix all of them: $verrs}" \
-        "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
+        "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
     fi
   done
 }
@@ -834,7 +834,7 @@ print('; '.join(parts))")
 consult_em() {
   local id="$1" evidence="$2"
   rm -f tasks/diagnosis.json
-  local ctx=("plan:tasks/plan.json" "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json")
+  local ctx=("plan:tasks/plan.json" "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json")
   local f
   for f in $(printf '%s' "$evidence" | grep -oE 'tests/[A-Za-z0-9_/]+\.py' | sort -u || true); do
     ctx+=("failing-test:$f")
@@ -1236,7 +1236,7 @@ sys.stdout.write(d['revised_brief'])" > "$BRIEF_DIR/$id"
         echo "=== EM: revise decomposition (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
         em_call tasks/plan.json scripts/schemas/plan.schema.json \
           "The decomposition is wrong around task $id: $(python3 -c "import json;print(json.load(open('$DIAG_FILE'))['reason'])"). Rewrite the plan fixing it and reply with ONLY the JSON (same requirements as before: one file per task, every inventory-exercising test node-id mapped exactly once, no 'regression' key, erd_version $FROZEN_V, bump plan version, NO status fields). Keep entries for unrelated tasks byte-identical — completed work is preserved only where entries are unchanged." \
-          "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
+          "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
         ensure_plan
         set_counter "$id" strikes 0
         rm -f "$TASK_STATE/$id.lastfail"
@@ -1351,7 +1351,7 @@ if [ "$DIAG_VERDICT" = "decomposition_wrong" ] && [ "$(plan_revisions_used)" -lt
   write_state plan_revisions $(( $(plan_revisions_used) + 1 ))
   em_call tasks/plan.json scripts/schemas/plan.schema.json \
     "Spec drift: $(python3 -c "import json;print(json.load(open('$DIAG_FILE'))['reason'])"). Rewrite the plan to fix the decomposition and reply with ONLY the JSON (same requirements as before; keep unrelated entries byte-identical)." \
-    "ERD:$APPROVED/ERD.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
+    "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
   ensure_plan
   echo "plan revised for drift — re-run scripts/orchestrate.sh to resume"
   exit 1
