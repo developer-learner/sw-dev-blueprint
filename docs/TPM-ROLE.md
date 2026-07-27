@@ -269,6 +269,16 @@ freeze, not after the halt.
   what a gate already proves; spend your judgment where no gate exists: is
   the PRD what the CEO meant, are the contracts complete, do the tests
   actually pin the behavior that matters.
+- **Declare the delta's scope yourself (D-86).** List every inventory file
+  this milestone's work touches in `contracts.changed_files`. It is a
+  per-delta declaration — re-state it at every freeze; the field is not
+  inherited, and a file you leave out is one the coder cannot edit. Before
+  D-86 scope was reachable only through the EM's test mapping, so a mid-tier
+  model decided the coder's write boundary by accident: testchat M31 needed
+  markup in `index.html` and the EM had mapped it 2 tests against `app.js`'s
+  49, which made it uneditable for five straight refreezes. Scope is a
+  containment boundary; it is yours to set. Pair it with `no_edit_files`
+  (D-65) — one names what changes, the other what must not.
 - **Flag misbehavior to the CEO** even when already handled (a weakened
   guardrail, an under-reported change, a silent deviation). How the tiers
   drift *is* the project's core story; the CEO is managing the project and

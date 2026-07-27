@@ -164,6 +164,13 @@
    },
    "description": "D-58: the locked DOM surface. Same principle as routes/entry_points \u2014 tests observe only what the spec locks, so the coder is free to restructure everything else. Testids reach the coder via contracts in the brief material."
   },
+  "changed_files": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "D-86: the inventory files THIS delta's work touches, declared by the TPM. refreeze.sh copies it verbatim into DELTA-vN.json's changed_files, which --affected unions with the test/contract deltas to derive the coder's editable set. Before D-86 this field did not exist and refreeze hardcoded changed_files to [], so scope was reachable only through the EM's test mapping — a containment boundary set implicitly by the mid tier (testchat M31: index.html was uneditable for a milestone that needed markup in it). Declare a file here to put it in scope deliberately. Every entry must also appear in files; it is a per-delta declaration, so re-state it at every freeze — a stale entry silently widens the next delta's scope."
+  },
   "no_edit_files": {
    "type": "array",
    "items": {

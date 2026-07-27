@@ -44,6 +44,7 @@ Modes:
 import ast
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -643,6 +644,27 @@ def spec_preflight(old_path, new_path):
     editable_py = {f for f in editable if f.endswith(".py")}
     errs = []
     checked = 0
+
+    # D-86: changed_files is the TPM's scope declaration and reaches the coder
+    # through --affected. An entry outside the inventory can never map to a
+    # task (the plan gate's bijection is over files), so it would silently
+    # declare nothing; an entry that is also no_edit is self-contradictory.
+    declared = new.get("changed_files", [])
+    if not isinstance(declared, list):
+        errs.append("changed_files must be an array of inventory file paths")
+        declared = []
+    for f in declared:
+        checked += 1
+        if f not in files:
+            errs.append(
+                f"changed_files names '{f}', which is not in contracts.files — "
+                f"no task can target it, so declaring it scopes nothing"
+            )
+        elif f not in editable:
+            errs.append(
+                f"changed_files names '{f}', which is also in no_edit_files — "
+                f"declare it in one or the other, not both"
+            )
 
     # entry_points: the implementing file is derivable exactly — the module
     # path. New module → must be buildable (in files) or already on disk.

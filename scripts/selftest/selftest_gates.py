@@ -1446,6 +1446,76 @@ def test_plan_valid_first_emit_needs_no_rung(tmp_path):
     assert "SPEC DEFECT" not in r.stdout, r.stdout
 
 
+# --- preflight: TPM scope declaration (D-86) ---------------------------------
+# changed_files reaches the coder's editable set through --affected. An entry
+# the plan gate can never map to a task declares nothing, silently — the
+# failure mode D-86 exists to remove, so it must not be reintroduced by a typo.
+
+INDEX_HTML = (
+    "<html><head>\n"
+    '<link rel="stylesheet" href="/static/style.css">\n'
+    "</head><body></body></html>\n"
+)
+
+
+def asset_repo(tmp_path, index=INDEX_HTML):
+    static = tmp_path / "src" / "static"
+    static.mkdir(parents=True)
+    (static / "index.html").write_text(index)
+    (static / "style.css").write_text("body { margin: 0; }\n")
+    return tmp_path
+
+
+def asset_contracts(files, no_edit=None, changed=None):
+    c = {"erd_version": 2, "files": files, "entry_points": []}
+    if no_edit is not None:
+        c["no_edit_files"] = no_edit
+    if changed is not None:
+        c["changed_files"] = changed
+    return c
+
+
+ASSET_OLD = asset_contracts(["src/static/index.html", "src/static/style.css"])
+
+
+def test_preflight_changed_files_outside_inventory_fails(tmp_path):
+    """A declared file absent from contracts.files can never map to a task
+    (the plan gate's bijection is over files), so it scopes nothing."""
+    r = run_preflight(
+        asset_repo(tmp_path), ASSET_OLD,
+        asset_contracts(["src/static/index.html"],
+                        changed=["src/static/app.js"]))
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "not in contracts.files" in r.stderr, r.stderr
+
+
+def test_preflight_changed_files_also_no_edit_fails(tmp_path):
+    """Declaring a file both in-scope and unchanged is self-contradictory."""
+    r = run_preflight(
+        asset_repo(tmp_path), ASSET_OLD,
+        asset_contracts(["src/static/index.html", "src/static/style.css"],
+                        no_edit=["src/static/style.css"],
+                        changed=["src/static/style.css"]))
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "no_edit_files" in r.stderr, r.stderr
+
+
+def test_preflight_changed_files_editable_member_passes(tmp_path):
+    r = run_preflight(
+        asset_repo(tmp_path), ASSET_OLD,
+        asset_contracts(["src/static/index.html", "src/static/style.css"],
+                        no_edit=["src/static/style.css"],
+                        changed=["src/static/index.html"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_preflight_absent_changed_files_is_not_an_error(tmp_path):
+    """The field is optional — every pre-D-86 spec must still freeze."""
+    r = run_preflight(asset_repo(tmp_path), ASSET_OLD,
+                      asset_contracts(["src/static/index.html"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
 # --- refreeze.sh wires the preflight before approval (D-78) ------------------
 
 def refreeze_scripts(repo):
