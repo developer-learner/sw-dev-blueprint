@@ -83,6 +83,27 @@ LM Studio — no specific model required, D-41) and `scripts/bootstrap.sh`.
 6. **Next milestone:** fresh TPM session (step 1). Continuity lives in the
    frozen artifacts, not the conversation.
 
+## Wrapping up (end of day, or before switching workloads)
+
+The Lima dev-VM and warm LM Studio models are meant to stay resident
+between runs (D-55, D-72) — cold Lima boot is ~60s and a cold model load
+~120s, so auto-teardown after every pipeline run costs real seconds every
+run for no gain. Nothing self-cleans automatically. Two operator-invoked
+tools handle the moments where you want the resources back (D-97):
+
+- `scripts/status.sh` — read-only report of what's resident (Lima state,
+  LLM ports, podman containers, pipeline-state sizes, disk). Run any time.
+- `scripts/teardown.sh` — reclaim per explicit flags. Bare invocation
+  prints help; `--dry-run` shows the plan without touching anything.
+  Common flows:
+  - end of day, freeing everything you can:
+    `scripts/teardown.sh --all --lima` (adds Lima stop — opt-in outside
+    `--all` because it's the biggest cost to reverse)
+  - between milestones, keeping the VM and models warm:
+    `scripts/teardown.sh --state --caches --containers`
+  - `--em-archive` is opt-in even under `--all` — the corpus feeds the
+    EM-diagnosis A/B backlog item; only wipe it when you know.
+
 ## Fallback: TPM without repo access
 
 If you'd rather run the TPM in a plain web chat (or don't have the agent

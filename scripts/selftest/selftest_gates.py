@@ -3222,3 +3222,102 @@ def test_update_template_interactive_flag_requires_terminal(template_pull_pair):
         cwd=child, capture_output=True, text=True, check=True,
     )
     assert not log.stdout.strip().startswith("[template-update "), log.stdout
+
+
+# --- status.sh / teardown.sh (D-97 housekeeping) -----------------------------
+# The pipeline had no answer for "what's resident right now?" and no protocol
+# for "wrap up now." status.sh is the read-only reporter (never writes,
+# tolerates missing limactl/nc/lms/podman); teardown.sh is the operator-
+# invoked reclaimer (default-safe, --dry-run available, --lima and
+# --em-archive opt-in outside --all — the two flags whose consequences the
+# operator should say by name).
+
+
+@pytest.fixture()
+def housekeeping_repo(tmp_path):
+    """Bare tmp repo with just the two housekeeping scripts installed. No
+    limactl/nc/lms are assumed to exist on the test host — the scripts
+    handle those absences by reporting 'not installed' / 'not reachable'
+    and moving on, which is exactly what we want to pin."""
+    (tmp_path / "scripts").mkdir()
+    for name in ("status.sh", "teardown.sh"):
+        target = tmp_path / "scripts" / name
+        target.write_bytes((SCRIPTS / name).read_bytes())
+        target.chmod(0o755)
+    return tmp_path
+
+
+def test_status_writes_nothing_and_reports_every_section(housekeeping_repo):
+    """Read-only invariant: after running, the directory tree must be
+    byte-identical to what it was before. And every declared section must
+    appear so a partial-report regression is loud."""
+    before = sorted((p.relative_to(housekeeping_repo), p.stat().st_mtime_ns)
+                    for p in housekeeping_repo.rglob("*") if p.is_file())
+    r = _run_ut(["bash", "scripts/status.sh"], housekeeping_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    for section in ("Lima dev-vm", "LLM servers", "podman containers",
+                    "pipeline state", "repo disk"):
+        assert section in r.stdout, (section, r.stdout)
+    after = sorted((p.relative_to(housekeeping_repo), p.stat().st_mtime_ns)
+                   for p in housekeeping_repo.rglob("*") if p.is_file())
+    assert before == after, "status.sh mutated the tree — read-only invariant broken"
+
+
+def test_teardown_bare_invocation_prints_help(housekeeping_repo):
+    """Nothing defaults to destructive: `teardown.sh` with no flags must
+    print help and exit 0 — never wipe state on a mis-typed command."""
+    r = _run_ut(["bash", "scripts/teardown.sh"], housekeeping_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "Flags:" in r.stdout, r.stdout
+    assert "--dry-run" in r.stdout, r.stdout
+
+
+def test_teardown_dry_run_does_not_touch_the_tree(housekeeping_repo):
+    """--dry-run must run the full plan but leave the filesystem alone."""
+    (housekeeping_repo / ".pipeline-state").mkdir()
+    (housekeeping_repo / ".pipeline-state" / "victim").write_text("x")
+    r = _run_ut(
+        ["bash", "scripts/teardown.sh", "--state", "--dry-run"],
+        housekeeping_repo,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "DRY RUN" in r.stdout, r.stdout
+    assert (housekeeping_repo / ".pipeline-state" / "victim").exists()
+
+
+def test_teardown_state_flag_removes_pipeline_state(housekeeping_repo):
+    """--state removes .pipeline-state/ end-to-end."""
+    (housekeeping_repo / ".pipeline-state").mkdir()
+    (housekeeping_repo / ".pipeline-state" / "victim").write_text("x")
+    r = _run_ut(["bash", "scripts/teardown.sh", "--state"], housekeeping_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert not (housekeeping_repo / ".pipeline-state").exists(), r.stdout
+
+
+def test_teardown_all_does_not_touch_em_archive_or_lima(housekeeping_repo):
+    """--all is safe to type without regret: it must NOT prune .em-archive/
+    (feeds the M28 diagnosis-brief A/B) and must NOT stop Lima (biggest
+    cost to reverse). Those two need explicit --em-archive / --lima."""
+    (housekeeping_repo / ".em-archive").mkdir()
+    (housekeeping_repo / ".em-archive" / "keep").write_text("x")
+    r = _run_ut(
+        ["bash", "scripts/teardown.sh", "--all", "--dry-run"],
+        housekeeping_repo,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "--em-archive" not in r.stdout, r.stdout   # section header absent
+    assert "--lima" not in r.stdout, r.stdout
+    # The corpus survives even a real (non-dry-run) --all.
+    r2 = _run_ut(["bash", "scripts/teardown.sh", "--all"], housekeeping_repo)
+    assert r2.returncode == 0, (r2.stdout, r2.stderr)
+    assert (housekeeping_repo / ".em-archive" / "keep").exists()
+
+
+def test_teardown_rejects_unknown_flag(housekeeping_repo):
+    """Unknown flag → non-zero and a pointer to --help. No silent no-op."""
+    r = _run_ut(
+        ["bash", "scripts/teardown.sh", "--wipe-everything"],
+        housekeeping_repo,
+    )
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "--help" in r.stdout + r.stderr
