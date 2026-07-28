@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # drive-drift.sh — selftest harness for orchestrate.sh's D-77 flake-triage
-# block (the code that converts a red full-suite run into flake-green +
-# [success] when every failing node is a carried-forward, plan-unmapped
-# node). That block has the highest blast radius in orchestrate.sh — the
+# block (the code that may convert a red full-suite run into flake-green +
+# [success] when every failure is carried-forward AND each failing node
+# passes at least one isolation run). That block has the highest blast radius
+# in orchestrate.sh — the
 # ONLY code that flips a failing frozen suite to `exit 0` + `[success]`
 # commit + `rm -rf` of state — and per Rule 9 (D-81, gate strength ∝
 # blast radius) it needs the same drive-*.sh selftest coverage the lower-

@@ -21,6 +21,80 @@
 
 ## Decisions
 
+## D-106 — 2026-07-28 — Control-plane Python is linted unconditionally
+
+**Decision:** The unconditional `selftest` CI job runs `ruff check scripts/` before the control-plane pytest suite. All existing E741 ambiguous single-letter variables in `check-test-surface.py` and `validate-plan.py` are renamed rather than suppressed. Application lint remains a separate project-stack step over `src/`.
+
+**Reason:** The pipeline linted TPM-authored tests at refreeze and coder-authored source per task, but never linted the Python validators that enforce both. Four E741 findings were therefore live in control-plane code while CI stayed green. The skeleton-safe selftest job already installs ruff and is the boundary that runs for every blueprint state.
+
+**Do not suggest:** Excluding gate scripts because they are “internal”; suppressing E741 globally to preserve ambiguous names; relying on the project `src/` lint step, which is skipped for an unbootstrapped template.
+
+## D-105 — 2026-07-28 — Onboarding prints the runtime model-variable contract
+
+**Decision:** `bootstrap.sh` and `new-project.sh` teach the exact override names consumed by `llm-call.sh`: `SWBP_EM_MODEL` and `SWBP_CODER_MODEL`. A selftest compares both onboarding surfaces against that spelling and rejects the transposed `SWBP_MODEL_EM`/`SWBP_MODEL_CODER` form.
+
+**Reason:** `models.env` is the primary mapping path, so the stale text did not break correctly configured installations. It did make the documented environment-override path inert: operators following onboarding exported variables the runtime never reads, making A/B seat swaps and temporary overrides appear applied when they were not.
+
+**Do not suggest:** Supporting both spellings indefinitely (one public contract is clearer); changing `llm-call.sh` to the transposed form (README, QUICKSTART, BLUEPRINT, and existing operator configs already use `SWBP_<ROLE>_MODEL`).
+
+## D-104 — 2026-07-28 — One artifact-path policy governs the TPM shuttle and refreeze
+
+**Decision:** `scripts/spec_artifacts.py` is the executable source of truth for allowed frozen-spec staging paths: `PRD.md`, `ERD.md`, optional `ERD-DELTA.md`, `contracts.json`, `REMOVED`, `tests/<...>` (Python tests and their frozen fixtures), and `captures/<...>`, with absolute/traversing paths rejected. `tpm-pack.sh` derives its advertised reply paths and frozen document loop from it; `tpm-unpack.sh` imports it before staging; `refreeze.sh` uses it for tree validation, changed-document enumeration, and manifest generation; agent-mode TPM instructions derive the same description.
+
+**Reason:** The allowlist existed independently in refreeze, pack, and unpack and had already drifted twice—first for `REMOVED`/captures, then for `ERD-DELTA.md`. The second drift made the documented per-delta artifact impossible to round-trip through the supported chat shuttle. A single executable policy makes additions atomic across every boundary.
+
+**Do not suggest:** Reintroducing shell/Python copies “for simplicity”; allowing traversal or unsafe characters beneath `tests/`/`captures/`; narrowing tests to `.py` and thereby blocking frozen fixture files; documenting a path that the executable policy does not accept.
+
+## D-103 — 2026-07-28 — Frozen acceptance requires ordinary passed outcomes
+
+**Decision:** `run_tests` treats a test as green only when its outcome is `passed` and it carries no `wasxfail` metadata. `skipped`, `xfailed`, `xpassed`, error/failure, and passed-with-xfail-metadata outcomes all remain red and retain their real node IDs for task ownership, D-77 triage, and escalation evidence.
+
+**Reason:** Pytest exits successfully for skipped and expected-failure tests, and the JSON parser previously looked only for `failed`/`error`. A frozen suite could therefore report success while exercising no acceptance behavior. Frozen tests are the oracle; “did not run” and “failure was expected” are not equivalent to “behavior passed.”
+
+**Do not suggest:** Allowing skip/xfail globally because pytest considers them successful; rewriting node IDs with outcome suffixes (breaks plan ownership lookup); treating XPASS as ordinary pass while the xfail marker still hides a stale expectation.
+
+## D-102 — 2026-07-28 — Sandbox images copy dependency manifests, never the project tree
+
+**Decision:** The default Python `Containerfile` copies only `requirements.txt` into the build and installs from it. It never uses `COPY .`. `.dockerignore` also excludes all `.env*` files, pipeline/EM state, caches, TPM scratch, and dependency trees as defense in depth. `.dockerignore` joins the project-owned control-plane manifest beside `Containerfile`.
+
+**Reason:** Docker/Podman layers are immutable. Copying the whole build context and deleting it in a later `RUN` leaves source, local secret variants, captures, and runtime transcripts recoverable from the earlier layer. None of those artifacts is needed to construct the sandbox—the repository is mounted read-only at runtime.
+
+**Do not suggest:** Restoring `COPY .` followed by cleanup (layer history preserves the bytes); putting application source in the sandbox image for convenience (the runtime bind mount is the source of truth); assuming `.gitignore` limits the container build context.
+
+## D-101 — 2026-07-28 — Template removals are hashed and applied atomically
+
+**Decision:** `update-template.sh` treats files present in the child's old `.manifest-template` but absent from the target manifest as first-class update changes. Their deletion diffs contribute to `DIFF-SHA`, appear in dry-run/review output, apply even when there are no content changes, are removed after the old updater finishes its integrity check, and are staged in the same `[template-update ...]` commit. Removal paths are rejected if absolute or traversing.
+
+**Reason:** Reporting removals for manual cleanup while advancing `.template-version` and installing the new manifest left retired hooks, workflows, and scripts active but unpinned; drift detection then reported the child current. Deferring physical deletion until after the transition check lets the old updater safely retire itself or support scripts without losing the machinery needed to finish the update.
+
+**Do not suggest:** Advancing the template ref while leaving removals manual; hashing only added/modified content; deleting paths directly from an unvalidated manifest entry.
+
+## D-100 — 2026-07-28 — D-77 flake-green requires one isolated pass per failing node
+
+**Decision:** Plan-unmapped full-suite failures remain candidates for D-77 flake triage, but mapping absence alone no longer converts red to green. Each failing node runs twice in isolation; every node must pass at least once before the suite can be classified flake-green. A node that reproduces 0/2, or whose isolation runs cannot execute within the run budget, keeps the original full-suite failure red and follows the existing SPEC DRIFT path. Two isolated passes are not required.
+
+**Reason:** A carried-forward test can fail because a delta transitively broke carried behavior. The prior rule treated the absence of a plan mapping as proof of flakiness even when the same failure reproduced twice, allowing a knowingly red frozen suite to land `[success]`. Requiring one isolated pass adds a mechanical flake signal while preserving D-77's original evidence that real timing flakes can reproduce under host load and should not need a deterministic 2/2.
+
+**Alternatives considered:** Keep mapping as the sole discriminator (rejected — it proves ownership, not cause); require 2/2 isolated passes (rejected by the original AC-42 incident — too strict under load); remove D-77 and require every carried failure to refreeze (rejected — restores the repeated manual-bypass failure D-77 was created to remove).
+
+**Do not suggest:** Auto-greening a 0/2 reproducing failure because it is unmapped; treating a budget-skipped isolation run as positive evidence; demanding 2/2 passes without new evidence that host load no longer makes that threshold brittle.
+
+## D-99 — 2026-07-28 — Empty task state is legitimate only after a covering success
+
+**Decision:** The lost-state preflight compares git history before halting on an empty `.pipeline-state/tasks/`. If the newest `[task ...]` commit is an ancestor of the newest `[success]` commit, the empty state is the orchestrator's intentional post-success cleanup and the next run starts fresh. If a task is newer than the last success, state was lost mid-milestone and the fail-closed halt remains. An intentional full rebuild uses the explicit `SWBP_REBUILD_FROM_SCRATCH=1` override.
+
+**Reason:** The success path has always removed `.pipeline-state/`, but the new lost-state guard treated every prior task commit as unfinished work. After the first successful run it therefore bricked every subsequent run, and its suggested recovery—deleting the already-empty directory—could never alter the verdict. Commit ancestry distinguishes the two states mechanically without weakening mid-milestone loss detection.
+
+**Do not suggest:** Removing the loss guard; treating any historical success as sufficient when a newer task exists; restoring the ineffective “delete `.pipeline-state`” escape.
+
+## D-98 — 2026-07-28 — Every test verdict requires a fresh JSON report
+
+**Decision:** `run_tests` deletes `.cache/test-report.json` immediately before every sandboxed pytest invocation. A sandbox launch, image-build, or timeout failure that produces no new report reaches the existing `NO_REPORT`/no-verdict path; it can never consume the preceding invocation's JSON.
+
+**Reason:** The sandbox command deliberately suppresses its raw exit status because pytest exit 1 is an ordinary test failure whose structured report must be parsed. Without first invalidating the old report, that suppression let an infrastructure failure replay a stale green result and mark a task—or the final frozen suite—successful.
+
+**Do not suggest:** Failing on every nonzero pytest process exit (exit 1 is the expected failing-test path); retaining reports between invocations for convenience; using report modification time as a substitute for deleting the stale verdict before launch.
+
 ## D-97 — 2026-07-27 — Housekeeping is operator-invoked: `status.sh` (read-only report) + `teardown.sh` (explicit reclamation)
 
 **Decision:** Two new template-owned scripts serve the "what's resident?" and "give it back" questions the pipeline had no answer for. `scripts/status.sh` reports (never writes): Lima `dev-vm` state + uptime + memory + VM disk; TCP-probe of the three LLM-server ports `llm-call.sh` knows about (LM Studio 1234, mtplx 8001, mlx-serve 11234) — bare `nc -z`, no `/v1/models` hit that would trigger a cold model load; running + stopped podman containers inside the VM; sizes of `.pipeline-state/`, `.em-archive/`, `.cache/`, and `__pycache__/` under `tests/` and `src/`; repo disk free. Every failure to reach a component (limactl missing, VM stopped, port closed) reports and moves on — status is informational, exit 0 unless a command itself errors. `scripts/teardown.sh` performs the reclamations, one per flag, never called by `orchestrate.sh`. Flags compose: `--containers` (podman prune inside VM), `--state` (rm `.pipeline-state/`), `--caches` (`__pycache__`/`.pytest_cache` under tests/src), `--lm-studio` (`lms server stop`, falling back to `pkill -f 'LM Studio'`), `--lima` (`limactl stop dev-vm` — opt-in, NOT in `--all`), `--em-archive` (opt-in, NOT in `--all` — default KEEP because the corpus feeds the M28 diagnosis A/B), `--all` (containers + state + caches + lm-studio). Every action prints the exact command it will run before running it; `--dry-run` runs the whole plan with no side effects; bare `teardown.sh` prints help and exits 0. Both scripts are template-owned (`.manifest-template`) so `update-template.sh` (D-96) propagates them to every child.
@@ -247,19 +321,21 @@
 
 ---
 
-## D-77 — 2026-07-19 — Flake triage before declaring SPEC DRIFT: the plan mapping discriminates; isolation is evidence, never a gate
+## D-77 — 2026-07-19 — Flake triage before declaring SPEC DRIFT
 
 > Corrected same day (2026-07-19, second pass): the first cut gated flake classification on 2/2 isolated passes. The M28 postmortem then recorded the same AC-42 node failing 4/4 IN ISOLATION under host memory load (nemotron + an LM Studio model resident) — an isolated run measures the environment as much as the test, so gating on it turns triage into a coin flip. The entry below is the corrected decision.
 
 > Amended 2026-07-21 (`fbfc1f0`): isolation re-runs are budget-aware — over `SWBP_RUN_BUDGET` they are skipped and the evidence string records the skip (`"isolation runs skipped — over SWBP_RUN_BUDGET"`) instead of the k/2 tallies. This is the ONE phase safe to skip over budget: isolation is corroborating evidence only (per the same-day correction above), so a die here would fail a run whose suite is flake-green — the wrong direction. The rest of the decision — plan mapping as the sole discriminator, unmapped-only as the flip condition, k/2 as recorded-only when it runs — is unchanged.
 
-**Decision:** When the final full-suite run fails but every task passed its projection, `orchestrate.sh` no longer declares SPEC DRIFT immediately. Each failing node-id is classified by the D-57 ownership signal the shell already owns: mapped in `tasks/plan.json` (delta-owned) keeps the DRIFT path unchanged; unmapped means carried-forward. Only when EVERY failing node is unmapped is the suite treated as green — with a loud WARNING on the console and a D-77 note in `tasks/CURRENT.md`'s Results. Each unmapped node is also re-run twice in isolation and the k/2 result is recorded in the warning as corroborating evidence for the eventual TPM re-cut — it never flips the classification. Any collection error or mapped failure proceeds to DRIFT exactly as before, with the original full-run evidence preserved.
+> Amended 2026-07-28 by D-100 after adversarial review found the opposite false-success edge: mapping absence was treated as proof of flakiness even when a carried failure reproduced 0/2 in isolation. Isolation now supplies a deliberately weak minimum gate — at least one pass in two runs per failing node. The 2/2 threshold rejected above remains rejected.
+
+**Decision:** When the final full-suite run fails but every task passed its projection, each failing node-id is classified by the D-57 ownership signal: mapped in `tasks/plan.json` (delta-owned) keeps the DRIFT path unchanged; unmapped means carried-forward and eligible for flake triage. Every failing carried node is re-run twice in isolation. Only when every failure is unmapped AND every node passes at least once is the suite treated as green, with a loud WARNING and a D-77 note in `tasks/CURRENT.md`. A 0/2 reproduction, collection error, mapped failure, or budget-skipped isolation keeps the original full-suite failure red.
 
 **Found by:** testchat M28 (2026-07-19, spec v54). The run halted on `test_thinking_placeholder_shows_then_clears` — a timing-sensitive M9-era Playwright test outside the M28 delta's inventory — which had passed 150/150 earlier in the same session. Drift detection tripped on a flake, three orchestrate retries burned on the same node, and the CEO manually authorized `[success]` after hand-running the inventory check this decision mechanizes. Rule 6's corollary cuts both ways: "something went wrong" ≠ "the safeguard tripped for the right reason".
 
-**Alternatives considered:** isolation-retry as the primary or gating signal (rejected by same-day evidence — see correction note; a flake that reproduces under load would bounce a legitimately-green run back to DRIFT); triaging on the test FILE being in `contracts.files` (rejected — the plan mapping is the exact D-57 ownership signal, and mapped-but-unownable node-ids stay correctly on the strict path); re-running the full suite instead (rejected — a flake can flake again in the full run); quarantining or skipping flaky tests (rejected — the frozen suite is the acceptance surface; a flake is surfaced loudly, never removed).
+**Alternatives considered:** isolation-retry as the sole or 2/2 gating signal (rejected by same-day evidence — see correction note); no isolation minimum at all (superseded by D-100 after the 0/2 false-success finding); triaging on the test FILE being in `contracts.files` (rejected — the plan mapping is the exact D-57 ownership signal); re-running the full suite instead (rejected — a flake can flake again in the full run); quarantining or skipping flaky tests (rejected — the frozen suite is the acceptance surface; a flake is surfaced loudly, never removed).
 
-**Do not suggest:** re-promoting isolation results to a gate ("the evidence is right there" — it is evidence about the host, not the test); auto-retrying MAPPED failing nodes (a delta-owned failure is real signal, never a flake candidate); silencing or downgrading the WARNING (the flake is a real defect in the frozen test — it belongs to the TPM at the next refreeze); moving this triage into `run_tests` itself (per-task projections must stay strict — a task's own flaky test failing is a legitimate strike).
+**Do not suggest:** raising the minimum to 2/2 without new evidence (host load still affects isolation); removing the one-pass minimum (reopens the reviewed false-success path); auto-retrying MAPPED failing nodes; silencing or downgrading the WARNING; moving this triage into `run_tests` itself (per-task projections must stay strict).
 
 ---
 
@@ -772,13 +848,15 @@
 
 ## D-34 — 2026-07-01 — Template propagation: update-template.sh (the refreeze pattern, applied to the control plane)
 
-**Decision:** Children pull control-plane improvements with `scripts/update-template.sh`: it resolves the template (a local clone via `--from`, or `gh repo clone` of the `.template-version` slug), takes the file list from the **template's** `.manifest-template` at the target ref (so files added upstream flow in), shows the human one aggregate diff, requires an interactive y/N (`--dry-run` to inspect without a tty), applies contents **and exec bits**, installs the template's manifest verbatim, advances `ref=` in `.template-version`, regenerates `.manifest-project`, runs the integrity gate as a post-apply check, and commits `[template-update <sha>]`. Files removed upstream are reported for manual deletion, never auto-deleted. `--stamp` mode retrofits a pre-D-33 child (writes `ref=` only). Same protected-artifact protocol as D-31: staged delta → human diff-approval → hash re-pin → versioned commit.
+> Amended by D-96 (auto-apply default) and D-101 (upstream removals are hashed and applied in the same update).
+
+**Decision:** Children pull control-plane improvements with `scripts/update-template.sh`: it resolves the template (a local clone via `--from`, or `gh repo clone` of the `.template-version` slug), takes the file list from the **template's** `.manifest-template` at the target ref (so additions and removals flow in), shows one aggregate diff, applies contents, exec bits, and removals, installs the template's manifest verbatim, advances `ref=` in `.template-version`, regenerates `.manifest-project`, runs the integrity gate as a post-apply check, and commits `[template-update <sha>]`. `--dry-run`, `--review`, hash-bound `--approve`, and opt-in `--interactive` remain available under D-96. `--stamp` mode retrofits a pre-D-33 child.
 
 **Alternatives considered:** (a) Generalize `refreeze.sh` into one approve-delta engine serving both spec and control plane — considered and rejected: the two flows share only the approval UX (~40 lines); everything else differs (staging source, validation steps — INV-4 and node-id collection are spec-only — and post-apply actions). A forced common engine is parameter soup; a shared *pattern* with two small tools is cheaper to hold. Revisit only if a third protected-artifact class appears. (b) git subtree/submodule for `scripts/` — Tier 3 machinery; see D-35 for the trigger. (c) Auto-apply in CI — propagation into a child is a human-approved act, same reasoning as D-31.
 
 **Reason:** This closes the documented incident class directly: the Rule 8 fix that lived only in spark until hand-ported becomes `update-template.sh` + one y. Detection (D-33) says *that* you're behind; this is *how* you catch up, with the same fail-closed integrity guarantees as every other protected write.
 
-**Do not suggest:** Auto-applying template updates. Letting the tool delete files. Running it inside the template repo (it refuses).
+**Do not suggest:** Leaving upstream removals for manual cleanup (D-101); running it inside the template repo (it refuses); deleting a path that was not pinned by the child's prior template manifest.
 
 ---
 

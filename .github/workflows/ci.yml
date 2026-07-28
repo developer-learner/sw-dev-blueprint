@@ -22,6 +22,8 @@ jobs:
         # ruff: the refreeze fixture selftests run the real apply path,
         # whose D-67 staged-test lint gate fails closed without it.
         run: pip install pytest ruff
+      - name: Lint control-plane Python
+        run: ruff check scripts/
       - name: Gate-script self-tests
         run: pytest scripts/selftest/selftest_gates.py -q
 

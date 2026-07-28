@@ -84,17 +84,21 @@ NEW=$((V + 1))
 mkdir -p "$APPROVED" tests
 
 # --- Validate staging contents: only known artifact paths ---
-BAD=$(cd "$IN" && find . -type f \
-  ! -path "./PRD.md" ! -path "./ERD.md" ! -path "./ERD-DELTA.md" \
-  ! -path "./contracts.json" \
-  ! -path "./REMOVED" ! -path "./tests/*" ! -path "./captures/*" | sed 's|^\./||')
+# D-104: refreeze and both TPM shuttle directions consume one policy; adding
+# an artifact at one boundary cannot silently leave another boundary stale.
+if ! ALLOWED_ARTIFACTS=$(python3 scripts/spec_artifacts.py describe); then
+  die "shared spec-artifact policy could not be read"
+fi
+if ! BAD=$(python3 scripts/spec_artifacts.py invalid-under "$IN"); then
+  die "shared spec-artifact policy could not validate staging"
+fi
 if [ -n "$BAD" ]; then
-  die "staging contains unexpected files (only PRD.md, ERD.md, ERD-DELTA.md, contracts.json, REMOVED, tests/*, captures/* are frozen artifacts):
+  die "staging contains unexpected files (allowed: $ALLOWED_ARTIFACTS):
 $BAD"
 fi
 
 CHANGED_DOCS=""
-for f in PRD.md ERD.md ERD-DELTA.md contracts.json; do
+for f in $(python3 scripts/spec_artifacts.py documents); do
   [ -f "$IN/$f" ] && CHANGED_DOCS="$CHANGED_DOCS $f"
 done
 CHANGED_TEST_FILES=$(cd "$IN" && find tests -type f 2>/dev/null | sed 's|^\./||' || true)
@@ -624,7 +628,7 @@ from pathlib import Path
 new_v, nodeids_path = int(sys.argv[1]), sys.argv[2]
 contracts_staged = sys.argv[3] == "1"
 def lines(p):
-    return [l for l in Path(p).read_text().splitlines() if l.strip()]
+    return [line for line in Path(p).read_text().splitlines() if line.strip()]
 old_nodeids = set(lines(".pipeline-state/refreeze-old-nodeids"))
 new_nodeids = set(lines(nodeids_path))
 changed_files = set(lines(".pipeline-state/refreeze-changed-files"))
@@ -737,7 +741,7 @@ fi
 
 # --- Re-freeze: hash-pin every frozen artifact, bump VERSION ---
 {
-  for f in PRD.md ERD.md ERD-DELTA.md contracts.json test-nodeids; do
+  for f in $(python3 scripts/spec_artifacts.py documents) test-nodeids; do
     [ -f "$APPROVED/$f" ] && sha256sum "$APPROVED/$f"
   done
   # Pin every file under tests/ (not only .py): non-.py fixtures a TPM

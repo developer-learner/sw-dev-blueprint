@@ -121,6 +121,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-55**: Linux dev VM boundary; D-53 partial reversal for cross-boundary model access
 - **D-60**: Task sizing governed by the coder's measured bare-completion capability
 - **D-66**: The EM seat is precision-transcription work; dense models preferred
+- **D-105**: Onboarding uses the exact `SWBP_<ROLE>_MODEL` runtime contract
 
 ### Sandbox & untrusted-code execution
 
@@ -132,6 +133,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-30**: Sandbox flip — read-only repo + per-lane rw mounts; pre-commit hook for the human path
 - **D-50**: Stack drift killed mechanically — content-hashed sandbox image, podman preflight
 - **D-62**: LM Studio drift probe in orchestrate.sh pre-flight
+- **D-102**: Sandbox image copies only dependency manifests; project state and secrets never enter image layers
 
 ### Frozen spec & TPM shuttle
 
@@ -152,6 +154,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-64**: Browser-test mapping enforced mechanically in `validate-plan.py`
 - **D-67**: `refreeze` lints staged tests
 - **D-75**: Red-before-green — a refreeze runs the delta's tests pre-implementation, warns on early passes
+- **D-104**: One executable artifact-path policy governs TPM pack, unpack, agent mode, and refreeze
 
 ### Escalation ladder & failure paths
 
@@ -169,6 +172,10 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-71**: EM diagnosis hardened — shrunken reply surface + one validator-fed retry
 - **D-73**: Failure detail from the test report reaches retry briefs and consults
 - **D-74**: Coder output linted per task, fail-closed, before acceptance
+- **D-98**: Test verdicts require a freshly generated JSON report; stale reports are invalidated before every run
+- **D-99**: Empty task state is allowed only after a covering success commit; mid-milestone loss still halts
+- **D-100**: D-77 flake-green requires at least one isolated pass per failing carried node
+- **D-103**: Frozen acceptance requires ordinary passed outcomes; skip/xfail/xpass remain red
 
 ### Gates, lanes & governance
 
@@ -177,7 +184,9 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-25**: INV-3 — decision-traceability gate (retired 2026-07-22, see D-25 amendment; keeping this section current is now a PM-review discipline)
 - **D-33**: Fleet drift — birth-SHA identity, ownership-split manifests
 - **D-34**: Template propagation — `update-template.sh` applies the refreeze pattern to the control plane
+- **D-101**: Template removals contribute to the approval hash and apply atomically
 - **D-36**: Gate-script self-tests (`scripts/selftest/`)
+- **D-106**: The unconditional selftest CI job lints all template-owned Python under `scripts/`
 - **D-37**: `build_extra`/`test_extra` exact-file lane exceptions in `.gate-paths` (retired 2026-07-22 with the `build`/`test` phase-gate phases that read them)
 - **D-45**: Conductor bash allowlist — pipeline scripts + read-only git; everything else asks
 - **D-47**: External TPM review of D-40..D-46 adjudicated

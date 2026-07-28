@@ -208,7 +208,9 @@ def validate():
     contracts = load_json(CONTRACTS, "frozen contracts")
     if not NODEIDS.exists():
         fail(["frozen test-nodeids missing — run scripts/refreeze.sh first"])
-    frozen_nodeids = [l.strip() for l in NODEIDS.read_text().splitlines() if l.strip()]
+    frozen_nodeids = [
+        line.strip() for line in NODEIDS.read_text().splitlines() if line.strip()
+    ]
 
     if not isinstance(plan, dict):
         fail(["plan must be a JSON object"])
@@ -1271,7 +1273,9 @@ def cmd_subtree_scope(prior_path, delta_paths):
     contracts = load_json(CONTRACTS, "frozen contracts")
     if not NODEIDS.exists():
         fail(["frozen test-nodeids missing — run scripts/refreeze.sh first"])
-    current_ids = {l.strip() for l in NODEIDS.read_text().splitlines() if l.strip()}
+    current_ids = {
+        line.strip() for line in NODEIDS.read_text().splitlines() if line.strip()
+    }
     inventory = list(contracts.get("files", []))
     tasks = prior["tasks"]
     prior_files = {t["file"] for t in tasks}
@@ -1389,8 +1393,10 @@ def cmd_merge_subtree(prior_path, subtree_path, scope_path):
     frozen_v = int(VERSION.read_text().strip())
     current_ids = set()
     if NODEIDS.exists():
-        current_ids = {l.strip() for l in NODEIDS.read_text().splitlines()
-                       if l.strip()}
+        current_ids = {
+            line.strip() for line in NODEIDS.read_text().splitlines()
+            if line.strip()
+        }
     keep_id = {r["file"]: r["keep_id"] for r in scope.get("reemit", [])}
     allowed = set(keep_id) | set(scope.get("new_files", []))
     hit_ids = set(keep_id.values())

@@ -150,6 +150,24 @@ done
 REMOVED=$(comm -23 \
   <(awk '{print $2}' scripts/.manifest-template | sort) \
   <(printf '%s\n' $TFILES | sort) )
+for f in $REMOVED; do
+  # The child manifest is normally trusted, but it directly drives deletion
+  # here. Keep that authority repo-relative even if the manifest was damaged.
+  case "$f" in
+    ""|/*|../*|*/../*|*/..|..)
+      die "refusing unsafe removed template path from child manifest: $f" ;;
+  esac
+  {
+    echo ""
+    echo "--- $f (removed upstream) ---"
+    if [ -f "$f" ]; then
+      diff -u -L "$f (child)" -L "$f (removed from template@${TARGET:0:12})" \
+        "$f" /dev/null || true
+    else
+      echo "(already absent in child; upstream removal confirms deletion)"
+    fi
+  } >> "$DIFF_TMP"
+done
 
 # The approval token (D-61): sha256 of the exact diff text. Recomputed on
 # every invocation, so --approve binds to what is true NOW — any change to
@@ -158,7 +176,7 @@ DIFF_SHA=$(sha256sum "$DIFF_TMP" | cut -d' ' -f1)
 
 # --- Review-bundle mode: everything a second model needs, nothing written ---
 if [ "$REVIEW" = "1" ]; then
-  if [ -z "$CHANGED" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi
+  if [ -z "$CHANGED$REMOVED" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi
   echo "=== REVIEW BUNDLE: template update -> $SLUG @ ${TARGET:0:12} ==="
   echo ""
   echo "You are a cold adversarial reviewer. Below are (1) CLAIMS — what the"
@@ -173,7 +191,7 @@ if [ "$REVIEW" = "1" ]; then
   echo "=== CLAIMS (template commit log, ${BASE_REF:0:12}..${TARGET:0:12}) ==="
   echo "$CLAIMS"
   echo ""
-  echo "=== DIFF (files:$CHANGED) ==="
+  echo "=== DIFF (changed:$CHANGED; removed:$REMOVED) ==="
   cat "$DIFF_TMP"
   echo "=== END REVIEW BUNDLE ==="
   echo ""
@@ -182,14 +200,14 @@ if [ "$REVIEW" = "1" ]; then
 fi
 
 cat "$DIFF_TMP"
-if [ -z "$CHANGED" ]; then
+if [ -z "$CHANGED$REMOVED" ]; then
   echo "control plane already matches template@${TARGET:0:12}"
 else
   echo ""
   echo "=============================================="
   echo "  Template update -> $SLUG @ ${TARGET:0:12}"
-  echo "  Files:$CHANGED"
-  [ -n "$REMOVED" ] && { echo "  Removed upstream (delete manually if agreed):"; echo "$REMOVED" | sed 's/^/    /'; }
+  [ -n "$CHANGED" ] && echo "  Changed files:$CHANGED"
+  [ -n "$REMOVED" ] && { echo "  Removed upstream (applied with this update):"; echo "$REMOVED" | sed 's/^/    /'; }
   echo ""
   echo "  Claims (the template's own commit messages for this update range):"
   echo "$CLAIMS"
@@ -204,7 +222,7 @@ else
 fi
 
 if [ "$DRY" = "1" ]; then
-  if [ -n "$CHANGED" ]; then
+  if [ -n "$CHANGED$REMOVED" ]; then
     echo ""
     echo "DIFF-SHA: $DIFF_SHA"
     echo "(dry run — nothing written; to apply without a terminal, the CEO approves:"
@@ -214,7 +232,7 @@ if [ "$DRY" = "1" ]; then
   fi
   exit 0
 fi
-[ -n "$CHANGED" ] || { # nothing to copy; still advance the ref stamp
+[ -n "$CHANGED$REMOVED" ] || { # no content changes or removals; advance ref only
   sed_inplace "s/^ref=.*/ref=$TARGET/" .template-version
   bash scripts/regen-manifest.sh scripts/.manifest-project
   git add .template-version scripts/.manifest-project
@@ -263,12 +281,21 @@ bash scripts/regen-manifest.sh scripts/.manifest-project
 # The applied files must verify against the manifest we just installed.
 bash scripts/phase-gate.sh manifest HEAD || die "post-apply integrity check failed — do not commit; inspect"
 
+# Defer deletions until after the post-apply check: phase-gate.sh,
+# regen-manifest.sh, or this updater itself may be among the files retired by
+# the new template manifest, and the running old updater still needs them to
+# finish validating the transition.
+for f in $REMOVED; do
+  rm -f -- "$f"
+done
+
 git add .template-version scripts/.manifest-template scripts/.manifest-project
 for f in $CHANGED; do git add "$f"; done
+for f in $REMOVED; do git add -A -- "$f"; done
 git commit -m "[template-update ${TARGET:0:12}]"
 
 echo ""
 echo "=============================================="
 echo "  Updated to $SLUG @ ${TARGET:0:12}"
-[ -n "$REMOVED" ] && echo "  NOTE: files removed upstream need manual deletion:$REMOVED"
+[ -n "$REMOVED" ] && echo "  Removed upstream:$REMOVED"
 echo "=============================================="

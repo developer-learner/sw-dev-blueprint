@@ -1123,10 +1123,11 @@ def stageable_repo(tmp_path):
     (tmp_path / "scripts" / ".approved" / "incoming").mkdir(parents=True)
     (tmp_path / "tests").mkdir()
     (tmp_path / "scripts").mkdir(exist_ok=True)
-    for name in ("refreeze.sh", "phase-gate.sh"):
+    for name in ("refreeze.sh", "phase-gate.sh", "spec_artifacts.py"):
         target = tmp_path / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
-        target.chmod(0o755)
+        if name.endswith(".sh"):
+            target.chmod(0o755)
 
     # A prior freeze exists (VERSION>0), so REMOVED entries can refer to
     # files that must be present in the tree.
@@ -2100,6 +2101,136 @@ def test_coder_wrong_path_reply_is_strike_not_commit(tmp_path):
     assert "EVIDENCE=coder wrote to 'src/other.py'" in r.stdout
 
 
+# --- runtime verdict/state guards -------------------------------------------
+
+DRIVE_RUNTIME = SCRIPTS / "selftest" / "drive-runtime.sh"
+
+
+def _runtime_git_commit(repo, subject):
+    marker = repo / "history"
+    marker.write_text(marker.read_text() + subject + "\n" if marker.exists()
+                      else subject + "\n")
+    subprocess.run(["git", "add", "history"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=selftest@local",
+         "-c", "user.name=selftest", "commit", "-qm", subject],
+        cwd=repo, check=True,
+    )
+
+
+def test_run_tests_rejects_stale_green_report_when_sandbox_fails(tmp_path):
+    """A failed sandbox launch must not replay the previous invocation's
+    green JSON report. The runner deletes the report before launch, so the
+    existing NO_REPORT path produces an inconclusive verdict."""
+    cache = tmp_path / ".cache"
+    cache.mkdir()
+    (cache / "test-report.json").write_text(json.dumps({
+        "summary": {"total": 1, "passed": 1},
+        "tests": [{"nodeid": "tests/test_old.py::test_old",
+                   "outcome": "passed"}],
+        "collectors": [],
+    }))
+    r = subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "tests", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "FINAL_TESTS_RC=3" in r.stdout
+    assert "FINAL_FAILING=NO_REPORT" in r.stdout
+
+
+def _run_with_json_report(tmp_path, report):
+    source = tmp_path / "fresh-report.json"
+    source.write_text(json.dumps(report))
+    env = {**os.environ, "SANDBOX_REPORT_SOURCE": str(source),
+           "SANDBOX_STUB_RC": "0"}
+    return subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "tests", str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_run_tests_rejects_skipped_and_xfailed_outcomes(tmp_path):
+    """Frozen acceptance is fail-closed: a collected test that did not
+    ordinarily pass cannot make the task or full suite green."""
+    r = _run_with_json_report(tmp_path, {
+        "summary": {"total": 2, "skipped": 2},
+        "tests": [
+            {"nodeid": "tests/test_x.py::test_skipped",
+             "outcome": "skipped"},
+            {"nodeid": "tests/test_x.py::test_xfail",
+             "outcome": "xfailed"},
+        ],
+        "collectors": [],
+    })
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "FINAL_TESTS_RC=1" in r.stdout
+    assert "tests/test_x.py::test_skipped" in r.stdout
+    assert "tests/test_x.py::test_xfail" in r.stdout
+
+
+def test_run_tests_rejects_xfail_marked_pass(tmp_path):
+    """An XPASS may be encoded as outcome=passed plus wasxfail metadata.
+    It is still not an ordinary frozen-oracle pass."""
+    r = _run_with_json_report(tmp_path, {
+        "summary": {"total": 1, "passed": 1},
+        "tests": [{
+            "nodeid": "tests/test_x.py::test_xpass",
+            "outcome": "passed",
+            "call": {"wasxfail": "known defect"},
+        }],
+        "collectors": [],
+    })
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "FINAL_TESTS_RC=1" in r.stdout
+    assert "tests/test_x.py::test_xpass" in r.stdout
+
+
+def test_state_guard_allows_intentional_post_success_cleanup(tmp_path):
+    """The success path deliberately removes .pipeline-state. A prior task
+    followed by a newer success commit is therefore a legitimate fresh start,
+    not evidence of mid-milestone state loss."""
+    subprocess.run(["git", "init", "-q", "."], cwd=tmp_path, check=True)
+    _runtime_git_commit(tmp_path, "[task T1] attempt 1")
+    _runtime_git_commit(tmp_path, "[success] spec v1")
+    r = subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "state", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "STATE_GUARD=pass" in r.stdout
+
+
+def test_state_guard_still_halts_on_mid_milestone_loss(tmp_path):
+    """A task newer than the most recent success means work was in flight
+    when its state vanished. The fail-closed loss guard must still halt."""
+    subprocess.run(["git", "init", "-q", "."], cwd=tmp_path, check=True)
+    _runtime_git_commit(tmp_path, "[task T1] attempt 1")
+    _runtime_git_commit(tmp_path, "[success] spec v1")
+    _runtime_git_commit(tmp_path, "[task T2] attempt 1")
+    r = subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "state", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "task-state is empty" in r.stderr
+
+
+def test_state_guard_explicit_rebuild_override_is_named_and_loud(tmp_path):
+    """An intentional rebuild has a real escape path instead of the old
+    ineffective instruction to delete an already-empty directory."""
+    subprocess.run(["git", "init", "-q", "."], cwd=tmp_path, check=True)
+    _runtime_git_commit(tmp_path, "[task T1] attempt 1")
+    env = {**os.environ, "SWBP_REBUILD_FROM_SCRATCH": "1"}
+    r = subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "state", str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "SWBP_REBUILD_FROM_SCRATCH=1" in r.stdout
+    assert "STATE_GUARD=pass" in r.stdout
+
+
 # --- D-77 flake triage: the highest-blast-radius branch in orchestrate.sh ----
 # This block is the ONLY code that converts a red frozen suite into `exit 0`
 # + `[success]` commit + `rm -rf` of `.pipeline-state`; per Rule 9 (D-81,
@@ -2113,8 +2244,9 @@ def test_coder_wrong_path_reply_is_strike_not_commit(tmp_path):
 #       (both when isolation ran, and when it never entered)
 #   (d) the fbfc1f0 budget-skip emits skip evidence instead of dying
 #   (e) the flake path builds FLAKE_NOTE for the [success] block downstream
-# Plus one core-invariant test (isolation is corroborating-only, never
-# gating — the fbfc1f0 amendment to D-77).
+# D-100 adds the minimum mechanical flake signal: every failing carried node
+# must pass at least one isolation run; 0/2 and budget-skipped isolation stay
+# red. The 2/2 threshold remains deliberately rejected.
 
 DRIVE_DRIFT = SCRIPTS / "selftest" / "drive-drift.sh"
 
@@ -2172,19 +2304,29 @@ def test_flake_all_unmapped_flips_red_to_green(tmp_path):
     assert _kv(r.stdout, "RT_CALLS") == "2"
 
 
-def test_flake_isolation_is_evidence_only_never_gating(tmp_path):
-    """fbfc1f0 amendment to D-77: isolation is corroborating evidence, never
-    a gate. 0/2 isolated passes must NOT bounce the classification back to
-    DRIFT — a flake that reproduces under host memory load is still a flake
-    (M28's AC-42 failed 4/4 in isolation). Plan mapping is the SOLE
-    discriminator; the k/2 tally is recorded, nothing more."""
+def test_flake_reproducing_twice_keeps_drift(tmp_path):
+    """An unmapped failure that reproduces in both isolation runs is not
+    mechanically demonstrated to be a flake. Keep the frozen suite red."""
     r = run_drive_drift(
         tmp_path, failing="tests/test_flake.py::test_a",
         rt_outcomes="1:1",   # both isolation retries fail
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"    # still flake
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
     assert "0/2 isolated passes" in r.stdout
+    assert _kv(r.stdout, "FLAKE_NOTE") == ""
+
+
+def test_flake_one_isolated_pass_allows_flake_green(tmp_path):
+    """The D-77 compromise: plan-unmapped plus at least one isolated pass
+    provides mechanical flake evidence without demanding deterministic 2/2."""
+    r = run_drive_drift(
+        tmp_path, failing="tests/test_flake.py::test_a",
+        rt_outcomes="1:0",
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
+    assert "1/2 isolated passes" in r.stdout
     assert _kv(r.stdout, "FLAKE_NOTE").startswith("WARNING (D-77)")
 
 
@@ -2221,12 +2363,9 @@ def test_flake_collection_error_bypasses_the_whole_block(tmp_path):
     assert "WARNING (D-77)" not in r.stdout
 
 
-def test_flake_budget_skip_records_evidence_not_die(tmp_path):
-    """fbfc1f0 finding: over SWBP_RUN_BUDGET the isolation runs are the
-    one phase safe to skip (isolation is corroborating-only, so dying
-    here would fail a flake-green suite). The skip must emit an evidence
-    string ('isolation runs skipped — over SWBP_RUN_BUDGET') and the
-    classification still flips to flake-green."""
+def test_flake_budget_skip_keeps_drift_without_evidence(tmp_path):
+    """If isolation cannot run, no mechanical flake evidence exists. Record
+    the budget skip and keep the original frozen-suite failure red."""
     r = run_drive_drift(
         tmp_path,
         failing="tests/test_flake.py::test_a|tests/test_flake.py::test_b",
@@ -2234,10 +2373,10 @@ def test_flake_budget_skip_records_evidence_not_die(tmp_path):
         swbp_elapsed=2000, swbp_budget=1000,
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"    # still flipped
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
     assert "isolation runs skipped — over SWBP_RUN_BUDGET" in r.stdout
     assert _kv(r.stdout, "RT_CALLS") == "0"
-    assert _kv(r.stdout, "FLAKE_NOTE").startswith("WARNING (D-77)")
+    assert _kv(r.stdout, "FLAKE_NOTE") == ""
 
 
 def test_flake_failing_and_detail_survive_isolation_clobber(tmp_path):
@@ -2429,10 +2568,11 @@ def freezable_repo(tmp_path):
     approved = tmp_path / "scripts" / ".approved"
     (approved / "incoming" / "tests").mkdir(parents=True)
     (tmp_path / "tests").mkdir()
-    for name in ("refreeze.sh", "check-test-surface.py"):
+    for name in ("refreeze.sh", "check-test-surface.py", "spec_artifacts.py"):
         target = tmp_path / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
-        target.chmod(0o755)
+        if name.endswith(".sh"):
+            target.chmod(0o755)
     (approved / "VERSION").write_text("1\n")
     (approved / "contracts.json").write_text(json.dumps({
         "files": ["src/app.py"], "entry_points": [], "routes": [],
@@ -3075,6 +3215,90 @@ def test_refreeze_without_erd_delta_still_works(freezable_repo):
     assert "ERD-DELTA.md" not in manifest, manifest
 
 
+def test_tpm_shuttle_carries_erd_delta_end_to_end(tmp_path):
+    """The chat-side TPM must receive the frozen delta doc and be able to
+    return its replacement through the same sentinel shuttle."""
+    (tmp_path / "scripts" / "schemas").mkdir(parents=True)
+    (tmp_path / "scripts" / ".approved").mkdir()
+    (tmp_path / "docs").mkdir()
+    for name in ("tpm-pack.sh", "tpm-unpack.sh"):
+        target = tmp_path / "scripts" / name
+        target.write_bytes((SCRIPTS / name).read_bytes())
+    policy = SCRIPTS / "spec_artifacts.py"
+    if policy.exists():
+        (tmp_path / "scripts" / policy.name).write_bytes(policy.read_bytes())
+    (tmp_path / "docs" / "TPM-ROLE.md").write_text("TPM role\n")
+    (tmp_path / "scripts" / "schemas" / "contracts.schema.json").write_text("{}\n")
+    approved = tmp_path / "scripts" / ".approved"
+    (approved / "VERSION").write_text("4\n")
+    (approved / "PRD.md").write_text("# PRD\n")
+    (approved / "ERD.md").write_text("# Standing ERD\n")
+    (approved / "ERD-DELTA.md").write_text("# Frozen delta marker\n")
+    (approved / "contracts.json").write_text("{}\n")
+
+    packed = subprocess.run(
+        ["bash", "scripts/tpm-pack.sh"], cwd=tmp_path,
+        capture_output=True, text=True,
+    )
+    assert packed.returncode == 0, (packed.stdout, packed.stderr)
+    assert "CONTEXT FILE: scripts/.approved/ERD-DELTA.md" in packed.stdout
+    assert "# Frozen delta marker" in packed.stdout
+    assert "ERD-DELTA.md" in packed.stdout.split("Allowed paths ONLY:", 1)[1]
+
+    reply = (
+        "=== FILE: ERD-DELTA.md ===\n"
+        "# Replacement delta\n"
+        "=== END FILE ===\n"
+    )
+    unpacked = subprocess.run(
+        ["bash", "scripts/tpm-unpack.sh"], cwd=tmp_path, input=reply,
+        capture_output=True, text=True,
+    )
+    assert unpacked.returncode == 0, (unpacked.stdout, unpacked.stderr)
+    assert (approved / "incoming" / "ERD-DELTA.md").read_text() == \
+        "# Replacement delta\n"
+
+
+def test_spec_artifact_policy_is_shared_by_all_shuttle_boundaries():
+    """The refreeze, pack, and unpack allowlists previously drifted twice.
+    All three runtime boundaries must consume one policy module."""
+    policy = SCRIPTS / "spec_artifacts.py"
+    assert policy.exists(), "missing shared spec-artifact policy"
+    for name in ("refreeze.sh", "tpm-pack.sh", "tpm-unpack.sh",
+                 "tpm-agent.sh"):
+        source = (SCRIPTS / name).read_text()
+        assert "spec_artifacts" in source, f"{name} bypasses shared policy"
+    allowed = subprocess.run(
+        [sys.executable, str(policy), "check",
+         "ERD-DELTA.md", "tests/fixtures/provider.json"],
+        capture_output=True, text=True,
+    )
+    assert allowed.returncode == 0, allowed.stderr
+    traversal = subprocess.run(
+        [sys.executable, str(policy), "check", "tests/../src/secret.py"],
+        capture_output=True, text=True,
+    )
+    assert traversal.returncode != 0
+
+
+def test_onboarding_prints_the_model_override_names_llm_call_reads():
+    """Onboarding must teach SWBP_<ROLE>_MODEL, not the transposed names
+    that llm-call ignores."""
+    for name in ("bootstrap.sh", "new-project.sh"):
+        source = (SCRIPTS / name).read_text()
+        assert "SWBP_EM_MODEL" in source
+        assert "SWBP_CODER_MODEL" in source
+        assert "SWBP_MODEL_EM" not in source
+        assert "SWBP_MODEL_CODER" not in source
+
+
+def test_ci_lints_template_owned_python_scripts():
+    """The unconditional control-plane job must lint scripts/, where the
+    gate code and its selftests live, even for an unbootstrapped skeleton."""
+    workflow = (SCRIPTS.parent / ".github" / "workflows" / "ci.yml").read_text()
+    assert re.search(r"(?m)^\s*run:\s*ruff check scripts/?\s*$", workflow)
+
+
 def test_plan_trivial_one_file_zero_em_calls(tmp_path):
     """Cut 2 through the REAL ensure_plan: a trivial one-file re-freeze
     takes ZERO EM calls, no plan-revision budget spent, gate green,
@@ -3222,6 +3446,70 @@ def test_update_template_interactive_flag_requires_terminal(template_pull_pair):
         cwd=child, capture_output=True, text=True, check=True,
     )
     assert not log.stdout.strip().startswith("[template-update "), log.stdout
+
+
+def test_update_template_applies_removal_only_update(template_pull_pair):
+    """A file retired from the upstream template must be deleted, staged, and
+    committed even when every still-listed file already matches upstream."""
+    child, clone = template_pull_pair
+    template_hello = (clone / "scripts" / "hello.sh").read_bytes()
+    (child / "scripts" / "hello.sh").write_bytes(template_hello)
+    hello_hash = subprocess.run(
+        ["sha256sum", "scripts/hello.sh"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.split()[0]
+    obsolete = child / "scripts" / "obsolete.sh"
+    obsolete.write_text("#!/bin/sh\necho obsolete\n")
+    obsolete.chmod(0o755)
+    obsolete_hash = subprocess.run(
+        ["sha256sum", "scripts/obsolete.sh"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.split()[0]
+    (child / "scripts" / ".manifest-template").write_text(
+        f"{hello_hash}  scripts/hello.sh\n"
+        f"{obsolete_hash}  scripts/obsolete.sh\n"
+    )
+    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "fixture: add obsolete template file"],
+        cwd=child, check=True,
+    )
+
+    r = _run_ut(
+        ["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "scripts/obsolete.sh" in r.stdout
+    assert not obsolete.exists()
+    assert "scripts/obsolete.sh" not in \
+        (child / "scripts" / ".manifest-template").read_text()
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "scripts/obsolete.sh"],
+        cwd=child, capture_output=True, text=True,
+    )
+    assert tracked.returncode != 0, tracked.stdout
+    subject = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert subject.startswith("[template-update "), subject
+
+
+# --- sandbox image build context --------------------------------------------
+
+
+def test_containerfile_never_copies_the_project_tree_into_an_image_layer():
+    """The sandbox image needs the dependency manifest, not source, runtime
+    state, captures, or local secrets. COPY . permanently retains all of them
+    in an earlier image layer even when a later RUN deletes the directory."""
+    containerfile = (SCRIPTS.parent / "Containerfile").read_text()
+    assert not re.search(r"(?m)^COPY\s+\.\s", containerfile), containerfile
+    assert re.search(
+        r"(?m)^COPY\s+requirements\.txt\s+/tmp/requirements\.txt$",
+        containerfile,
+    ), containerfile
+    dockerignore = (SCRIPTS.parent / ".dockerignore").read_text().splitlines()
+    for required in (".env*", ".pipeline-state", ".em-archive"):
+        assert required in dockerignore, (required, dockerignore)
 
 
 # --- status.sh / teardown.sh (D-97 housekeeping) -----------------------------

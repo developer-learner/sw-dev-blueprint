@@ -67,6 +67,10 @@ pytest -v
 
 # Stop on first failure
 pytest -x
+
+# Template control-plane validation (runs even before src/ exists)
+ruff check scripts/
+pytest scripts/selftest/selftest_gates.py -q
 ```
 
 ---
@@ -82,6 +86,11 @@ at freeze time is **catch-up only** — for freezes where `src/` changed
 outside the pipeline (the testchat v65 case). A steady-state freeze that
 re-runs the whole suite is duplicating the run's own closing gate, not
 adding safety.
+
+Every collected frozen test must finish with an ordinary `passed` outcome.
+Skipped, xfailed, xpassed, and xfail-marked passes are red acceptance results
+(D-103): pytest's process-level success policy does not override the frozen
+suite's role as the behavioral oracle.
 
 ---
 

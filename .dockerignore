@@ -1,4 +1,13 @@
 .git
-.env
+.env*
+.pipeline-state
+.em-archive
+.cache
+.tpm
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.opencode/node_modules
+node_modules
 *.pyc
 __pycache__

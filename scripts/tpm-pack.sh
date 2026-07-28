@@ -23,6 +23,10 @@ set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
 APPROVED="scripts/.approved"
+ALLOWED_ARTIFACTS=$(python3 scripts/spec_artifacts.py describe) || {
+  echo "tpm-pack: shared spec-artifact policy unavailable" >&2
+  exit 1
+}
 WANT_CLIPBOARD=0
 case "${1:-}" in
   --clipboard) WANT_CLIPBOARD=1 ;;
@@ -50,14 +54,14 @@ HDR
   if [ -f "$APPROVED/VERSION" ]; then
     echo "--- CURRENTLY FROZEN SPEC (v$(cat "$APPROVED/VERSION")) — derive any delta from THIS, not from chat memory ---"
     echo
-    for f in PRD.md ERD.md contracts.json; do
+    for f in $(python3 scripts/spec_artifacts.py documents); do
       [ -f "$APPROVED/$f" ] && emit "$APPROVED/$f"
     done
   else
     echo "--- NO FROZEN SPEC YET — this is the initial freeze (v1): a complete spec is required (PRD.md, ERD.md, contracts.json, and the test suite under tests/) ---"
     echo
   fi
-  cat <<'FTR'
+  cat <<FTR
 === REPLY FORMAT (mandatory for spec artifacts) ===
 Emit every artifact as a COMPLETE file between sentinels, exactly:
 
@@ -65,7 +69,7 @@ Emit every artifact as a COMPLETE file between sentinels, exactly:
 <full file content>
 === END FILE ===
 
-Allowed paths ONLY: PRD.md, ERD.md, contracts.json, tests/<name>.py
+Allowed paths ONLY: $ALLOWED_ARTIFACTS
 The operator installs your reply mechanically (tpm-unpack.sh -> refreeze.sh);
 anything outside the sentinels is treated as discussion, not artifact.
 FTR

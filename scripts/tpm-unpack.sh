@@ -66,18 +66,11 @@ from pathlib import Path
 in_dir = Path(sys.argv[1])
 text = Path(sys.argv[2]).read_text()
 
-# Same whitelist refreeze.sh enforces — validated here too so a bad reply
-# fails at unpack with a named culprit, not later with a vaguer error.
-# Kept in sync with refreeze.sh's BAD sweep: PRD.md, ERD.md, contracts.json,
-# REMOVED, tests/*.py, captures/* (any file under captures/, per D-56).
-ALLOWED = re.compile(
-    r"^(PRD\.md|ERD\.md|contracts\.json|REMOVED"
-    r"|tests/[A-Za-z0-9_\-]+\.py"
-    r"|captures/[A-Za-z0-9_./\-]+)$"
-)
-# Character class in captures/ includes '.' and '/' to allow filenames like
-# openai-response.json and nested paths — reject '..' explicitly (same class
-# of traversal as refreeze.sh's REMOVED whitelist, fixed in 64535e3).
+sys.path.insert(0, str(Path("scripts").resolve()))
+from spec_artifacts import allowed_description, is_allowed
+
+# The same policy module is consumed by refreeze and tpm-pack. Validate here
+# too so a bad reply fails with a named culprit before anything is staged.
 BLOCK = re.compile(
     r"^=== FILE: (.+?) ===\n(.*?)^=== END FILE ===$", re.M | re.S
 )
@@ -92,8 +85,11 @@ if not blocks:
 errs, files = [], {}
 for raw_path, content in blocks:
     path = raw_path.strip()
-    if not ALLOWED.match(path) or ".." in path.split("/"):
-        errs.append(f"disallowed path: {path!r} (allowed: PRD.md, ERD.md, contracts.json, REMOVED, tests/<name>.py, captures/<...>; no traversal)")
+    if not is_allowed(path):
+        errs.append(
+            f"disallowed path: {path!r} "
+            f"(allowed: {allowed_description()}; no traversal)"
+        )
         continue
     if not content.strip():
         errs.append(f"empty content for {path}")

@@ -24,12 +24,13 @@ RUN pip install --no-cache-dir playwright pytest-playwright && \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright playwright install --with-deps chromium
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Project deps — only if requirements.txt exists at build time.
-# Rebuild image after bootstrap.sh generates it (see BLUEPRINT.md Rule 3).
-COPY . /tmp/ctx
-RUN if [ -f /tmp/ctx/requirements.txt ]; then \
-      pip install --no-cache-dir -r /tmp/ctx/requirements.txt; \
-    fi && rm -rf /tmp/ctx
+# Project deps. Copy ONLY the dependency manifest: COPY . would retain source,
+# local env files, pipeline state, and captures in an earlier image layer even
+# if a later RUN removed the directory. Child projects using another stack
+# adapt this project-owned Containerfile under BLUEPRINT.md Rule 3.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm -f /tmp/requirements.txt
 
 # Non-root user
 RUN useradd -m -u 1000 agent

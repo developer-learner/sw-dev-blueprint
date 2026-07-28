@@ -80,7 +80,7 @@ Next steps (do these while awake):
 3. Adapt stack if needed (Rule 3): edit ci.yml / requirements if not FastAPI+SQLite
 4. Load one or two non-thinking models in LM Studio (your choice — D-41: the
    repo never names a model) and map roles in ~/.config/sw-dev-blueprint/models.env
-   (SWBP_MODEL_EM=<name>, SWBP_MODEL_CODER=<name>).
+   (SWBP_EM_MODEL=<name>, SWBP_CODER_MODEL=<name>).
 5. Author the frozen spec (PRD/ERD/contracts/tests) with your TPM chat, stage
    under scripts/.approved/incoming/, run scripts/refreeze.sh.
 6. scripts/orchestrate.sh — the shell drives EM and coder over HTTP

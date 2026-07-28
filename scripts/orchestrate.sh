@@ -97,6 +97,34 @@ set_tstat()   { printf '%s\n' "$2" > "$TASK_STATE/$1.status"; }
 counter()     { [ -f "$TASK_STATE/$1.$2" ] && cat "$TASK_STATE/$1.$2" || echo 0; }
 set_counter() { printf '%s\n' "$3" > "$TASK_STATE/$1.$2"; }
 
+# guard_task_state — distinguish intentional post-success cleanup from loss
+# during an unfinished milestone. Both present as an empty gitignored state
+# directory, but their git histories differ: after a completed run, the newest
+# task commit is an ancestor of the newest [success] commit. If a task landed
+# after the last success, state disappeared while work was in flight and the
+# fail-closed halt still applies.
+guard_task_state() {
+  [ -z "$(ls -A "$TASK_STATE" 2>/dev/null || true)" ] || return 0
+  local latest_task latest_success
+  latest_task=$(git log --grep='^\[task ' -1 --format=%H 2>/dev/null || true)
+  [ -n "$latest_task" ] || return 0
+  latest_success=$(git log --grep='^\[success\]' -1 --format=%H 2>/dev/null || true)
+  if [ -n "$latest_success" ] \
+     && git merge-base --is-ancestor "$latest_task" "$latest_success" 2>/dev/null; then
+    echo "  pipeline task-state: clean post-success state — starting the next run fresh"
+    return 0
+  fi
+  if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" = "1" ]; then
+    echo "  WARNING: empty task-state accepted by explicit SWBP_REBUILD_FROM_SCRATCH=1"
+    return 0
+  fi
+  die "pipeline task-state is empty, but the newest [task] commit is not covered by a later [success] — .pipeline-state/tasks/ was LOST mid-milestone.
+  Every unfinished task would read 'pending' and the coder could be handed files no delta touches.
+  Recover the task status/fingerprint files from the run record before retrying.
+  If a full rebuild is genuinely intended, make that destructive scope explicit:
+    SWBP_REBUILD_FROM_SCRATCH=1 scripts/orchestrate.sh"
+}
+
 # --- run clock (D-69): phase-timing log + wall-clock budget ------------------
 # timings.tsv gets one row per phase boundary; the budget halt prints it, and
 # post-run tuning reads it — no historical run had per-phase numbers, so every
@@ -280,23 +308,12 @@ curl -s --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1
 # requirements.txt and src/ it never saw).
 [ -z "$(git status --porcelain)" ] \
   || die "working tree not clean — commit or stash first (uncommitted changes would be misattributed to the first tier the lane gate checks): $(git status --porcelain | head -5 | tr '\n' ' ')"
-# Lost task-state reads identically to a fresh project, and that difference
-# decides whether the coder is handed the whole application. .pipeline-state/
-# is gitignored and unversioned; under testchat it vanished twice in one day
-# (2026-07-26), the second time as a PARTIAL delete that emptied tasks/ while
-# leaving its siblings intact. With the markers gone every task reads
-# `pending`, the EM plans the full file surface, and the coder rewrites files
-# no delta ever touched. Prior [task] commits prove work was completed here
-# before, so an empty state dir alongside them is loss — never a greenfield
-# start. Fail closed (Rule 4); a rebuild that is genuinely wanted is one
-# explicit `rm -rf .pipeline-state` away.
-if [ -z "$(ls -A "$TASK_STATE" 2>/dev/null || true)" ] \
-   && [ -n "$(git log --oneline --grep='^\[task ' -1 2>/dev/null || true)" ]; then
-  die "pipeline task-state is empty, but this repo has prior [task] commits — .pipeline-state/tasks/ was LOST, not never-created.
-  Every task would read 'pending' and the coder would be handed files no delta touches.
-  Recover: re-derive the plan, halt before the task DAG, then mark the tasks whose mapped tests already pass as done (status + fingerprint) — see tasks/CURRENT.md.
-  If a full rebuild really is intended, remove the state directory explicitly: rm -rf .pipeline-state"
-fi
+# Lost task-state reads identically to intentional success cleanup unless the
+# git history is consulted. Fail closed only when the latest task is not
+# covered by a later success; guard_task_state also provides an explicit,
+# named full-rebuild override instead of the old ineffective "delete the
+# already-empty directory" instruction.
+guard_task_state
 # Control-plane + frozen-artifact integrity (phase-gate verifies both, fail-closed)
 bash scripts/phase-gate.sh manifest HEAD
 # The frozen spec IS the human approval: it only exists via scripts/refreeze.sh,
@@ -575,6 +592,10 @@ PYEOF
 run_tests() {
   mkdir -p .cache
   mark "tests start ($# node-id(s); 0 = full suite)"
+  # A sandbox launch/build/timeout failure may produce no report. Remove the
+  # prior invocation's report first so that failure cannot replay a stale green
+  # verdict; a missing new report is classified NO_REPORT below.
+  rm -f .cache/test-report.json
   scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
     --json-report-file=.cache/test-report.json "$@" >/dev/null 2>&1 || true
   local out
@@ -614,12 +635,30 @@ def crash_text(t):
             return tail(msg)
     return ""
 
-failed_tests = sorted((t for t in tests
-                       if t.get("outcome") in ("failed", "error")),
-                      key=lambda t: t["nodeid"])
-failed = [t["nodeid"] for t in failed_tests]
-detail = [f"{t['nodeid']}: {crash_text(t)}"
-          for t in failed_tests[:3] if crash_text(t)]
+def xfail_reason(t):
+    for record in (t, t.get("setup") or {}, t.get("call") or {},
+                   t.get("teardown") or {}):
+        if "wasxfail" in record:
+            return record.get("wasxfail")
+    return None
+
+# The frozen suite is an acceptance oracle: only an ordinary pass is green.
+# pytest may encode xfail as a distinct outcome, as "skipped", or as a passed
+# call carrying wasxfail metadata (XPASS). Reject every such representation.
+nonpassing_tests = sorted(
+    (t for t in tests
+     if t.get("outcome") != "passed" or xfail_reason(t) is not None),
+    key=lambda t: t["nodeid"],
+)
+failed = [t["nodeid"] for t in nonpassing_tests]
+detail = []
+for t in nonpassing_tests[:3]:
+    reason = crash_text(t)
+    if not reason:
+        reason = f"outcome={t.get('outcome', 'unknown')}"
+        if xfail_reason(t) is not None:
+            reason += f", wasxfail={xfail_reason(t)}"
+    detail.append(f"{t['nodeid']}: {reason}")
 for c in failed_collectors[:1]:
     detail.append(f"collection: {tail(c.get('longrepr', ''))}")
 if failed_collectors:
@@ -1258,15 +1297,13 @@ echo "=== Full frozen suite ==="
 run_tests
 
 # --- D-77: flake triage before declaring drift -------------------------------
-# A failing node that is unmapped in the plan (carried-forward, D-57) was never
-# touched by this delta: when EVERY failing node is unmapped, the failure is a
-# carried-forward flake, not spec drift, and the suite is treated as green with
-# a loud WARNING. The plan mapping is the ONLY discriminator. Each unmapped
-# node is also re-run twice in isolation, but the result is recorded as
-# corroborating evidence and never flips the classification — M28's AC-42
-# flake later failed 4/4 IN ISOLATION under host memory load, so an isolated
-# run measures the environment as much as the test. Any mapped node or
-# collection error keeps the DRIFT path exactly as before.
+# A failing node that is unmapped in the plan is carried-forward (D-57), but
+# that alone does not prove it is flaky: a delta can transitively break carried
+# behavior. Every failing carried node is therefore re-run twice in isolation.
+# Auto-green requires at least one isolated pass PER node. A node that
+# reproduces 0/2, or whose isolation runs cannot execute within budget, keeps
+# the original full-suite failure red. Any mapped node or collection error also
+# keeps the DRIFT path exactly as before.
 #
 # The block between the BEGIN/END markers below is extracted verbatim by
 # scripts/selftest/drive-drift.sh — keep the markers on their own lines.
@@ -1275,6 +1312,7 @@ FLAKE_NOTE=""
 if [ "$TESTS_RC" -eq 1 ] && [ -n "$FAILING" ] \
   && [[ "$FAILING" != *COLLECTION_ERROR* ]]; then
   all_carried=1
+  isolation_supports_flake=1
   saved_failing="$FAILING" saved_detail="$FAIL_DETAIL"
   IFS='|' read -r -a _fail_ids <<< "$FAILING"
   for fid in "${_fail_ids[@]}"; do
@@ -1295,6 +1333,7 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
       # the evidence instead.
       if [ "$SWBP_RUN_BUDGET" -gt 0 ] && [ "$(run_elapsed)" -gt "$SWBP_RUN_BUDGET" ]; then
         iso_evidence="${iso_evidence:+$iso_evidence; }isolation runs skipped — over SWBP_RUN_BUDGET"
+        isolation_supports_flake=0
         break
       fi
       iso_pass=0
@@ -1303,15 +1342,19 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
         if [ "$TESTS_RC" -eq 0 ]; then iso_pass=$((iso_pass + 1)); fi
       done
       iso_evidence="${iso_evidence:+$iso_evidence; }$fid: $iso_pass/2 isolated passes"
+      [ "$iso_pass" -gt 0 ] || isolation_supports_flake=0
     done
   fi
   FAILING="$saved_failing"; FAIL_DETAIL="$saved_detail"; TESTS_RC=1
-  if [ "$all_carried" -eq 1 ]; then
+  if [ "$all_carried" -eq 1 ] && [ "$isolation_supports_flake" -eq 1 ]; then
     echo "WARNING (D-77): every full-suite failure is a carried-forward node,"
-    echo "  unmapped in the plan — flake, not drift. Isolation evidence: $iso_evidence"
+    echo "  unmapped in the plan, with an isolated pass — flake, not drift. Isolation evidence: $iso_evidence"
     FLAKE_NOTE="
 WARNING (D-77): carried-forward node(s) failed in the full run — flake, not drift ($iso_evidence). A recurring flake is a frozen-test defect: it belongs to the TPM at the next refreeze."
     TESTS_RC=0
+  elif [ "$all_carried" -eq 1 ]; then
+    echo "D-77: carried-forward failure reproduced or could not be isolated;"
+    echo "  keeping the frozen suite red. Isolation evidence: $iso_evidence"
   fi
 fi
 # END D-77 flake triage

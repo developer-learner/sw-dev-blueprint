@@ -147,7 +147,7 @@ def main(argv):
 
     for f in sorted(tests_dir.rglob("*.py")):
         source_lines = f.read_text().splitlines()
-        is_ui_test = any(PLAYWRIGHT_IMPORT.match(l) for l in source_lines)
+        is_ui_test = any(PLAYWRIGHT_IMPORT.match(line) for line in source_lines)
         for lineno, line in enumerate(source_lines, 1):
             if is_ui_test:
                 for tid in GET_BY_TEST_ID.findall(line):

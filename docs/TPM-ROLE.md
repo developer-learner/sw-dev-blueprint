@@ -166,7 +166,8 @@ work exactly as before.
 
 Deliver all artifacts as complete files (never fragments) in the staging
 layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`,
-`ERD-DELTA.md` (optional), `contracts.json`, `tests/<file>.py`.
+`ERD-DELTA.md` (optional), `contracts.json`, `REMOVED`,
+`tests/<...>` (test modules and frozen fixtures), and `captures/<...>`.
 
 **Delivery format (mandatory):** wrap every artifact in sentinels, exactly —
 
@@ -177,7 +178,7 @@ layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`,
 ```
 
 The operator installs your reply mechanically (`scripts/tpm-unpack.sh` →
-`scripts/refreeze.sh`); only those four path shapes are accepted, fail-closed.
+`scripts/refreeze.sh`); only those path shapes are accepted, fail-closed.
 Anything outside the sentinels is treated as discussion, not artifact. Your
 session context likewise arrives as one `scripts/tpm-pack.sh` bundle — when a
 frozen spec is included, derive deltas from it, never from chat memory.

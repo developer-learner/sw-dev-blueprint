@@ -74,7 +74,11 @@ preserving paths:
 scripts/.approved/incoming/
 ├── contracts.json        # only if contracts changed
 ├── ERD.md                # only if the ERD prose changed
+├── ERD-DELTA.md          # optional per-milestone ERD detail
 ├── PRD.md                # only if the PRD changed
+├── REMOVED               # optional tests/*.py removals, one path per line
+├── captures/             # only captures declared by contracts.externals
+│   └── provider.json
 └── tests/
     └── test_items.py     # only the changed test files
 ```
