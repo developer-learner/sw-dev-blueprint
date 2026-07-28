@@ -155,6 +155,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-67**: `refreeze` lints staged tests
 - **D-75**: Red-before-green — a refreeze runs the delta's tests pre-implementation, warns on early passes
 - **D-104**: One executable artifact-path policy governs TPM pack, unpack, agent mode, and refreeze
+- **D-107**: Behavioral freezes require a fresh, coverage-checked `ERD-DELTA.md`
 
 ### Escalation ladder & failure paths
 

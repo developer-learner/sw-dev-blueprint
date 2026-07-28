@@ -74,7 +74,7 @@ preserving paths:
 scripts/.approved/incoming/
 ├── contracts.json        # only if contracts changed
 ├── ERD.md                # only if the ERD prose changed
-├── ERD-DELTA.md          # optional per-milestone ERD detail
+├── ERD-DELTA.md          # required for every behavioral delta (D-107)
 ├── PRD.md                # only if the PRD changed
 ├── REMOVED               # optional tests/*.py removals, one path per line
 ├── captures/             # only captures declared by contracts.externals
@@ -89,7 +89,10 @@ then runs:
 scripts/refreeze.sh scripts/.approved/incoming
 ```
 
-refreeze runs every mechanical preflight (D-56/D-78/D-87/D-88/D-89/INV-4
+`ERD-DELTA.md` uses the four required sections from `docs/TPM-ROLE.md`;
+refreeze checks that newly introduced AC ids and `contracts.changed_files`
+are represented there. Refreeze then runs every mechanical preflight
+(D-56/D-78/D-87/D-88/D-89/D-107/INV-4
 plus staged-test parse+lint+determinism), prints the diff and DIFF-SHA,
 and — on preflight-green — applies automatically (D-95). Explicit paths
 remain: `--diff` prints and exits, `--approve <hash>` (D-42) is the

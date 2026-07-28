@@ -49,12 +49,10 @@
 # Staging layout — ONLY the changed files, full new content, paths preserved:
 #   PRD.md  ERD.md  ERD-DELTA.md  contracts.json
 #                                           -> installed to scripts/.approved/
-#                                              (ERD-DELTA.md is optional per
-#                                              Cut 3 — the per-milestone spec
-#                                              carrying ACs/mapping/inventory
-#                                              changes; ERD.md carries the
-#                                              standing architecture. Both
-#                                              are pinned in the same freeze.)
+#                                              (ERD-DELTA.md is required for
+#                                              every behavioral re-freeze and
+#                                              carries the current milestone;
+#                                              ERD.md is standing architecture.)
 #   tests/<file>.py ...                     -> installed to tests/
 #   REMOVED                                 -> repo paths to retire (one per
 #                                              line, tests/*.py only), deleted
@@ -202,6 +200,27 @@ if [ "$V" -eq 0 ]; then
   [ -n "$CHANGED_TEST_FILES" ] || die "initial freeze (v1) requires the TPM test suite under $IN/tests/"
 fi
 
+# --- D-107: current-milestone spec consistency ------------------------------
+# A long-lived project cannot ask the EM to infer the current change from a
+# standing ERD that has accumulated dozens of prior milestones. Every
+# behavioral re-freeze therefore carries a fresh ERD-DELTA.md with four
+# mechanically recognizable sections. The checker also proves that newly
+# introduced AC ids and contracts.changed_files occur in that delta.
+# A non-behavioral standing-ERD refresh retires the prior delta automatically:
+# folding the completed milestone into standing architecture is the explicit
+# consolidation point, and the next EM cannot mistake the old slice for new.
+if ! SPEC_DELTA_KIND=$(python3 scripts/check-spec-delta.py \
+  --staging "$IN" --approved "$APPROVED" --repo . --current-version "$V"); then
+  die "current-milestone ERD delta rejected (D-107)"
+fi
+RETIRE_ERD_DELTA=0
+if [ "$SPEC_DELTA_KIND" = "nonbehavioral" ] \
+   && [ -f "$APPROVED/ERD-DELTA.md" ] \
+   && [ -f "$IN/ERD.md" ] \
+   && [ ! -f "$IN/ERD-DELTA.md" ]; then
+  RETIRE_ERD_DELTA=1
+fi
+
 # --- Sanity-check incoming contracts against the schema's structural core ---
 if [ -f "$IN/contracts.json" ]; then
   python3 - "$IN/contracts.json" "$NEW" <<'PYEOF' || exit 1
@@ -311,6 +330,7 @@ ERD_MASS_DELTA="$APPROVED/ERD-DELTA.md"
 ERD_MASS_CONTRACTS="$APPROVED/contracts.json"
 [ -f "$IN/ERD.md" ] && ERD_MASS_ERD="$IN/ERD.md"
 [ -f "$IN/ERD-DELTA.md" ] && ERD_MASS_DELTA="$IN/ERD-DELTA.md"
+[ "$RETIRE_ERD_DELTA" -eq 0 ] || ERD_MASS_DELTA=""
 [ -f "$IN/contracts.json" ] && ERD_MASS_CONTRACTS="$IN/contracts.json"
 if [ -f "$ERD_MASS_ERD" ] && [ -f "$ERD_MASS_CONTRACTS" ]; then
   # Cut 3: both ERD.md and ERD-DELTA.md reach the EM as combined context, so
@@ -356,6 +376,11 @@ show_diff() {  # $1 current-path  $2 incoming-path
     echo "--- $APPROVED/$f ---"
     show_diff "$APPROVED/$f" "$IN/$f"
   done
+  if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then
+    echo ""
+    echo "--- $APPROVED/ERD-DELTA.md (RETIRED — no behavioral delta) ---"
+    diff -u "$APPROVED/ERD-DELTA.md" /dev/null || true
+  fi
   for f in $REMOVED_FILES; do
     echo ""
     echo "--- $f (REMOVED) ---"
@@ -523,6 +548,9 @@ esac
 for f in $CHANGED_DOCS; do
   cp "$IN/$f" "$APPROVED/$f"
 done
+if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then
+  rm -f "$APPROVED/ERD-DELTA.md"
+fi
 for f in $CHANGED_TEST_FILES; do
   mkdir -p "$(dirname "$f")"
   cp "$IN/$f" "$f"
@@ -765,6 +793,7 @@ echo "$NEW" > "$APPROVED/VERSION"
 git add tests/ "$APPROVED/frozen-manifest" "$APPROVED/VERSION" \
   "$APPROVED/test-nodeids" "$APPROVED/DELTA-v$NEW.json"
 for f in $CHANGED_DOCS; do git add "$APPROVED/$f"; done
+if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then git add "$APPROVED/ERD-DELTA.md"; fi
 for f in $CHANGED_CAPTURES; do git add "$APPROVED/$f"; done
 git commit -m "[refreeze v$NEW]"
 rm -rf "$IN"
