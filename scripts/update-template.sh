@@ -2,14 +2,16 @@
 # update-template.sh — pull the template's control plane into this child (D-34).
 #
 # The refreeze pattern (D-31) applied to the OTHER protected artifact class:
-# stage the template's current template-owned files, show the human one diff,
-# interactive y/N, apply, re-pin hashes, advance .template-version, commit
-# [template-update <sha>]. This is the fix for the spark-class incident —
-# control-plane improvements flow template -> children instead of by hand.
+# stage the template's current template-owned files, show one diff and the
+# template's own commit-message claims for the update range, apply, re-pin
+# hashes, advance .template-version, commit [template-update <sha>]. This
+# is the fix for the spark-class incident — control-plane improvements
+# flow template -> children instead of by hand.
 #
 # Usage:
 #   update-template.sh [--from <clone-dir>] [--ref <ref>] [--dry-run] [--review]
 #   update-template.sh --approve <sha> [--from <clone-dir>] [--ref <ref>]
+#   update-template.sh --interactive [--from <clone-dir>] [--ref <ref>]
 #   update-template.sh --stamp [--from <clone-dir>]
 #
 #   --from     use an existing local clone of the template (else: gh repo clone
@@ -18,24 +20,30 @@
 #   --dry-run  show what would change and exit; no tty needed, nothing written.
 #              Prints the DIFF-SHA the --approve mode binds to.
 #   --review   emit a self-contained review bundle (claims + diff + reviewer
-#              instructions) for pasting into a SECOND model before the CEO
-#              approves; no tty needed, nothing written. The CEO gate stays a
-#              human authorization — this delegates the technical reading.
+#              instructions) for pasting into a SECOND model before applying;
+#              no tty needed, nothing written. Delegates the technical read.
 #   --approve <sha>
-#              non-interactive apply, D-61 (the D-42 refreeze pattern applied
-#              here): the sha must match the recomputed diff hash, so what is
+#              explicit apply, D-61 (the D-42 refreeze pattern applied here):
+#              the sha must match the recomputed diff hash, so what is
 #              applied is byte-bound to what was reviewed. If the template or
 #              the child changed since --dry-run, the hash mismatches and
 #              nothing is written. Same honest caveat as D-42: a conductor
 #              relays the diff, so the CEO's read is only as good as the relay
 #              — the raw diff is deterministic and re-printable at any time.
+#   --interactive
+#              opt-in y/N prompt (the pre-D-96 default). For the rare case
+#              where the operator wants to eyeball this specific pull before
+#              it applies. Requires a terminal.
 #   --stamp    only (re)write ref= in .template-version to the template's HEAD —
 #              retrofits a child created before D-33. No files are copied.
 #
-# The approval screen presents plain-language claims (the template's commit
-# messages for the update range), because the CEO's y/N is an AUTHORIZATION
-# that the control plane changed with a human aware — not a code review.
-# Correctness is carried by the template's selftests and the next run's gates.
+# Default is auto (D-96, mirrors D-95): on all pre-diff checks green
+# (clone resolvable, template manifest present, diff computable), the pull
+# applies without a prompt. Correctness is carried by the template's own
+# selftests (which ran green before the template committed) and the next
+# run's gates in this child; the post-apply `phase-gate.sh manifest HEAD`
+# still fails closed on integrity mismatch. The plain-language CLAIMS are
+# printed on every invocation so a conductor or reviewer can react.
 set -euo pipefail
 
 # Self-update safety: this script is itself template-owned, so an update can
@@ -55,15 +63,16 @@ die() { echo "UPDATE-TEMPLATE FAIL: $*" >&2; exit 1; }
 # Cross-platform sed -i (GNU vs BSD/macOS)
 sed_inplace() { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
 
-FROM=""; REF=""; DRY=0; STAMP=0; REVIEW=0; APPROVE=""
+FROM=""; REF=""; DRY=0; STAMP=0; REVIEW=0; APPROVE=""; INTERACTIVE=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --from)    FROM="${2:?--from needs a path}"; shift 2 ;;
-    --ref)     REF="${2:?--ref needs a ref}"; shift 2 ;;
-    --dry-run) DRY=1; shift ;;
-    --review)  REVIEW=1; shift ;;
-    --approve) APPROVE="${2:?--approve needs the DIFF-SHA printed by --dry-run}"; shift 2 ;;
-    --stamp)   STAMP=1; shift ;;
+    --from)        FROM="${2:?--from needs a path}"; shift 2 ;;
+    --ref)         REF="${2:?--ref needs a ref}"; shift 2 ;;
+    --dry-run)     DRY=1; shift ;;
+    --review)      REVIEW=1; shift ;;
+    --approve)     APPROVE="${2:?--approve needs the DIFF-SHA printed by --dry-run}"; shift 2 ;;
+    --interactive) INTERACTIVE=1; shift ;;
+    --stamp)       STAMP=1; shift ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -182,13 +191,15 @@ else
   echo "  Files:$CHANGED"
   [ -n "$REMOVED" ] && { echo "  Removed upstream (delete manually if agreed):"; echo "$REMOVED" | sed 's/^/    /'; }
   echo ""
-  echo "  What you are approving (the template's own commit messages):"
+  echo "  Claims (the template's own commit messages for this update range):"
   echo "$CLAIMS"
   echo ""
-  echo "  Your y/N is an authorization — a human aware the pipeline's rules"
-  echo "  are changing — not a code review. Correctness is carried by the"
-  echo "  template's selftests and the next run's gates. To have a second"
-  echo "  model read the diff first:  scripts/update-template.sh --review"
+  echo "  D-96: default is auto — the pull applies after the diff prints."
+  echo "  Correctness is carried by the template's selftests (green before it"
+  echo "  committed) and the next run's gates in this child; post-apply"
+  echo "  integrity is checked by phase-gate. For a second-model read before"
+  echo "  applying: scripts/update-template.sh --review. For opt-in y/N:"
+  echo "  scripts/update-template.sh --interactive."
   echo "=============================================="
 fi
 
@@ -218,11 +229,23 @@ if [ -n "$APPROVE" ]; then
   The template or this child changed since the diff was reviewed.
   Re-run --dry-run, read the new diff, and approve its hash (D-61)."
   echo "approval hash verified against the current diff (D-61) — applying"
-else
-  [ -t 0 ] || die "template updates require an interactive terminal — the human diff-approval IS the gate (no tty: use --dry-run, read the diff, then --approve <DIFF-SHA>, D-61)"
+elif [ "$INTERACTIVE" = "1" ]; then
+  # Opt-in eyeball path (pre-D-96 default). Terminal required.
+  [ -t 0 ] || die "--interactive requires a terminal — drop the flag (D-96 auto mode), use --dry-run + --approve <sha> (D-61), or --review for a second-model read"
   printf 'Apply this template update? [y/N] '
   read -r ANSWER
   case "$ANSWER" in y|Y|yes|YES) ;; *) echo "aborted — nothing changed"; exit 1 ;; esac
+else
+  # D-96 auto (default): every pre-diff check has already passed to reach
+  # this line (clone resolvable, template manifest present, diff computed).
+  # The material verdicts that actually catch defects are the template's
+  # own selftests (green before the template committed) upstream and the
+  # post-apply `phase-gate.sh manifest HEAD` downstream — the y/N in the
+  # middle was authorization theater. Escalation paths that DO surface
+  # this for review are unchanged: --dry-run for pre-review, --review for
+  # a second-model read, --approve <sha> for hash-bound explicit apply,
+  # --interactive for opt-in.
+  echo "auto-approved (D-96): DIFF-SHA $DIFF_SHA — applying"
 fi
 
 # --- Apply: contents + exec bits, then the template's own manifest verbatim ---

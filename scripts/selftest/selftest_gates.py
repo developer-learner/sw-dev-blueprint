@@ -3102,3 +3102,123 @@ def test_plan_trivial_one_file_zero_em_calls(tmp_path):
     assert set(by_id["T2"]["tests"]) == {
         "tests/test_b.py::test_two",
         "tests/test_b.py::test_three"}
+
+
+# --- update-template.sh D-96 auto mode (mirrors D-95) ------------------------
+# The doc had already conceded (script line 36 pre-D-96) that this y/N was
+# an "authorization that the control plane changed with a human aware — not
+# a code review." An authorization with no defect-catching role is exactly
+# what the CEO's rubber-stamp complaint targets. Correctness upstream: the
+# template's own selftests ran green before the template committed the
+# change. Correctness downstream: phase-gate.sh manifest HEAD runs
+# fail-closed post-apply. The middle keystroke was ceremony.
+
+
+def _run_ut(cmd, cwd):
+    """Subprocess wrapper for update-template tests — plain capture, no env."""
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+
+
+@pytest.fixture()
+def template_pull_pair(tmp_path):
+    """A minimal (child repo, template clone) pair with a real diff.
+
+    Template clone ships scripts/hello.sh with "new" content and a
+    scripts/.manifest-template pinning it. Child ships hello.sh with "old"
+    content, a matching .manifest-template pinning the OLD hash, an empty
+    .manifest-project (regen-manifest tolerates zero entries), a
+    .template-version pointing at a fake ref (CLAIMS falls back cleanly on
+    a base ref not in the clone), and the three scripts the pull needs:
+    update-template.sh, regen-manifest.sh, phase-gate.sh. Post-apply,
+    phase-gate.sh manifest HEAD passes because hello.sh matches its
+    newly-installed template manifest hash and .manifest-project is empty."""
+    child = tmp_path / "child"
+    clone = tmp_path / "clone"
+    (child / "scripts").mkdir(parents=True)
+    (clone / "scripts").mkdir(parents=True)
+
+    # Template clone: one committed version of hello.sh + a manifest pinning it.
+    hello_new = "#!/bin/sh\necho new-content\n"
+    (clone / "scripts" / "hello.sh").write_text(hello_new)
+    (clone / "scripts" / "hello.sh").chmod(0o755)
+    new_hash = subprocess.run(
+        ["sha256sum", "scripts/hello.sh"],
+        cwd=clone, capture_output=True, text=True, check=True,
+    ).stdout.split()[0]
+    (clone / "scripts" / ".manifest-template").write_text(
+        f"{new_hash}  scripts/hello.sh\n")
+    _init_git(clone)
+
+    # Child: old content + template manifest pinning the OLD hash. This diff
+    # is what update-template.sh will detect and offer to apply.
+    hello_old = "#!/bin/sh\necho old-content\n"
+    (child / "scripts" / "hello.sh").write_text(hello_old)
+    (child / "scripts" / "hello.sh").chmod(0o755)
+    old_hash = subprocess.run(
+        ["sha256sum", "scripts/hello.sh"],
+        cwd=child, capture_output=True, text=True, check=True,
+    ).stdout.split()[0]
+    (child / "scripts" / ".manifest-template").write_text(
+        f"{old_hash}  scripts/hello.sh\n")
+    (child / "scripts" / ".manifest-project").write_text("")
+
+    (child / ".template-version").write_text(
+        "repo=fake/template\n"
+        "ref=0000000000000000000000000000000000000000\n"
+    )
+
+    for name in ("update-template.sh", "regen-manifest.sh", "phase-gate.sh"):
+        target = child / "scripts" / name
+        target.write_bytes((SCRIPTS / name).read_bytes())
+        target.chmod(0o755)
+
+    _init_git(child)
+    subprocess.run(["git", "config", "user.email", "t@t"],
+                   cwd=child, check=True)
+    subprocess.run(["git", "config", "user.name", "t"],
+                   cwd=child, check=True)
+    return child, clone
+
+
+def test_update_template_auto_proceeds_without_terminal(template_pull_pair):
+    """No flags, no tty — auto applies the pull and prints the D-96 audit
+    line. Pre-D-96 this died at the `[ -t 0 ]` check demanding a terminal
+    for the y/N prompt. Verifies the [template-update ...] commit lands
+    (real apply, not a dry-run) and phase-gate integrity holds post-apply."""
+    child, clone = template_pull_pair
+    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "auto-approved (D-96)" in r.stdout, r.stdout
+    # The rubber-stamp prompt must not print in auto mode.
+    assert "Apply this template update?" not in r.stdout, r.stdout
+    # A real commit landed — not a dry-run degrade.
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=child, capture_output=True, text=True, check=True,
+    )
+    assert log.stdout.strip().startswith("[template-update "), log.stdout
+    # And the file actually changed to the template's content.
+    assert "new-content" in (child / "scripts" / "hello.sh").read_text()
+
+
+def test_update_template_interactive_flag_requires_terminal(template_pull_pair):
+    """--interactive is the opt-in eyeball path — under subprocess (no tty)
+    it must die with a message pointing back to the D-96 auto default,
+    D-61 hash-bound apply, or --review. Preserves the escape hatch without
+    silently degrading to auto when the operator asked for interactive."""
+    child, clone = template_pull_pair
+    r = _run_ut(
+        ["bash", "scripts/update-template.sh", "--interactive",
+         "--from", str(clone)],
+        child,
+    )
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "--interactive" in combined, combined
+    assert "D-96" in combined, combined
+    # No accidental apply.
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=child, capture_output=True, text=True, check=True,
+    )
+    assert not log.stdout.strip().startswith("[template-update "), log.stdout

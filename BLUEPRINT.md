@@ -561,8 +561,10 @@ Children do not hand-port fixes — that is how control planes silently fork.
   hand-edited a template-owned file in the child — either revert it or move
   the file to `scripts/.manifest-project` as a declared adaptation.
 - `scripts/update-template.sh` pulls upstream control-plane changes the same
-  way refreeze works: one aggregate diff, interactive y/N, hash re-pin,
-  `[template-update <sha>]` commit.
+  way refreeze works: one aggregate diff, auto-applied on the pre-diff checks
+  passing (D-96 — mirrors D-95), hash re-pin, `[template-update <sha>]`
+  commit. `--dry-run` / `--review` inspect without applying; `--approve <sha>`
+  is the D-61 hash-bound explicit path; `--interactive` opts back into y/N.
 - Fixes discovered in a child get committed to the TEMPLATE first, then
   pulled into children. (See the 2026-06-30 correction-log entry in
   CLAUDE.md for the incident that forced this.)
