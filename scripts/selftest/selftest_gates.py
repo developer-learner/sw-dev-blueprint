@@ -3294,9 +3294,15 @@ def test_onboarding_prints_the_model_override_names_llm_call_reads():
 
 def test_ci_lints_template_owned_python_scripts():
     """The unconditional control-plane job must lint scripts/, where the
-    gate code and its selftests live, even for an unbootstrapped skeleton."""
+    gate code and its selftests live, even for an unbootstrapped skeleton.
+    The rule set is explicit and isolated so local config or ruff releases
+    cannot silently widen or narrow the contract."""
     workflow = (SCRIPTS.parent / ".github" / "workflows" / "ci.yml").read_text()
-    assert re.search(r"(?m)^\s*run:\s*ruff check scripts/?\s*$", workflow)
+    assert re.search(
+        r"(?m)^\s*run:\s*ruff check --isolated "
+        r"--select E4,E7,E9,F scripts/?\s*$",
+        workflow,
+    )
 
 
 def test_plan_trivial_one_file_zero_em_calls(tmp_path):

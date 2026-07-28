@@ -23,11 +23,11 @@
 
 ## D-106 — 2026-07-28 — Control-plane Python is linted unconditionally
 
-**Decision:** The unconditional `selftest` CI job runs `ruff check scripts/` before the control-plane pytest suite. All existing E741 ambiguous single-letter variables in `check-test-surface.py` and `validate-plan.py` are renamed rather than suppressed. Application lint remains a separate project-stack step over `src/`.
+**Decision:** The unconditional `selftest` CI job runs `ruff check --isolated --select E4,E7,E9,F scripts/` before the control-plane pytest suite. The explicit core rule set includes E741 while remaining independent of user configuration and ruff's evolving defaults. All existing E741 ambiguous single-letter variables in `check-test-surface.py` and `validate-plan.py` are renamed rather than suppressed. Application lint remains a separate project-stack step over `src/`.
 
 **Reason:** The pipeline linted TPM-authored tests at refreeze and coder-authored source per task, but never linted the Python validators that enforce both. Four E741 findings were therefore live in control-plane code while CI stayed green. The skeleton-safe selftest job already installs ruff and is the boundary that runs for every blueprint state.
 
-**Do not suggest:** Excluding gate scripts because they are “internal”; suppressing E741 globally to preserve ambiguous names; relying on the project `src/` lint step, which is skipped for an unbootstrapped template.
+**Do not suggest:** Excluding gate scripts because they are “internal”; suppressing E741 globally to preserve ambiguous names; using an implicit/version-dependent rule set; relying on the project `src/` lint step, which is skipped for an unbootstrapped template.
 
 ## D-105 — 2026-07-28 — Onboarding prints the runtime model-variable contract
 

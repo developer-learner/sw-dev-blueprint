@@ -69,7 +69,7 @@ pytest -v
 pytest -x
 
 # Template control-plane validation (runs even before src/ exists)
-ruff check scripts/
+ruff check --isolated --select E4,E7,E9,F scripts/
 pytest scripts/selftest/selftest_gates.py -q
 ```
 
