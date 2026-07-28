@@ -114,7 +114,8 @@ usual. Same trust model — you copy text between two chats, nothing more.
 - **Don't negotiate with the pipeline.** If a run fails, the answer is
   never to hand-edit tests or gates — that's the "advisory safety" failure
   this system exists to prevent. Failures have one exit: the escalation
-  bundle, through the TPM, through your y/N.
+  bundle, through the TPM, back through the refreeze preflights (D-95:
+  the material verdict is the gates passing, not a keystroke after).
 - **A new milestone's spec is next-session work by default.** Both
   defect-bearing M28 freezes (v51 23:34, v52 23:49) were authored minutes
   after closing the prior milestone (22:50), at the end of a long session,

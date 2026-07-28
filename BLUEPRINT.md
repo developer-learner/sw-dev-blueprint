@@ -381,11 +381,11 @@ If any check fails, STOP and report exactly which one. Do not proceed.
 CEO business intent ──► TPM (frontier LLM — web chat D-38 or scoped repo agent D-39)
                           │  writes PRD + ERD/contracts + the test suite
                           ▼
-            scripts/refreeze.sh  ← CEO approves the diff (THE approval gate:
-                          │        terminal y/N, or conductor-driven
-                          │        --diff / --approve <hash> via the
-                          │        conductor's own ask-prompt, D-42 — CEO
-                          │        reads, then approves)
+            scripts/refreeze.sh  ← mechanical preflights ARE the gate; D-95
+                          │        auto-applies on green. Optional CEO
+                          │        review: conductor --diff / --approve
+                          │        <hash> (D-42) via its own ask-prompt for
+                          │        pre-review; --interactive for opt-in y/N.
                           │  spec frozen: scripts/.approved/ + tests/, hash-pinned
                           ▼
             scripts/orchestrate.sh (shell owns ALL procedure)

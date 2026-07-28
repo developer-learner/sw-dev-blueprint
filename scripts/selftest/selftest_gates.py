@@ -2506,6 +2506,75 @@ def test_refreeze_redcheck_falls_back_to_host(freezable_repo):
     assert "test_param" in r.stdout, r.stdout
 
 
+# --- refreeze.sh D-95 auto mode (retires the ceremonial y/N) -----------------
+# The pre-D-95 default prompted the CEO for y/N after every mechanical
+# preflight had already passed — the material verdict was the gates
+# green, and the extra keystroke rubber-stamped 5 straight testchat
+# refreezes (v60–v64). D-95 makes auto the default: on preflight-green
+# the freeze applies, printing an audit line with the DIFF-SHA; on ANY
+# preflight failure the script still `die`s with the specific finding.
+# The interactive path is preserved as an opt-in flag.
+
+
+def test_refreeze_auto_proceeds_without_terminal(freezable_repo):
+    """No flags, no tty (subprocess pipes stdin) — auto mode applies the
+    freeze and prints the D-95 audit line. Pre-D-95 this would have died
+    at the `[ -t 0 ]` check demanding a terminal for the y/N prompt."""
+    r = subprocess.run(
+        ["bash", "scripts/refreeze.sh", "scripts/.approved/incoming"],
+        cwd=freezable_repo, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "auto-approved (D-95)" in r.stdout, r.stdout
+    assert "DIFF-SHA" in r.stdout, r.stdout
+    # No y/N prompt reached the user (the string the old interactive path printed).
+    assert "Approve this delta" not in r.stdout, r.stdout
+    # The freeze commit landed — this is a real apply, not a dry-run.
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=freezable_repo, capture_output=True, text=True, check=True,
+    )
+    assert log.stdout.strip() == "[refreeze v2]", log.stdout
+
+
+def test_refreeze_auto_halts_on_preflight_fail(stageable_repo):
+    """A v51-shaped delta (route without an implementing file) MUST die at
+    D-78 in auto mode — auto is not "proceed regardless," it's "proceed
+    when every gate is green." The audit line must NOT print."""
+    repo = stageable_repo
+    refreeze_scripts(repo)
+    (repo / "src" / "api").mkdir(parents=True)
+    (repo / "src" / "api" / "models.py").write_text(V51_SRC)
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(V51_OLD))
+    (repo / "scripts" / ".approved" / "incoming" / "contracts.json").write_text(
+        json.dumps(v51_new(["src/api/chat.py"])))
+    r = subprocess.run(
+        ["bash", "scripts/refreeze.sh", "scripts/.approved/incoming"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "D-78" in combined, combined
+    assert "auto-approved" not in combined, combined
+
+
+def test_refreeze_interactive_flag_requires_terminal(freezable_repo):
+    """--interactive is the opt-in eyeball path — under subprocess (no tty)
+    it must die with a message pointing back to the D-95 auto default and
+    the D-42 explicit flow. Preserves the escape hatch without silently
+    degrading to auto when the user asked for interactive."""
+    r = subprocess.run(
+        ["bash", "scripts/refreeze.sh", "--interactive",
+         "scripts/.approved/incoming"],
+        cwd=freezable_repo, capture_output=True, text=True,
+    )
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "--interactive" in combined, combined
+    assert "D-95" in combined, combined
+
+
 # --- subtree re-plan: --subtree-scope / --merge-subtree (Fix A) --------------
 # On a re-freeze the EM used to re-emit the ENTIRE plan — O(inventory) cost
 # for an O(delta) change (testchat M31: 282s = 68% of the run, re-emitting

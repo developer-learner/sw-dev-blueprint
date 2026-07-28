@@ -85,8 +85,13 @@ then runs:
 scripts/refreeze.sh scripts/.approved/incoming
 ```
 
-refreeze shows the diff, requires an interactive human y/N (the approval
-gate), re-freezes as version N+1, and records `DELTA-vN.json`. On the next
+refreeze runs every mechanical preflight (D-56/D-78/D-87/D-88/D-89/INV-4
+plus staged-test parse+lint+determinism), prints the diff and DIFF-SHA,
+and — on preflight-green — applies automatically (D-95). Explicit paths
+remain: `--diff` prints and exits, `--approve <hash>` (D-42) is the
+hash-bound conductor apply, `--interactive` opts back into the pre-D-95
+y/N for the rare eyeball case. Re-freezes as version N+1 and records
+`DELTA-vN.json`. On the next
 `scripts/orchestrate.sh` run, only the affected subtree (tasks whose mapped
 tests, contracts, or file were touched by the delta, plus transitive
 dependents) is reset and re-run (D-31).

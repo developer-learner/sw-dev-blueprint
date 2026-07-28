@@ -52,7 +52,7 @@ Testing:      pytest
 │   ├── phase-gate.sh     # lane + integrity gate (INV-2/3, frozen spec)
 │   ├── orchestrate.sh    # shell-driven task-DAG conductor (owns all procedure)
 │   ├── validate-plan.py  # plan.json gate (atomicity, DAG, coverage, mapping)
-│   ├── refreeze.sh       # ONLY path frozen TPM artifacts change (human-gated: y/N or --approve <hash>, D-42)
+│   ├── refreeze.sh       # ONLY path frozen TPM artifacts change (D-95 auto on preflight-green; --approve <hash> D-42; --interactive opt-in)
 │   ├── check-test-surface.py  # INV-4: tests ⊆ locked surface
 │   ├── schemas/          # plan / diagnosis / contracts schemas
 │   └── .approved/        # frozen TPM spec: PRD, ERD, contracts, VERSION, hashes
@@ -146,8 +146,9 @@ disk itself (D-53); there is no agent harness in the execution loop at all,
 only in the CEO-facing conductor seat, which never touches trusted state.
 
 **The loop (all steps conductor-driven; the CEO only talks and approves):**
-TPM spec frozen (`refreeze.sh` — terminal y/N, or conductor `--diff` /
-`--approve <hash>` behind the conductor's own ask-prompt, D-42) →
+TPM spec frozen (`refreeze.sh` — D-95 auto on preflight-green; conductor
+`--diff` / `--approve <hash>` behind its own ask-prompt when a pre-review
+audit is wanted, D-42; `--interactive` opt-in for the rare eyeball case) →
 `scripts/orchestrate.sh` → EM emits plan → validated → coder executes one
 task at a time → mapped frozen tests + gate after each → full frozen suite
 green = done. Failures climb the escalation ladder (`docs/ESCALATION.md`);

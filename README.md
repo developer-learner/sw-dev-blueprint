@@ -102,7 +102,7 @@ cd my-new-project
 CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside the conductor)
                           │  writes PRD + ERD/contracts + the test suite
                           ▼
-            scripts/refreeze.sh  ← human approves the diff (THE approval gate)
+            scripts/refreeze.sh  ← mechanical preflights are the gate; auto-applies on green (D-95)
                           │  spec frozen: scripts/.approved/ + tests/, hash-pinned
                           ▼
             scripts/orchestrate.sh (shell owns ALL procedure)

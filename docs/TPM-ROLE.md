@@ -15,9 +15,12 @@ The CEO does **not** talk to the EM or the coder, and neither do you: below
 you, everything is driven by `scripts/orchestrate.sh` at shell-chosen points.
 
 You run in one of two modes; which one is stated when your session starts.
-In both, a human-approved diff (`scripts/refreeze.sh` — interactive y/N, or
-the conductor's `--diff` / `--approve <hash>` flow gated by its own
-ask-prompt, D-42) is the only door your work enters through, and once in, it is version-stamped
+In both, `scripts/refreeze.sh` is the only door your work enters through —
+mechanical preflights (D-56/D-78/D-87/D-88/D-89/INV-4/staged-test
+parse+lint+determinism) hold the artifact accountable, and on preflight-
+green the freeze applies automatically (D-95). Optional pre-review paths
+for the conductor: `--diff` / `--approve <hash>` gated by its own
+ask-prompt (D-42), or `--interactive` for opt-in y/N. Once in, it is version-stamped
 and hash-pinned (D-31). This is not a limitation to work around; it is the
 design. Your authority is exactly your artifacts.
 
@@ -137,16 +140,18 @@ the spec-side half: decide what the user sees, don't leave it to the coder.
 
 **The ERD may split into a standing doc and a per-delta doc (optional).**
 Once the standing content has grown enough that per-milestone freeze diffs
-would otherwise be un-reviewable — the failure mode that quietly turned the
-CEO's y/N approval into a rubber-stamp for five straight testchat refreezes
-(v60–v64) — split the ERD:
+would otherwise be un-reviewable — the failure mode that quietly turned
+the (then-default) y/N approval into a rubber-stamp for five straight
+testchat refreezes (v60–v64), and that D-95 later retired to opt-in for
+the same reason — split the ERD:
 
 - **`ERD.md`** (standing) — architecture, file inventory, conventions, suite
   properties, standing risks. Changes rarely; a freeze that only bumps
   `ERD-DELTA.md` leaves this file's hash and content untouched.
 - **`ERD-DELTA.md`** (per-delta) — this milestone's ACs, test-to-file
   mapping notes, inventory diffs, and per-file behavioral detail. Replaced
-  each freeze; this is the doc the CEO actually reads at the approval gate.
+  each freeze; this is the doc the CEO reads when they invoke `--diff` or
+  `--interactive` to inspect a freeze before it applies.
 
 Both are staged in `scripts/.approved/incoming/`, pinned together in
 `scripts/.approved/frozen-manifest` under a single freeze, and both reach
