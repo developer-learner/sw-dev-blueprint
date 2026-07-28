@@ -62,7 +62,9 @@ do_or_say() {  # print, then run (or skip when DRY)
   [ "$DRY" = "1" ] || eval "$@"
 }
 
-echo "teardown plan:${DRY:+  (DRY RUN — no side effects)}"
+BANNER=""
+[ "$DRY" = "1" ] && BANNER="  (DRY RUN — no side effects)"
+echo "teardown plan:$BANNER"
 
 # --- podman container reclamation (inside dev-vm) ----------------------------
 if [ "$CONTAINERS" = "1" ]; then

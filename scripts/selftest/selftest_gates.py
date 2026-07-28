@@ -3327,12 +3327,18 @@ def test_teardown_dry_run_does_not_touch_the_tree(housekeeping_repo):
 
 
 def test_teardown_state_flag_removes_pipeline_state(housekeeping_repo):
-    """--state removes .pipeline-state/ end-to-end."""
+    """--state removes .pipeline-state/ end-to-end — and a REAL run must not
+    carry the dry-run banner. The banner shipped printing on every run
+    (${DRY:+} fires on DRY=0 — "0" is a non-empty string); the dry-run test
+    asserting the banner PRESENT was vacuously green the whole time. For any
+    mode banner, the absence assertion on the opposite mode is the one that
+    detects."""
     (housekeeping_repo / ".pipeline-state").mkdir()
     (housekeeping_repo / ".pipeline-state" / "victim").write_text("x")
     r = _run_hk(["bash", "scripts/teardown.sh", "--state"], housekeeping_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert not (housekeeping_repo / ".pipeline-state").exists(), r.stdout
+    assert "DRY RUN" not in r.stdout, r.stdout
 
 
 def test_teardown_all_does_not_touch_em_archive_or_lima(housekeeping_repo):
