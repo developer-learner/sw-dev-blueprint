@@ -3235,16 +3235,57 @@ def test_update_template_interactive_flag_requires_terminal(template_pull_pair):
 
 @pytest.fixture()
 def housekeeping_repo(tmp_path):
-    """Bare tmp repo with just the two housekeeping scripts installed. No
-    limactl/nc/lms are assumed to exist on the test host — the scripts
-    handle those absences by reporting 'not installed' / 'not reachable'
-    and moving on, which is exactly what we want to pin."""
-    (tmp_path / "scripts").mkdir()
+    """Sandboxed repo for the two housekeeping scripts.
+
+    Layout: tmp_path/repo (the tree the scripts act on), tmp_path/stubbin
+    (argv-logging no-op stubs for lms/limactl/pkill/nc), tmp_path/stub.log
+    (what the stubs were invoked with — kept OUTSIDE repo/ so status.sh's
+    read-only invariant holds while the stubs still log).
+
+    The stubs exist because teardown's --lm-studio/--containers/--lima
+    actions act on HOST processes and the VM, not the repo tree: a real
+    `--all` under the inherited host PATH executed `lms server stop`
+    against the host's live LM Studio server (2026-07-27). tmp_path
+    confines file scope only — the process/VM boundary must be stubbed
+    explicitly. File-scoped behavior stays real. The limactl stub reports
+    dev-vm as Stopped so both scripts take their skip branches
+    deterministically; the nc stub exits 1 ("not reachable") so no host
+    port state leaks into assertions."""
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
     for name in ("status.sh", "teardown.sh"):
-        target = tmp_path / "scripts" / name
+        target = repo / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
         target.chmod(0o755)
-    return tmp_path
+    stubbin = tmp_path / "stubbin"
+    stubbin.mkdir()
+    stub = (
+        "#!/bin/sh\n"
+        '# argv-logging no-op stub — housekeeping selftests never touch host state\n'
+        'echo "$(basename "$0") $*" >> "${STUB_LOG:?}"\n'
+        'case "$(basename "$0")" in\n'
+        '  limactl) [ "$1" = list ] && echo "Stopped" ;;\n'
+        "  nc) exit 1 ;;\n"
+        "esac\n"
+        "exit 0\n"
+    )
+    for name in ("lms", "limactl", "pkill", "nc"):
+        s = stubbin / name
+        s.write_text(stub)
+        s.chmod(0o755)
+    return repo
+
+
+def _run_hk(cmd, repo):
+    """Housekeeping runner: PATH-shadows the host-global tools with the
+    fixture's stubs. Everything else (rm, find, du, df, awk...) resolves
+    normally, so the file-scoped behavior under test is the real thing.
+    (_run_ut inherits the host env on purpose — the update-template tests
+    need real git — so housekeeping gets its own runner.)"""
+    env = dict(os.environ)
+    env["PATH"] = f"{repo.parent / 'stubbin'}:{env['PATH']}"
+    env["STUB_LOG"] = str(repo.parent / "stub.log")
+    return subprocess.run(cmd, cwd=repo, capture_output=True, text=True, env=env)
 
 
 def test_status_writes_nothing_and_reports_every_section(housekeeping_repo):
@@ -3253,7 +3294,7 @@ def test_status_writes_nothing_and_reports_every_section(housekeeping_repo):
     appear so a partial-report regression is loud."""
     before = sorted((p.relative_to(housekeeping_repo), p.stat().st_mtime_ns)
                     for p in housekeeping_repo.rglob("*") if p.is_file())
-    r = _run_ut(["bash", "scripts/status.sh"], housekeeping_repo)
+    r = _run_hk(["bash", "scripts/status.sh"], housekeeping_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     for section in ("Lima dev-vm", "LLM servers", "podman containers",
                     "pipeline state", "repo disk"):
@@ -3266,7 +3307,7 @@ def test_status_writes_nothing_and_reports_every_section(housekeeping_repo):
 def test_teardown_bare_invocation_prints_help(housekeeping_repo):
     """Nothing defaults to destructive: `teardown.sh` with no flags must
     print help and exit 0 — never wipe state on a mis-typed command."""
-    r = _run_ut(["bash", "scripts/teardown.sh"], housekeeping_repo)
+    r = _run_hk(["bash", "scripts/teardown.sh"], housekeeping_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "Flags:" in r.stdout, r.stdout
     assert "--dry-run" in r.stdout, r.stdout
@@ -3276,7 +3317,7 @@ def test_teardown_dry_run_does_not_touch_the_tree(housekeeping_repo):
     """--dry-run must run the full plan but leave the filesystem alone."""
     (housekeeping_repo / ".pipeline-state").mkdir()
     (housekeeping_repo / ".pipeline-state" / "victim").write_text("x")
-    r = _run_ut(
+    r = _run_hk(
         ["bash", "scripts/teardown.sh", "--state", "--dry-run"],
         housekeeping_repo,
     )
@@ -3289,7 +3330,7 @@ def test_teardown_state_flag_removes_pipeline_state(housekeeping_repo):
     """--state removes .pipeline-state/ end-to-end."""
     (housekeeping_repo / ".pipeline-state").mkdir()
     (housekeeping_repo / ".pipeline-state" / "victim").write_text("x")
-    r = _run_ut(["bash", "scripts/teardown.sh", "--state"], housekeeping_repo)
+    r = _run_hk(["bash", "scripts/teardown.sh", "--state"], housekeeping_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert not (housekeeping_repo / ".pipeline-state").exists(), r.stdout
 
@@ -3300,7 +3341,7 @@ def test_teardown_all_does_not_touch_em_archive_or_lima(housekeeping_repo):
     cost to reverse). Those two need explicit --em-archive / --lima."""
     (housekeeping_repo / ".em-archive").mkdir()
     (housekeeping_repo / ".em-archive" / "keep").write_text("x")
-    r = _run_ut(
+    r = _run_hk(
         ["bash", "scripts/teardown.sh", "--all", "--dry-run"],
         housekeeping_repo,
     )
@@ -3308,14 +3349,20 @@ def test_teardown_all_does_not_touch_em_archive_or_lima(housekeeping_repo):
     assert "--em-archive" not in r.stdout, r.stdout   # section header absent
     assert "--lima" not in r.stdout, r.stdout
     # The corpus survives even a real (non-dry-run) --all.
-    r2 = _run_ut(["bash", "scripts/teardown.sh", "--all"], housekeeping_repo)
+    r2 = _run_hk(["bash", "scripts/teardown.sh", "--all"], housekeeping_repo)
     assert r2.returncode == 0, (r2.stdout, r2.stderr)
     assert (housekeeping_repo / ".em-archive" / "keep").exists()
+    # Process-level proof via the stub log: the real --all DID invoke the
+    # lm-studio stop (wiring exercised — against the stub, never the host)
+    # and never told Lima to stop.
+    log = (housekeeping_repo.parent / "stub.log").read_text()
+    assert "lms server stop" in log, log
+    assert "limactl stop" not in log, log
 
 
 def test_teardown_rejects_unknown_flag(housekeeping_repo):
     """Unknown flag → non-zero and a pointer to --help. No silent no-op."""
-    r = _run_ut(
+    r = _run_hk(
         ["bash", "scripts/teardown.sh", "--wipe-everything"],
         housekeeping_repo,
     )
