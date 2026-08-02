@@ -55,11 +55,19 @@ cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 #   briefs/<id>          EM-revised brief overriding the plan's brief
 #   logs/<id>-a<n>.raw|.log   coder attempt transcripts; em-last.raw|.err
 #   escalations/<id>/bundle.md, escalations/BATCH.md   TPM bundles (D-29)
+# Successful task definitions + output hashes live separately in the tracked
+# .pipeline-completions.json ledger (D-108). Runtime state is still ephemeral.
+# Accepted D-77 exceptions live in tracked .pipeline-flakes.json (D-111).
 STATE_DIR=".pipeline-state"
 TASK_STATE="$STATE_DIR/tasks"
 BRIEF_DIR="$STATE_DIR/briefs"
 LOG_DIR="$STATE_DIR/logs"
 ESC_DIR="$STATE_DIR/escalations"
+COMPLETION_LEDGER=".pipeline-completions.json"
+COMPLETION_LEDGER_TOOL="scripts/completion-ledger.py"
+FLAKE_LEDGER=".pipeline-flakes.json"
+FLAKE_LEDGER_TOOL="scripts/flake-ledger.py"
+FLAKE_ESCALATION_THRESHOLD="${SWBP_FLAKE_ESCALATION_THRESHOLD:-3}"
 APPROVED="scripts/.approved"
 mkdir -p "$STATE_DIR" "$TASK_STATE" "$BRIEF_DIR" "$LOG_DIR" "$ESC_DIR"
 
@@ -97,6 +105,33 @@ set_tstat()   { printf '%s\n' "$2" > "$TASK_STATE/$1.status"; }
 counter()     { [ -f "$TASK_STATE/$1.$2" ] && cat "$TASK_STATE/$1.$2" || echo 0; }
 set_counter() { printf '%s\n' "$3" > "$TASK_STATE/$1.$2"; }
 
+# BEGIN D-113 prior-spec resolution (selftest extracts this function)
+resolve_last_spec_version() {
+  local last_v
+  # A runtime version without any task checkpoint can survive partial state
+  # loss. It is not authoritative: fall back to the last complete success so
+  # every intervening delta is replayed before completions are trusted.
+  if [ -n "$(ls -A "$TASK_STATE" 2>/dev/null || true)" ]; then
+    last_v=$(read_state spec_version)
+  else
+    last_v=""
+  fi
+  if [ -z "$last_v" ] && [ -f "$COMPLETION_LEDGER" ]; then
+    last_v=$(python3 "$COMPLETION_LEDGER_TOOL" latest \
+      --ledger "$COMPLETION_LEDGER") \
+      || die "durable completion ledger could not supply the prior spec version"
+    [ "$last_v" != "0" ] || last_v=""
+  fi
+  last_v=${last_v:-$FROZEN_V}
+  case "$last_v" in
+    ''|*[!0-9]*|0) die "invalid prior spec version '$last_v'" ;;
+  esac
+  [ "$last_v" -le "$FROZEN_V" ] \
+    || die "prior successful spec v$last_v is newer than frozen spec v$FROZEN_V"
+  printf '%s\n' "$last_v"
+}
+# END D-113 prior-spec resolution
+
 # guard_task_state — distinguish intentional post-success cleanup from loss
 # during an unfinished milestone. Both present as an empty gitignored state
 # directory, but their git histories differ: after a completed run, the newest
@@ -111,7 +146,7 @@ guard_task_state() {
   latest_success=$(git log --grep='^\[success\]' -1 --format=%H 2>/dev/null || true)
   if [ -n "$latest_success" ] \
      && git merge-base --is-ancestor "$latest_task" "$latest_success" 2>/dev/null; then
-    echo "  pipeline task-state: clean post-success state — starting the next run fresh"
+    echo "  pipeline task-state: clean post-success state — durable completion restore is allowed"
     return 0
   fi
   if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" = "1" ]; then
@@ -131,6 +166,9 @@ guard_task_state() {
 # "where did 45 minutes go" was guesswork.
 case "$SWBP_RUN_BUDGET" in
   ''|*[!0-9]*) die "SWBP_RUN_BUDGET must be a non-negative integer (seconds), got '$SWBP_RUN_BUDGET'" ;;
+esac
+case "$FLAKE_ESCALATION_THRESHOLD" in
+  ''|*[!0-9]*|0) die "SWBP_FLAKE_ESCALATION_THRESHOLD must be a positive integer, got '$FLAKE_ESCALATION_THRESHOLD'" ;;
 esac
 run_elapsed() { echo $(( $(date +%s) - RUN_T0 )); }
 mark() { printf '%s\t%ss\t%s\n' "$(date '+%H:%M:%S')" "$(run_elapsed)" "$1" >> "$LOG_DIR/timings.tsv"; }
@@ -276,6 +314,8 @@ mark "run start (budget ${SWBP_RUN_BUDGET}s)"
 python3 --version >/dev/null 2>&1 || die "python3 required"
 git --version >/dev/null 2>&1    || die "git required"
 [ -x scripts/llm-call.sh ]       || die "scripts/llm-call.sh missing or not executable"
+[ -f "$COMPLETION_LEDGER_TOOL" ]    || die "$COMPLETION_LEDGER_TOOL missing"
+[ -f "$FLAKE_LEDGER_TOOL" ]       || die "$FLAKE_LEDGER_TOOL missing"
 [ -f .gate-paths ]               || die ".gate-paths not found"
 [ -f scripts/.manifest-template ] || die "scripts/.manifest-template not found"
 [ -f scripts/.manifest-project ]  || die "scripts/.manifest-project not found"
@@ -364,13 +404,56 @@ if [ -n "$_raw" ]; then
 fi
 
 # --- Re-freeze detection (the reset itself runs after the plan is fresh) ---
-LAST_V=$(read_state spec_version); LAST_V=${LAST_V:-$FROZEN_V}
+# Success intentionally deletes the runtime state, including spec_version.
+# Recover that version from the validated durable ledger so a new freeze still
+# arms its affected-task reset before any exact-match completion is trusted.
+# An explicit from-scratch run bypasses durable history in both places.
+if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" = "1" ]; then
+  LAST_V="$FROZEN_V"
+else
+  LAST_V=$(resolve_last_spec_version)
+fi
 SPEC_ADVANCED=0
 if [ "$FROZEN_V" != "$LAST_V" ]; then
   SPEC_ADVANCED=1
   echo "frozen spec advanced v$LAST_V -> v$FROZEN_V"
   rm -rf "$ESC_DIR"; mkdir -p "$ESC_DIR"   # bundles answered by this delta are consumed
 fi
+
+# Keep the last successful baseline for the whole in-progress milestone. After
+# the first reset, spec_version advances to the current freeze; without this
+# separate checkpoint a retry would narrow D-65 back to the newest delta and
+# strand tasks hit only by an earlier skipped freeze (D-113).
+if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" = "1" ]; then
+  DELTA_BASELINE_V="$FROZEN_V"
+else
+  DELTA_BASELINE_V=$(read_state delta_baseline_spec)
+  DELTA_BASELINE_V=${DELTA_BASELINE_V:-$LAST_V}
+fi
+case "$DELTA_BASELINE_V" in
+  ''|*[!0-9]*|0) die "invalid delta baseline spec version '$DELTA_BASELINE_V'" ;;
+esac
+[ "$DELTA_BASELINE_V" -le "$FROZEN_V" ] \
+  || die "delta baseline v$DELTA_BASELINE_V is newer than frozen spec v$FROZEN_V"
+write_state delta_baseline_spec "$DELTA_BASELINE_V"
+
+# The last successful run can be more than one freeze behind. Every retained
+# delta in that range participates in task reset and D-65 edit scope; looking
+# only at the newest delta can restore a task affected by an earlier skipped
+# milestone. Missing history is not safe to guess through (D-113).
+# BEGIN D-113 active-delta range (selftest extracts this block)
+ACTIVE_DELTA_FILES=()
+if [ "$DELTA_BASELINE_V" -lt "$FROZEN_V" ]; then
+  for delta_v in $(seq $((DELTA_BASELINE_V + 1)) "$FROZEN_V"); do
+    delta_file="$APPROVED/DELTA-v$delta_v.json"
+    [ -f "$delta_file" ] \
+      || die "cannot preserve delta scope across v$DELTA_BASELINE_V -> v$FROZEN_V: missing $delta_file"
+    ACTIVE_DELTA_FILES+=("$delta_file")
+  done
+elif [ -f "$APPROVED/DELTA-v$FROZEN_V.json" ]; then
+  ACTIVE_DELTA_FILES+=("$APPROVED/DELTA-v$FROZEN_V.json")
+fi
+# END D-113 active-delta range
 
 # --- Plan-revision budget is per freeze: keyed to the spec version itself.
 # NOT keyed to the spec-advance event above — spec_version is only written
@@ -943,9 +1026,9 @@ print(json.dumps(t, indent=2))"
     echo
     if [ "$diag" = "-" ]; then
       echo "### EM diagnosis"
-      echo "(none — detected mechanically by the D-79 spec audit; no EM consult"
-      echo "was involved and none is needed: the defect is provable from the"
-      echo "spec alone.)"
+      echo "(none — $kind was detected mechanically; no EM consult was"
+      echo "involved because the recorded evidence already identifies the"
+      echo "frozen-spec defect.)"
     else
       echo "### EM diagnosis (schema-validated)"
       echo '```json'
@@ -1023,27 +1106,67 @@ finalize_batch() {  # writes the single copy-pasteable batch and halts
 echo "=== Phase: plan ==="
 ensure_plan
 
-# --- Re-freeze delta: reset the affected subtree, now that the plan is fresh
-# and validated against the new spec (D-31). Tasks whose ENTRIES changed are
-# also caught by the fingerprint pass below; this catches the remaining case:
-# unchanged entries whose mapped TEST CONTENT changed in the delta.
-if [ "$SPEC_ADVANCED" = "1" ]; then
-  if [ -f "$APPROVED/DELTA-v$FROZEN_V.json" ]; then
-    echo "=== Resetting subtree affected by delta v$FROZEN_V ==="
-    affected=$(python3 scripts/validate-plan.py --affected "$APPROVED/DELTA-v$FROZEN_V.json")
-    for id in $affected; do
+# Compute once per validated plan, fail closed, then share the exact result
+# between state reset and D-65 edit permission. Plan revisions call both
+# helpers again before continuing the DAG (D-113).
+# BEGIN D-113 affected helpers (selftest extracts this block)
+compute_active_delta_scope() {
+  ACTIVE_AFFECTED=""
+  DELTA_SCOPED=0
+  AFFECTED_IDS=""
+  if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
+    ACTIVE_AFFECTED=$(python3 scripts/validate-plan.py --affected \
+      "${ACTIVE_DELTA_FILES[@]}") \
+      || die "could not compute affected tasks across the active delta range"
+    AFFECTED_IDS=" $(printf '%s' "$ACTIVE_AFFECTED" | tr '\n' ' ') "
+    DELTA_SCOPED=1
+    echo "active delta range touches:${AFFECTED_IDS%% } — every other existing file is no-edit"
+  fi
+}
+
+reset_active_delta_tasks() {
+  if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
+    echo "=== Resetting active delta scope (baseline v$DELTA_BASELINE_V, frozen v$FROZEN_V) ==="
+    for id in $ACTIVE_AFFECTED; do
       echo "  reset: $id"
       set_tstat "$id" pending
       rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" 2>/dev/null || true
     done
   fi
-  # escalated/blocked tasks get a fresh chance under the new spec
+  # escalated/blocked tasks get a fresh chance under the revised spec/plan
   for f in "$TASK_STATE"/*.status; do
     [ -f "$f" ] || continue
     case "$(cat "$f")" in
       escalated|blocked) printf 'pending\n' > "$f" ;;
     esac
   done
+}
+# END D-113 affected helpers
+compute_active_delta_scope
+
+# D-108: a successful run intentionally removes its runtime checkpoint, but
+# the next milestone should not pay to rebuild outputs whose task definitions
+# and bytes are unchanged. Restore happens only into an entirely empty task
+# state; completion-ledger.py refuses partial/live checkpoints. The explicit
+# full-rebuild override bypasses history by definition. This runs BEFORE the
+# re-freeze delta reset below, so changed test content still invalidates every
+# affected task even when its plan entry and output bytes happen to match.
+if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" = "1" ]; then
+  echo "completion ledger: restore bypassed by SWBP_REBUILD_FROM_SCRATCH=1"
+else
+  python3 "$COMPLETION_LEDGER_TOOL" restore \
+    --spec-version "$FROZEN_V" \
+    --ledger "$COMPLETION_LEDGER" \
+    --task-state "$TASK_STATE" \
+    || die "durable completion ledger could not be restored safely"
+fi
+
+# --- Re-freeze delta: reset the affected subtree, now that the plan is fresh
+# and validated against the new spec (D-31). Tasks whose ENTRIES changed are
+# also caught by the fingerprint pass below; this catches the remaining case:
+# unchanged entries whose mapped TEST CONTENT changed in the delta.
+if [ "$SPEC_ADVANCED" = "1" ]; then
+  reset_active_delta_tasks
 fi
 write_state spec_version "$FROZEN_V"
 
@@ -1066,17 +1189,6 @@ write_state spec_version "$FROZEN_V"
 # A file that does NOT yet exist is always editable: that is how greenfield
 # and genuinely new files get written, and it keeps an initial build (whose
 # delta touches nothing on disk) working unchanged.
-DELTA_FILE="$APPROVED/DELTA-v$FROZEN_V.json"
-DELTA_SCOPED=0
-AFFECTED_IDS=""
-if [ -f "$DELTA_FILE" ]; then
-  if AFFECTED_IDS=$(python3 scripts/validate-plan.py --affected "$DELTA_FILE" 2>/dev/null); then
-    AFFECTED_IDS=" $(printf '%s' "$AFFECTED_IDS" | tr '\n' ' ') "
-    DELTA_SCOPED=1
-    echo "delta v$FROZEN_V touches:${AFFECTED_IDS%% } — every other existing file is no-edit"
-  fi
-fi
-
 echo "=== Phase: task DAG ==="
 while :; do
   TOPO=$(python3 scripts/validate-plan.py --topo) || die "plan invalidated mid-run"
@@ -1277,6 +1389,8 @@ sys.stdout.write(d['revised_brief'])" > "$BRIEF_DIR/$id"
           "The decomposition is wrong around task $id: $(python3 -c "import json;print(json.load(open('$DIAG_FILE'))['reason'])"). Rewrite the plan fixing it and reply with ONLY the JSON (same requirements as before: one file per task, every inventory-exercising test node-id mapped exactly once, no 'regression' key, erd_version $FROZEN_V, bump plan version, NO status fields). Keep entries for unrelated tasks byte-identical — completed work is preserved only where entries are unchanged." \
           "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
         ensure_plan
+        compute_active_delta_scope
+        reset_active_delta_tasks
         set_counter "$id" strikes 0
         rm -f "$TASK_STATE/$id.lastfail"
       fi
@@ -1303,12 +1417,15 @@ run_tests
 # Auto-green requires at least one isolated pass PER node. A node that
 # reproduces 0/2, or whose isolation runs cannot execute within budget, keeps
 # the original full-suite failure red. Any mapped node or collection error also
-# keeps the DRIFT path exactly as before.
+# keeps the DRIFT path exactly as before. Accepted occurrences persist by spec;
+# the recurring threshold closes the bypass and routes a TPM bundle (D-111).
 #
 # The block between the BEGIN/END markers below is extracted verbatim by
 # scripts/selftest/drive-drift.sh — keep the markers on their own lines.
 # BEGIN D-77 flake triage (drive-drift.sh extracts this block)
 FLAKE_NOTE=""
+FLAKE_RECORDS=""
+RECURRING_FLAKE=0
 if [ "$TESTS_RC" -eq 1 ] && [ -n "$FAILING" ] \
   && [[ "$FAILING" != *COLLECTION_ERROR* ]]; then
   all_carried=1
@@ -1324,6 +1441,7 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
     fi
   done
   iso_evidence=""
+  isolation_records=""
   if [ "$all_carried" -eq 1 ]; then
     for fid in "${_fail_ids[@]}"; do
       # Isolation is corroborating evidence only (never gating), so it is the
@@ -1342,16 +1460,38 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
         if [ "$TESTS_RC" -eq 0 ]; then iso_pass=$((iso_pass + 1)); fi
       done
       iso_evidence="${iso_evidence:+$iso_evidence; }$fid: $iso_pass/2 isolated passes"
+      isolation_records="${isolation_records}${isolation_records:+$'\n'}${fid}"$'\t'"${iso_pass}"
       [ "$iso_pass" -gt 0 ] || isolation_supports_flake=0
     done
   fi
   FAILING="$saved_failing"; FAIL_DETAIL="$saved_detail"; TESTS_RC=1
   if [ "$all_carried" -eq 1 ] && [ "$isolation_supports_flake" -eq 1 ]; then
-    echo "WARNING (D-77): every full-suite failure is a carried-forward node,"
-    echo "  unmapped in the plan, with an isolated pass — flake, not drift. Isolation evidence: $iso_evidence"
-    FLAKE_NOTE="
-WARNING (D-77): carried-forward node(s) failed in the full run — flake, not drift ($iso_evidence). A recurring flake is a frozen-test defect: it belongs to the TPM at the next refreeze."
-    TESTS_RC=0
+    recurring_evidence=""
+    while IFS=$'\t' read -r flake_id flake_passes; do
+      prior_count=$(python3 "$FLAKE_LEDGER_TOOL" count \
+        --ledger "$FLAKE_LEDGER" --nodeid "$flake_id") \
+        || die "recurring-flake ledger could not be read safely"
+      case "$prior_count" in
+        ''|*[!0-9]*) die "recurring-flake ledger returned invalid count '$prior_count' for $flake_id" ;;
+      esac
+      projected_count=$((prior_count + 1))
+      if [ "$projected_count" -ge "$FLAKE_ESCALATION_THRESHOLD" ]; then
+        RECURRING_FLAKE=1
+        recurring_evidence="${recurring_evidence}${recurring_evidence:+; }$flake_id: occurrence $projected_count (threshold $FLAKE_ESCALATION_THRESHOLD)"
+      fi
+    done <<< "$isolation_records"
+    if [ "$RECURRING_FLAKE" = "1" ]; then
+      echo "D-111: recurring flake threshold reached — keeping the suite red"
+      echo "  $recurring_evidence"
+      FAIL_DETAIL="${FAIL_DETAIL}${FAIL_DETAIL:+; }recurring flake threshold reached: $recurring_evidence; isolation evidence: $iso_evidence"
+    else
+      echo "WARNING (D-77): every full-suite failure is a carried-forward node,"
+      echo "  unmapped in the plan, with an isolated pass — flake, not drift. Isolation evidence: $iso_evidence"
+      FLAKE_NOTE="
+WARNING (D-77): carried-forward node(s) failed in the full run — flake, not drift ($iso_evidence). Occurrences are tracked; the threshold routes a recurring test defect to the TPM."
+      FLAKE_RECORDS="$isolation_records"
+      TESTS_RC=0
+    fi
   elif [ "$all_carried" -eq 1 ]; then
     echo "D-77: carried-forward failure reproduced or could not be isolated;"
     echo "  keeping the frozen suite red. Isolation evidence: $iso_evidence"
@@ -1365,20 +1505,47 @@ if [ "$TESTS_RC" -eq 0 ]; then
   echo "  ALL FROZEN TESTS PASS — feature done"
   echo "  total run time: $(run_elapsed)s (timings were in $LOG_DIR/timings.tsv)"
   echo "=========================================="
+  if [ -n "$FLAKE_RECORDS" ]; then
+    while IFS=$'\t' read -r flake_id flake_passes; do
+      python3 "$FLAKE_LEDGER_TOOL" record \
+        --ledger "$FLAKE_LEDGER" \
+        --spec-version "$FROZEN_V" \
+        --nodeid "$flake_id" \
+        --isolation-passes "$flake_passes" \
+        || die "full suite passed, but recurring-flake history could not be recorded"
+    done <<< "$FLAKE_RECORDS"
+  fi
+  python3 "$COMPLETION_LEDGER_TOOL" record \
+    --spec-version "$FROZEN_V" \
+    --ledger "$COMPLETION_LEDGER" \
+    --task-state "$TASK_STATE" \
+    || die "full suite passed, but durable completion history could not be recorded"
   cat >> tasks/CURRENT.md <<EOF
 
 ## Results
 
-Full frozen TPM suite green against spec v$FROZEN_V. Feature built and validated.${FLAKE_NOTE}
+  Full frozen TPM suite green against spec v$FROZEN_V. Feature built and validated.${FLAKE_NOTE}
 EOF
   rm -rf "$STATE_DIR"
-  git add tasks/CURRENT.md && git commit -m "[success] spec v$FROZEN_V" 2>/dev/null || true
+  git add tasks/CURRENT.md "$COMPLETION_LEDGER"
+  [ ! -f "$FLAKE_LEDGER" ] || git add "$FLAKE_LEDGER"
+  git diff --cached --quiet \
+    || git commit -m "[success] spec v$FROZEN_V" 2>/dev/null || true
   exit 0
 fi
 
 # tasks green but suite red = SPEC DRIFT: routes EM -> TPM, never coder retries (D-28)
 echo "=== SPEC DRIFT: every task passed its projection but the full suite is red ==="
 drift_evidence="all tasks done and individually green; full suite failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
+
+# D-111: a carried node that has repeatedly produced isolated-pass flake
+# evidence is now a known frozen-test defect, not an implementation puzzle.
+# Route it straight to the TPM bundle; an EM decomposition diagnosis cannot
+# repair a flaky frozen oracle and would add a model round-trip without signal.
+if [ "$RECURRING_FLAKE" = "1" ]; then
+  package_escalation "recurring-flake" "DRIFT" "$drift_evidence" "-"
+  finalize_batch
+fi
 
 if [ "$MAX_TASK_STRIKES" -le 1 ]; then
   echo ""
@@ -1396,6 +1563,8 @@ if [ "$DIAG_VERDICT" = "decomposition_wrong" ] && [ "$(plan_revisions_used)" -lt
     "Spec drift: $(python3 -c "import json;print(json.load(open('$DIAG_FILE'))['reason'])"). Rewrite the plan to fix the decomposition and reply with ONLY the JSON (same requirements as before; keep unrelated entries byte-identical)." \
     "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
   ensure_plan
+  compute_active_delta_scope
+  reset_active_delta_tasks
   echo "plan revised for drift — re-run scripts/orchestrate.sh to resume"
   exit 1
 fi

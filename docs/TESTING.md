@@ -154,6 +154,29 @@ test IDs + assertion messages — the shell parses the JSON, never the human
 terminal output. (Post-D-53 there is no "orchestrator agent" — orchestrate is
 a shell script and consumes the report directly.)
 
+The control-plane suite generates reports with the real plugin and passes them
+through the production parser (D-110); synthetic reports remain for malformed
+and rare outcome shapes. Accepted D-77 flakes are stored by node and successful
+spec version in `.pipeline-flakes.json`. The third occurrence by default keeps
+the suite red and creates a TPM bundle instead of granting another bypass
+(D-111; threshold override: `SWBP_FLAKE_ESCALATION_THRESHOLD`).
+
+The sandbox image is built from a cold cache on packaging changes and weekly,
+then inspected for an absent project tree (D-112). This complements the static
+Dockerfile/context tests; it does not replace them.
+
+Completion-ledger coverage includes the success-cleanup boundary (D-113): with
+runtime `spec_version` gone and newer freezes installed, the exact resolver,
+range builder, restore, and reset blocks from `orchestrate.sh` must recover the
+prior successful spec, include every intervening delta, restore exact matches,
+and return delta-hit tasks to pending. Malformed/noncanonical history and a
+missing intervening delta must halt; neither can be treated as empty history.
+The same regression leaves a stale runtime version beside an empty task
+checkpoint and proves the ledger remains authoritative; reset and edit scope
+reuse one affected-task result so a second computation cannot fail open. The
+baseline persists across same-spec retries, and both in-process decomposition
+revision sites recompute and reapply scope before work continues.
+
 ---
 
 ## Mocking Policy

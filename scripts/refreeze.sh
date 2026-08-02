@@ -379,12 +379,16 @@ show_diff() {  # $1 current-path  $2 incoming-path
   if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then
     echo ""
     echo "--- $APPROVED/ERD-DELTA.md (RETIRED — no behavioral delta) ---"
-    diff -u "$APPROVED/ERD-DELTA.md" /dev/null || true
+    # Labels suppress diff's file timestamps. /dev/null's timestamp changes
+    # between --diff and --approve, which otherwise changes DIFF-SHA even
+    # though staging is byte-identical (D-109).
+    diff -u --label "$APPROVED/ERD-DELTA.md" --label /dev/null \
+      "$APPROVED/ERD-DELTA.md" /dev/null || true
   fi
   for f in $REMOVED_FILES; do
     echo ""
     echo "--- $f (REMOVED) ---"
-    diff -u "$f" /dev/null || true   # full current content shown as deletions
+    diff -u --label "$f" --label /dev/null "$f" /dev/null || true
   done
 } > "$DIFF_FILE"
 DIFF_SHA=$(sha256sum "$DIFF_FILE" | awk '{print $1}')

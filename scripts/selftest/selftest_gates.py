@@ -18,6 +18,7 @@ file here would leak into the frozen node-id set. Run explicitly:
 CI runs this in its own `selftest` job, unconditionally — the skeleton guard
 does not apply because these tests need no project src/ or requirements.
 """
+import hashlib
 import json
 import os
 import re
@@ -32,6 +33,8 @@ SCRIPTS = Path(__file__).resolve().parent.parent
 VALIDATE_PLAN = SCRIPTS / "validate-plan.py"
 CHECK_SURFACE = SCRIPTS / "check-test-surface.py"
 APPLY_BLOCKS = SCRIPTS / "apply-edit-blocks.py"
+COMPLETION_LEDGER = SCRIPTS / "completion-ledger.py"
+FLAKE_LEDGER = SCRIPTS / "flake-ledger.py"
 
 # Derived from the script under test, never hardcoded: a cap bump must not
 # break these tests (it did once — 2000→2500 left two tests asserting the
@@ -2170,6 +2173,61 @@ def _run_with_json_report(tmp_path, report):
     )
 
 
+def _actual_pytest_json_report(tmp_path, test_source):
+    fixture = tmp_path / "report-fixture"
+    fixture.mkdir()
+    test_file = fixture / "test_actual_report.py"
+    test_file.write_text(test_source)
+    report = tmp_path / "actual-report.json"
+    generated = subprocess.run(
+        [sys.executable, "-m", "pytest", str(test_file), "-q",
+         "-p", "no:cacheprovider", "--json-report",
+         f"--json-report-file={report}"],
+        cwd=fixture, capture_output=True, text=True,
+    )
+    assert generated.returncode == 0, (generated.stdout, generated.stderr)
+    assert report.is_file(), "pytest-json-report produced no report"
+    return report
+
+
+def _run_report_file(tmp_path, report):
+    env = {**os.environ, "SANDBOX_REPORT_SOURCE": str(report),
+           "SANDBOX_STUB_RC": "0"}
+    return subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "tests", str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_run_tests_accepts_real_pytest_json_report(tmp_path):
+    """Compatibility is exercised against the installed reporting plugin,
+    not only hand-built dictionaries that can drift from its real schema."""
+    report = _actual_pytest_json_report(
+        tmp_path, "def test_real_pass():\n    assert True\n"
+    )
+    r = _run_report_file(tmp_path, report)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "FINAL_TESTS_RC=0" in r.stdout
+
+
+def test_run_tests_rejects_real_skipped_report_and_ci_installs_plugin(tmp_path):
+    """The real plugin's skipped shape must stay red, and the unconditional
+    selftest job must install that plugin even in a bare template repo."""
+    report = _actual_pytest_json_report(
+        tmp_path,
+        "import pytest\n\n"
+        "@pytest.mark.skip(reason='compatibility fixture')\n"
+        "def test_real_skip():\n    assert True\n",
+    )
+    r = _run_report_file(tmp_path, report)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "FINAL_TESTS_RC=1" in r.stdout
+    assert "test_actual_report.py::test_real_skip" in r.stdout
+    workflow = (SCRIPTS.parent / ".github" / "workflows" / "ci.yml").read_text()
+    install = re.search(r"run:\s*pip install ([^\n]+)", workflow)
+    assert install and "pytest-json-report" in install.group(1), workflow
+
+
 def test_run_tests_rejects_skipped_and_xfailed_outcomes(tmp_path):
     """Frozen acceptance is fail-closed: a collected test that did not
     ordinarily pass cannot make the task or full suite green."""
@@ -2249,6 +2307,420 @@ def test_state_guard_explicit_rebuild_override_is_named_and_loud(tmp_path):
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "SWBP_REBUILD_FROM_SCRATCH=1" in r.stdout
     assert "STATE_GUARD=pass" in r.stdout
+
+
+# --- D-108 durable completion ledger ----------------------------------------
+
+
+def _completion_fixture(tmp_path):
+    tasks = [
+        {
+            "id": "T1",
+            "file": "src/a.py",
+            "depends_on": [],
+            "brief": "implement a",
+            "contracts": ["src.a"],
+            "tests": ["tests/test_a.py::test_one"],
+        },
+        {
+            "id": "T2",
+            "file": "src/b.py",
+            "depends_on": ["T1"],
+            "brief": "implement b",
+            "contracts": ["src.b"],
+            "tests": ["tests/test_b.py::test_two"],
+        },
+    ]
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "plan.json").write_text(json.dumps({
+        "version": 1,
+        "erd_version": 1,
+        "tasks": tasks,
+    }))
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("A = 1\n")
+    (tmp_path / "src" / "b.py").write_text("B = 2\n")
+    state = tmp_path / ".pipeline-state" / "tasks"
+    state.mkdir(parents=True)
+    for task in tasks:
+        fingerprint = hashlib.sha256(
+            json.dumps(task, sort_keys=True).encode()
+        ).hexdigest()
+        (state / f"{task['id']}.status").write_text("done\n")
+        (state / f"{task['id']}.fp").write_text(f"{fingerprint}\n")
+    return tasks
+
+
+def _run_completion(tmp_path, action):
+    return subprocess.run(
+        [sys.executable, str(COMPLETION_LEDGER), action,
+         "--spec-version", "1"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+
+
+def _run_prior_spec_resolution(tmp_path, current_spec):
+    """Execute the exact D-113 resolver extracted from orchestrate.sh."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    block = source.split(
+        "# BEGIN D-113 prior-spec resolution (selftest extracts this function)\n",
+        1,
+    )[1].split("# END D-113 prior-spec resolution", 1)[0]
+    env = {
+        **os.environ,
+        "STATE_DIR": str(tmp_path / ".pipeline-state"),
+        "TASK_STATE": str(tmp_path / ".pipeline-state" / "tasks"),
+        "COMPLETION_LEDGER": str(tmp_path / ".pipeline-completions.json"),
+        "COMPLETION_LEDGER_TOOL": str(COMPLETION_LEDGER),
+        "FROZEN_V": str(current_spec),
+    }
+    script = f"""set -euo pipefail
+read_state() {{ [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }}
+die() {{ echo "FAIL: $*" >&2; exit 1; }}
+{block}
+LAST_V=$(resolve_last_spec_version)
+echo "LAST_V=$LAST_V"
+if [ "$LAST_V" != "$FROZEN_V" ]; then echo "SPEC_ADVANCED=1"; else echo "SPEC_ADVANCED=0"; fi
+"""
+    return subprocess.run(
+        ["bash", "-c", script], cwd=tmp_path,
+        capture_output=True, text=True, env=env,
+    )
+
+
+def _run_active_delta_resolution(
+    tmp_path, last_spec, current_spec, available_versions,
+    baseline_spec=None,
+):
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    block = source.split(
+        "# BEGIN D-113 active-delta range (selftest extracts this block)\n",
+        1,
+    )[1].split("# END D-113 active-delta range", 1)[0]
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True, exist_ok=True)
+    for version in available_versions:
+        (approved / f"DELTA-v{version}.json").write_text("{}\n")
+    env = {
+        **os.environ,
+        "APPROVED": str(approved),
+        "LAST_V": str(last_spec),
+        "DELTA_BASELINE_V": str(
+            last_spec if baseline_spec is None else baseline_spec
+        ),
+        "FROZEN_V": str(current_spec),
+        "SPEC_ADVANCED": str(int(last_spec != current_spec)),
+    }
+    script = f"""set -euo pipefail
+die() {{ echo "FAIL: $*" >&2; exit 1; }}
+{block}
+printf 'DELTA=%s\n' "${{ACTIVE_DELTA_FILES[@]}}"
+"""
+    return subprocess.run(
+        ["bash", "-c", script], cwd=tmp_path,
+        capture_output=True, text=True, env=env,
+    )
+
+
+def _run_completion_transition(tmp_path, current_spec):
+    """Run the exact resolver, active-range, restore, and reset composition."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    resolver = source.split(
+        "# BEGIN D-113 prior-spec resolution (selftest extracts this function)\n",
+        1,
+    )[1].split("# END D-113 prior-spec resolution", 1)[0]
+    active_range = source.split(
+        "# BEGIN D-113 active-delta range (selftest extracts this block)\n",
+        1,
+    )[1].split("# END D-113 active-delta range", 1)[0]
+    affected_helpers = source.split(
+        "# BEGIN D-113 affected helpers (selftest extracts this block)\n",
+        1,
+    )[1].split("# END D-113 affected helpers", 1)[0]
+
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True, exist_ok=True)
+    for version in range(2, current_spec + 1):
+        (approved / f"DELTA-v{version}.json").write_text("{}\n")
+    # This boundary stub asserts the shell supplies the full skipped range;
+    # validate-plan's real multi-delta union is tested separately below.
+    validator = tmp_path / "scripts" / "validate-plan.py"
+    validator.write_text(
+        "import pathlib, sys\n"
+        "names = [pathlib.Path(p).name for p in sys.argv[2:]]\n"
+        f"assert names == {[f'DELTA-v{v}.json' for v in range(2, current_spec + 1)]!r}, names\n"
+        "print('T1')\n"
+    )
+    env = {
+        **os.environ,
+        "STATE_DIR": str(tmp_path / ".pipeline-state"),
+        "TASK_STATE": str(tmp_path / ".pipeline-state" / "tasks"),
+        "BRIEF_DIR": str(tmp_path / ".pipeline-state" / "briefs"),
+        "COMPLETION_LEDGER": str(tmp_path / ".pipeline-completions.json"),
+        "COMPLETION_LEDGER_TOOL": str(COMPLETION_LEDGER),
+        "APPROVED": str(approved),
+        "FROZEN_V": str(current_spec),
+    }
+    script = f"""set -euo pipefail
+mkdir -p "$TASK_STATE" "$BRIEF_DIR"
+read_state() {{ [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }}
+write_state() {{ printf '%s\n' "$2" > "$STATE_DIR/$1"; }}
+set_tstat() {{ printf '%s\n' "$2" > "$TASK_STATE/$1.status"; }}
+die() {{ echo "FAIL: $*" >&2; exit 1; }}
+{resolver}
+LAST_V=$(resolve_last_spec_version)
+SPEC_ADVANCED=0
+if [ "$FROZEN_V" != "$LAST_V" ]; then SPEC_ADVANCED=1; fi
+DELTA_BASELINE_V="$LAST_V"
+{active_range}
+{affected_helpers}
+compute_active_delta_scope
+python3 "$COMPLETION_LEDGER_TOOL" restore --spec-version "$FROZEN_V" \
+  --ledger "$COMPLETION_LEDGER" --task-state "$TASK_STATE"
+if [ "$SPEC_ADVANCED" = "1" ]; then reset_active_delta_tasks; fi
+write_state spec_version "$FROZEN_V"
+"""
+    return subprocess.run(
+        ["bash", "-c", script], cwd=tmp_path,
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_completion_ledger_records_and_restores_exact_outputs(tmp_path):
+    """A successful run survives state cleanup and restores task markers only
+    when both the task definition and its output bytes still match."""
+    _completion_fixture(tmp_path)
+    recorded = _run_completion(tmp_path, "record")
+    assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    ledger = json.loads(
+        (tmp_path / ".pipeline-completions.json").read_text()
+    )
+    assert set(ledger["specs"]["1"]["tasks"]) == {"T1", "T2"}
+
+    state = tmp_path / ".pipeline-state" / "tasks"
+    for path in state.iterdir():
+        path.unlink()
+    restored = _run_completion(tmp_path, "restore")
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert "restored 2 task(s)" in restored.stdout
+    assert (state / "T1.status").read_text().strip() == "done"
+    assert (state / "T2.status").read_text().strip() == "done"
+
+
+def test_completion_ledger_rejects_stale_file_and_plan_fingerprints(tmp_path):
+    """History is a cache, never an assertion: changed output bytes and changed
+    task definitions both stay pending for the live acceptance loop."""
+    tasks = _completion_fixture(tmp_path)
+    recorded = _run_completion(tmp_path, "record")
+    assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    state = tmp_path / ".pipeline-state" / "tasks"
+    for path in state.iterdir():
+        path.unlink()
+
+    (tmp_path / "src" / "a.py").write_text("A = 99\n")
+    tasks[1]["brief"] = "changed definition"
+    plan = json.loads((tmp_path / "tasks" / "plan.json").read_text())
+    plan["tasks"] = tasks
+    (tmp_path / "tasks" / "plan.json").write_text(json.dumps(plan))
+
+    restored = _run_completion(tmp_path, "restore")
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert "restored 0 task(s)" in restored.stdout
+    assert not list(state.glob("*.status"))
+
+
+def test_completion_ledger_never_overwrites_live_runtime_state(tmp_path):
+    """A crash checkpoint is newer evidence than durable history. If any task
+    state exists, restore must leave the whole live checkpoint untouched."""
+    _completion_fixture(tmp_path)
+    recorded = _run_completion(tmp_path, "record")
+    assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    state = tmp_path / ".pipeline-state" / "tasks"
+    for path in state.iterdir():
+        path.unlink()
+    (state / "T1.status").write_text("pending\n")
+
+    restored = _run_completion(tmp_path, "restore")
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert "live task state present" in restored.stdout
+    assert (state / "T1.status").read_text() == "pending\n"
+    assert not (state / "T2.status").exists()
+
+
+def test_post_success_new_freeze_uses_ledger_version_for_delta_reset(tmp_path):
+    """Success deletes runtime spec_version. The next freeze must recover the
+    prior successful version from durable history, otherwise an affected task
+    whose test body changed under the same node-id can be restored as done
+    before the delta reset gets a chance to invalidate it."""
+    _completion_fixture(tmp_path)
+    recorded = _run_completion(tmp_path, "record")
+    assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    state = tmp_path / ".pipeline-state"
+    for path in (state / "tasks").iterdir():
+        path.unlink()
+
+    resolved = _run_prior_spec_resolution(tmp_path, current_spec=2)
+    assert resolved.returncode == 0, (resolved.stdout, resolved.stderr)
+    assert "LAST_V=1" in resolved.stdout
+    assert "SPEC_ADVANCED=1" in resolved.stdout
+
+
+def test_prior_spec_resolution_fails_closed_on_damaged_ledger(tmp_path):
+    """A corrupt durable baseline cannot silently fall back to current spec;
+    that would recreate the skipped-delta-reset defect."""
+    (tmp_path / ".pipeline-completions.json").write_text(
+        '{"schema_version": 1, "specs": []}\n'
+    )
+    resolved = _run_prior_spec_resolution(tmp_path, current_spec=2)
+    assert resolved.returncode != 0
+    assert "ledger specs is not an object" in resolved.stderr
+    assert "could not supply the prior spec version" in resolved.stderr
+
+
+def test_empty_task_checkpoint_uses_ledger_not_runtime_version(tmp_path):
+    """A lone runtime spec_version can survive partial state loss. With no
+    task markers it must not suppress replay of the last success's deltas."""
+    _completion_fixture(tmp_path)
+    recorded = _run_completion(tmp_path, "record")
+    assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    state = tmp_path / ".pipeline-state"
+    for path in (state / "tasks").iterdir():
+        path.unlink()
+    (state / "spec_version").write_text("2\n")
+
+    resolved = _run_prior_spec_resolution(tmp_path, current_spec=2)
+    assert resolved.returncode == 0, (resolved.stdout, resolved.stderr)
+    assert "LAST_V=1" in resolved.stdout
+    assert "SPEC_ADVANCED=1" in resolved.stdout
+
+
+def test_active_delta_range_spans_every_freeze_since_success(tmp_path):
+    resolved = _run_active_delta_resolution(
+        tmp_path, last_spec=1, current_spec=3, available_versions=(2, 3)
+    )
+    assert resolved.returncode == 0, (resolved.stdout, resolved.stderr)
+    assert "DELTA=" in resolved.stdout
+    assert "DELTA-v2.json" in resolved.stdout
+    assert "DELTA-v3.json" in resolved.stdout
+
+
+def test_active_delta_range_fails_closed_when_history_is_missing(tmp_path):
+    resolved = _run_active_delta_resolution(
+        tmp_path, last_spec=1, current_spec=3, available_versions=(3,)
+    )
+    assert resolved.returncode != 0
+    assert "missing" in resolved.stderr
+    assert "DELTA-v2.json" in resolved.stderr
+
+
+def test_active_delta_range_survives_same_spec_resume(tmp_path):
+    """After the first reset writes runtime spec v3, retries still need the
+    v1 success baseline so D-65 keeps both v2 and v3 tasks editable."""
+    resolved = _run_active_delta_resolution(
+        tmp_path, last_spec=3, current_spec=3,
+        available_versions=(2, 3), baseline_spec=1,
+    )
+    assert resolved.returncode == 0, (resolved.stdout, resolved.stderr)
+    assert "DELTA-v2.json" in resolved.stdout
+    assert "DELTA-v3.json" in resolved.stdout
+
+
+def test_success_cleanup_to_two_freezes_restores_then_resets_delta_hit(tmp_path):
+    """Full D-113 composition: v1 success is cleaned, v2 changes T1 under
+    the same task fingerprint, v3 is reached, exact matches restore, and the
+    unioned reset returns T1—not unrelated T2—to pending."""
+    _completion_fixture(tmp_path)
+    recorded = _run_completion(tmp_path, "record")
+    assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    task_state = tmp_path / ".pipeline-state" / "tasks"
+    for path in task_state.iterdir():
+        path.unlink()
+
+    transitioned = _run_completion_transition(tmp_path, current_spec=3)
+    assert transitioned.returncode == 0, (
+        transitioned.stdout, transitioned.stderr
+    )
+    assert (task_state / "T1.status").read_text() == "pending\n"
+    assert (task_state / "T2.status").read_text() == "done\n"
+    assert (tmp_path / ".pipeline-state" / "spec_version").read_text() == "3\n"
+
+
+@pytest.mark.parametrize("bad_version", ["0", "01"])
+def test_completion_ledger_rejects_noncanonical_spec_versions(
+    tmp_path, bad_version
+):
+    """Zero collides with latest's no-history sentinel and leading zeroes
+    create multiple spellings for one milestone; neither is trustworthy."""
+    (tmp_path / ".pipeline-completions.json").write_text(json.dumps({
+        "schema_version": 1,
+        "specs": {bad_version: {"tasks": {}}},
+    }))
+    latest = subprocess.run(
+        [sys.executable, str(COMPLETION_LEDGER), "latest"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert latest.returncode != 0
+    assert "invalid ledger spec version" in latest.stderr
+
+
+def test_orchestrator_orders_completion_restore_and_record_safely():
+    """Restore must precede delta invalidation; record must precede runtime
+    cleanup; and the explicit rebuild path must bypass durable history."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    plan = source.index('echo "=== Phase: plan ==="')
+    restore = source.index('"$COMPLETION_LEDGER_TOOL" restore', plan)
+    delta_reset = source.index('if [ "$SPEC_ADVANCED" = "1" ]', restore)
+    record = source.index('"$COMPLETION_LEDGER_TOOL" record', delta_reset)
+    cleanup = source.index('rm -rf "$STATE_DIR"', record)
+    assert plan < restore < delta_reset < record < cleanup
+    restore_guard = source[source.rfind("if ", plan, restore):restore]
+    assert "SWBP_REBUILD_FROM_SCRATCH" in restore_guard
+    assert source.count("scripts/validate-plan.py --affected") == 1
+    assert 'write_state delta_baseline_spec "$DELTA_BASELINE_V"' in source
+    assert source.count(
+        "ensure_plan\n        compute_active_delta_scope\n"
+        "        reset_active_delta_tasks"
+    ) == 1
+    assert source.count(
+        "ensure_plan\n  compute_active_delta_scope\n"
+        "  reset_active_delta_tasks"
+    ) == 1
+
+
+# --- D-111 durable recurring-flake history ---------------------------------
+
+
+def _run_flake_ledger(tmp_path, action, *args):
+    return subprocess.run(
+        [sys.executable, str(FLAKE_LEDGER), action,
+         "--ledger", str(tmp_path / ".pipeline-flakes.json"), *args],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+
+
+def test_flake_ledger_records_specs_idempotently_and_counts(tmp_path):
+    nodeid = "tests/test_flake.py::test_a"
+    for spec in ("1", "1", "2"):
+        recorded = _run_flake_ledger(
+            tmp_path, "record", "--spec-version", spec,
+            "--nodeid", nodeid, "--isolation-passes", "1",
+        )
+        assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    counted = _run_flake_ledger(tmp_path, "count", "--nodeid", nodeid)
+    assert counted.returncode == 0, (counted.stdout, counted.stderr)
+    assert counted.stdout.strip() == "2"
+    ledger = json.loads((tmp_path / ".pipeline-flakes.json").read_text())
+    assert [event["spec_version"] for event in ledger["nodes"][nodeid]] == [1, 2]
+
+
+def test_flake_ledger_fails_closed_when_history_is_malformed(tmp_path):
+    ledger = tmp_path / ".pipeline-flakes.json"
+    ledger.write_text('{"schema_version": 1, "nodes": []}\n')
+    counted = _run_flake_ledger(
+        tmp_path, "count", "--nodeid", "tests/test_flake.py::test_a"
+    )
+    assert counted.returncode != 0
+    assert "ledger nodes is not an object" in counted.stderr
 
 
 # --- D-77 flake triage: the highest-blast-radius branch in orchestrate.sh ----
@@ -2348,6 +2820,38 @@ def test_flake_one_isolated_pass_allows_flake_green(tmp_path):
     assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
     assert "1/2 isolated passes" in r.stdout
     assert _kv(r.stdout, "FLAKE_NOTE").startswith("WARNING (D-77)")
+
+
+def test_flake_recurring_threshold_keeps_suite_red_for_escalation(tmp_path):
+    """Two prior accepted occurrences plus this isolated-pass occurrence hit
+    the default threshold of three. The bypass closes and the existing drift
+    ladder receives a red suite with explicit recurring-flake evidence."""
+    nodeid = "tests/test_flake.py::test_a"
+    for spec in ("1", "2"):
+        recorded = _run_flake_ledger(
+            tmp_path, "record", "--spec-version", spec,
+            "--nodeid", nodeid, "--isolation-passes", "1",
+        )
+        assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    r = run_drive_drift(
+        tmp_path, failing=nodeid, rt_outcomes="1:0",
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
+    assert "recurring flake threshold reached" in r.stdout
+    assert _kv(r.stdout, "FLAKE_NOTE") == ""
+
+
+def test_recurring_flake_bypasses_em_and_routes_to_tpm_bundle():
+    """Once history mechanically proves a chronic frozen-oracle defect, the
+    shell packages it before the generic EM drift-consult branch."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    drift = source.index("drift_evidence=")
+    recurring = source.index('if [ "$RECURRING_FLAKE" = "1" ]', drift)
+    em_consult = source.index('consult_em "DRIFT"', recurring)
+    block = source[recurring:em_consult]
+    assert 'package_escalation "recurring-flake" "DRIFT"' in block
+    assert "finalize_batch" in block
 
 
 def test_flake_one_mapped_among_many_keeps_drift(tmp_path):
@@ -2823,6 +3327,13 @@ def run_scope(repo, *deltas):
     )
 
 
+def run_affected(repo, *deltas):
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--affected", *deltas],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
 def _scoped(repo, *deltas):
     """Run --subtree-scope and stage its output where the merge reads it,
     exactly as orchestrate.sh does."""
@@ -2863,6 +3374,35 @@ def test_subtree_scope_transitive_dependents(subtree_repo):
     s = json.loads(run_scope(subtree_repo, "d.json").stdout)
     assert {e["keep_id"] for e in s["reemit"]} == {"T1", "T2"}
     assert s["carried"] == []
+
+
+def test_affected_unions_every_delta_since_last_success(subtree_repo):
+    """A run can skip more than one freeze. Reset/edit scope must include a
+    task hit only by an intermediate delta as well as the newest delta."""
+    current_plan = {
+        "version": 4,
+        "erd_version": 2,
+        "tasks": [
+            *SUB_PRIOR["tasks"],
+            {"id": "T3", "file": "src/c.py", "depends_on": [],
+             "brief": "build c", "contracts": [],
+             "tests": ["tests/test_c.py::test_four"]},
+        ],
+    }
+    (subtree_repo / "tasks" / "plan.json").write_text(
+        json.dumps(current_plan)
+    )
+    (subtree_repo / "v2.json").write_text(json.dumps({
+        "changed_contract_ids": [], "changed_tests": [],
+        "changed_files": ["src/a.py"],
+    }))
+    (subtree_repo / "v3.json").write_text(json.dumps({
+        "changed_contract_ids": [], "changed_tests": [],
+        "changed_files": ["src/c.py"],
+    }))
+    affected = run_affected(subtree_repo, "v2.json", "v3.json")
+    assert affected.returncode == 0, (affected.stdout, affected.stderr)
+    assert set(affected.stdout.split()) == {"T1", "T2", "T3"}
 
 
 def test_subtree_scope_refuses_inventory_removal(subtree_repo):
@@ -3580,8 +4120,27 @@ def test_containerfile_never_copies_the_project_tree_into_an_image_layer():
         containerfile,
     ), containerfile
     dockerignore = (SCRIPTS.parent / ".dockerignore").read_text().splitlines()
-    for required in (".env*", ".pipeline-state", ".em-archive"):
+    for required in (
+        ".env*", ".pipeline-state", ".pipeline-completions.json",
+        ".pipeline-flakes.json", ".em-archive",
+    ):
         assert required in dockerignore, (required, dockerignore)
+
+
+def test_real_container_build_is_change_scoped_and_scheduled():
+    """The expensive browser image gets a real clean build when packaging
+    changes and on a weekly backstop, without taxing every source commit."""
+    workflow_path = (
+        SCRIPTS.parent / ".github" / "workflows" / "container-build.yml"
+    )
+    assert workflow_path.is_file(), "container build workflow is missing"
+    workflow = workflow_path.read_text()
+    for required in (
+        "schedule:", "workflow_dispatch:", "Containerfile",
+        ".dockerignore", "requirements.txt", "docker build",
+        "--pull", "--no-cache", "docker run",
+    ):
+        assert required in workflow, (required, workflow)
 
 
 # --- status.sh / teardown.sh (D-97 housekeeping) -----------------------------

@@ -38,6 +38,8 @@
 #   SWBP_ELAPSED   value the stubbed run_elapsed returns (for the
 #                  fbfc1f0 budget-skip path)
 #   SWBP_RUN_BUDGET  budget the block compares SWBP_ELAPSED against
+#   SWBP_FLAKE_ESCALATION_THRESHOLD  accepted occurrence that closes the
+#                  bypass (default 3)
 # Workdir inputs:
 #   tasks/plan.json  the mapping data the block queries per failing id
 #
@@ -46,7 +48,8 @@
 #   FINAL_FAILING=<original-or-restored>
 #   FINAL_FAIL_DETAIL=<original-or-restored>
 #   FLAKE_NOTE=<one-line-encoded, empty when block did not fire flake path>
-#   ISO_EVIDENCE=<the recorded iso_evidence string>
+#   RECURRING_FLAKE=<0|1>
+#   ISO_EVIDENCE=<the recorded isolation evidence string>
 #   RT_CALLS=<how many times the stub run_tests was invoked>
 set -euo pipefail
 
@@ -71,6 +74,9 @@ FAIL_DETAIL="${FAIL_DETAIL:-}"
 RT_OUTCOMES="${RT_OUTCOMES:-}"
 SWBP_ELAPSED="${SWBP_ELAPSED:-0}"
 SWBP_RUN_BUDGET="${SWBP_RUN_BUDGET:-0}"
+FLAKE_LEDGER="${FLAKE_LEDGER:-.pipeline-flakes.json}"
+FLAKE_LEDGER_TOOL="$REPO/scripts/flake-ledger.py"
+FLAKE_ESCALATION_THRESHOLD="${SWBP_FLAKE_ESCALATION_THRESHOLD:-3}"
 
 # --- Stubs the block calls out to -------------------------------------
 # The real run_tests parses .cache/test-report.json and sets TESTS_RC,
@@ -98,6 +104,7 @@ run_tests() {
 
 run_elapsed() { echo "$SWBP_ELAPSED"; }
 mark() { :; }   # phase-timing sink — irrelevant here
+die() { echo "FAIL: $*" >&2; exit 1; }
 
 # --- Execute the extracted block --------------------------------------
 eval "$BLOCK"
@@ -110,5 +117,7 @@ echo "FINAL_TESTS_RC=$TESTS_RC"
 echo "FINAL_FAILING=$FAILING"
 echo "FINAL_FAIL_DETAIL=$FAIL_DETAIL"
 echo "FLAKE_NOTE=$_fn_encoded"
+echo "FLAKE_RECORDS=${FLAKE_RECORDS:-}"
+echo "RECURRING_FLAKE=${RECURRING_FLAKE:-0}"
 echo "ISO_EVIDENCE=${iso_evidence:-}"
 echo "RT_CALLS=$RT_CALLS"

@@ -134,6 +134,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-50**: Stack drift killed mechanically — content-hashed sandbox image, podman preflight
 - **D-62**: LM Studio drift probe in orchestrate.sh pre-flight
 - **D-102**: Sandbox image copies only dependency manifests; project state and secrets never enter image layers
+- **D-112**: Clean image builds run on packaging changes and weekly, then verify no project tree is present
 
 ### Frozen spec & TPM shuttle
 
@@ -156,6 +157,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-75**: Red-before-green — a refreeze runs the delta's tests pre-implementation, warns on early passes
 - **D-104**: One executable artifact-path policy governs TPM pack, unpack, agent mode, and refreeze
 - **D-107**: Behavioral freezes require a fresh, coverage-checked `ERD-DELTA.md`
+- **D-109**: Refreeze approval hashes use timestamp-free deletion labels
 
 ### Escalation ladder & failure paths
 
@@ -177,6 +179,10 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-99**: Empty task state is allowed only after a covering success commit; mid-milestone loss still halts
 - **D-100**: D-77 flake-green requires at least one isolated pass per failing carried node
 - **D-103**: Frozen acceptance requires ordinary passed outcomes; skip/xfail/xpass remain red
+- **D-110**: Report-parser compatibility is exercised against the real pytest-json-report producer
+- **D-111**: Accepted flakes persist by spec; the recurring threshold routes directly to a TPM bundle
+- **D-108**: Successful exact task/output matches persist in a bounded completion ledger
+- **D-113**: Post-success spec continuity comes from the validated completion ledger, preserving delta invalidation
 
 ### Gates, lanes & governance
 

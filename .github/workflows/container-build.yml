@@ -1,0 +1,48 @@
+name: Clean container build
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - Containerfile
+      - .dockerignore
+      - requirements.txt
+      - .github/workflows/container-build.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - Containerfile
+      - .dockerignore
+      - requirements.txt
+      - .github/workflows/container-build.yml
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build from a cold cache
+        run: >-
+          docker build --pull --no-cache
+          --tag swbp-sandbox-ci --file Containerfile .
+      - name: Verify the image contains no project tree
+        run: |
+          docker run --rm --entrypoint sh swbp-sandbox-ci -c '
+            test ! -e /work/src &&
+            test ! -e /work/tests &&
+            test ! -e /work/.git &&
+            test ! -e /tmp/requirements.txt
+          '
+      - name: Record image layers
+        run: docker history --no-trunc swbp-sandbox-ci

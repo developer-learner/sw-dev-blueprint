@@ -399,6 +399,10 @@ CEO business intent ──► TPM (frontier LLM — web chat D-38 or scoped repo
                 ──► mapped frozen tests
                           │
               all tasks done ──► FULL frozen suite green = done
+                          │        exact task/output hashes recorded in
+                          │        .pipeline-completions.json before cleanup;
+                          │        later runs recover prior spec continuity,
+                          │        restore exact matches, then invalidate delta hits
                 fail → escalation ladder (retry → EM consult → bounded revisions
                         → batched TPM bundle → refreeze → affected subtree resumes)
 ```

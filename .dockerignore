@@ -1,6 +1,8 @@
 .git
 .env*
 .pipeline-state
+.pipeline-completions.json
+.pipeline-flakes.json
 .em-archive
 .cache
 .tpm

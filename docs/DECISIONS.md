@@ -21,6 +21,63 @@
 
 ## Decisions
 
+## D-113 — 2026-08-01 — Success cleanup recovers its prior spec from durable history
+
+**Decision:** When the runtime task checkpoint is empty after intentional success cleanup—or partial state loss—`scripts/orchestrate.sh` resolves the prior milestone from the newest validated entry in `.pipeline-completions.json` instead of trusting a lone `.pipeline-state/spec_version`. That recovered version drives `SPEC_ADVANCED` before exact-match completions are restored and is retained separately as `delta_baseline_spec` for the entire in-progress milestone, so same-spec retries preserve every intervening delta in D-65 edit scope. Task reset and edit scope share one fail-closed affected-task computation over that range, and every in-process plan revision recomputes and reapplies it before the DAG continues. `completion-ledger.py latest` returns the newest successful spec (or zero for no history), accepts only canonical positive version keys, validates the entire ledger, and makes malformed history halt. A prior version newer than the frozen spec and a missing intervening delta also halt rather than guessing through incomplete history.
+
+**Reason:** D-108 correctly ordered restore before delta invalidation, but D-99's success cleanup deleted the runtime version used to arm that invalidation. The fallback silently set the missing prior version equal to the new frozen version, so `SPEC_ADVANCED=0`; a partial checkpoint could also retain only that version after losing every task marker. A one-file mechanical re-plan can preserve an affected task's exact fingerprint when test content changes under the same node-id; D-108 could then restore it as done and skip the affected-task reset. A first correction that considered only the newest delta still failed when more than one freeze elapsed after success; advancing runtime `spec_version` after the first reset then lost that wider range on retry. Separately recomputing D-65 scope could fail open, while caching it across a later decomposition revision made it stale. The full suite remained a backstop, but legitimate implementation work was misrouted into drift/escalation instead of reaching the coder.
+
+**Alternatives considered:** Persist only `spec_version` inside `.pipeline-state/` after success (rejected — success cleanup must leave no runtime checkpoint that resembles a live run); infer the version from commit subjects (rejected — the tracked ledger is schema-validated and already binds successful specs); require every re-plan to change the task fingerprint (rejected — mechanical one-file planning intentionally carries unchanged briefs and same-node test mappings); rely on the full-suite drift path (rejected — fail-closed is not the same as routing work correctly).
+
+**Do not suggest:** Trusting runtime `spec_version` when the task checkpoint is empty; using current runtime version as the edit-scope baseline after a same-spec retry; defaulting missing runtime version to the current freeze when durable history exists; accepting zero, leading-zero, or malformed ledger versions as history; considering only the newest delta when several freezes elapsed; recomputing edit scope with a fail-open branch or retaining it across a validated plan revision; restoring exact-match completions before determining whether the spec advanced; treating the final suite's eventual red verdict as proof that the task-routing defect is harmless.
+
+## D-112 — 2026-08-01 — Real container builds run on packaging changes and a weekly backstop
+
+**Decision:** A project-owned `.github/workflows/container-build.yml` performs a pulled, no-cache Docker build when `Containerfile`, `.dockerignore`, `requirements.txt`, or the workflow itself changes; it also runs every Monday and on manual dispatch. After building, it starts the image and asserts that `/work` contains no source, tests, or Git metadata and that the temporary requirements manifest was removed. The blueprint and the actively maintained `testchat` child carry the workflow; other local children remain explicitly deferred because their stack adaptations are project-owned.
+
+**Reason:** Static checks prove that the Dockerfile no longer says `COPY .`, but they cannot prove the base image still resolves, browser installation still works, dependencies remain installable, or the finished image has the expected filesystem shape. Building on every source commit would repeatedly pay for the accepted ~1.2 GB browser layer without testing a changed packaging input. Change-scoped plus weekly provides real integration evidence at bounded cost.
+
+**Do not suggest:** Running the expensive clean build on every source-only commit; pushing the validation image to a registry; restoring build cache to make a test named “clean build” faster; treating a successful Dockerfile parse or static grep as equivalent to a completed image build.
+
+## D-111 — 2026-08-01 — Accepted flakes are counted by spec and recur into a TPM escalation
+
+**Decision:** D-77 flake-green occurrences are recorded in tracked `.pipeline-flakes.json` only after the milestone's full-suite success. Each node records its successful spec version and whether it passed one or two isolation attempts; rerunning the same spec replaces rather than increments the event. Before auto-green, the shell projects the new count. At `SWBP_FLAKE_ESCALATION_THRESHOLD` (default 3, positive integer), the suite remains red and the shell creates a recurring-flake TPM bundle directly, bypassing the generic EM drift consult. History is schema-validated, bounded to 50 spec events per node, and malformed history fails closed.
+
+**Reason:** D-77 and D-100 distinguish a one-off carried flake from reproducible drift within one run, but every later run forgot that evidence. The result could be an indefinitely unstable frozen test repeatedly excused as a new one-off. Spec-version counting is durable and idempotent; the threshold converts repeated evidence into the correct owner action. A flaky frozen oracle is a TPM test/spec defect, not an implementation decomposition problem an EM can repair.
+
+**Alternatives considered:** Count every retry (rejected — operator reruns would inflate history); record candidates before milestone success (rejected — failed runs are not accepted flake evidence and would dirty the tree before escalation); quarantine the test (rejected — frozen acceptance cannot silently shrink); send chronic flakes through the EM first (rejected — the shell already has the decisive test-history evidence and the EM cannot edit frozen tests).
+
+**Do not suggest:** Resetting counts at milestone boundaries; counting 0/2 isolation failures as flakes; allowing the threshold event to auto-green and merely writing a warning; letting an agent edit the ledger; using wall-clock timestamps instead of successful spec versions as the identity.
+
+## D-110 — 2026-08-01 — Test-report compatibility exercises the real pytest plugin
+
+**Decision:** The unconditional control-plane selftest job installs `pytest-json-report`. Selftests invoke a real pytest subprocess with that plugin, then feed its generated green and skipped reports through the production `run_tests` parser. Hand-built report shapes remain for adversarial cases, but they are no longer the only compatibility evidence.
+
+**Reason:** Synthetic JSON fixtures can remain green while a plugin upgrade changes field placement, outcome names, or summary structure. The parser decides whether code ships, so its adapter boundary must be tested against the actual producer. A passing report pins the positive path; the real skipped report pins the frozen-oracle rule that only ordinary passes are green.
+
+**Do not suggest:** Replacing adversarial synthetic fixtures entirely (they cheaply cover rare xfail/XPASS and corrupt-report shapes); trusting pytest's process exit alone; installing the plugin only in the application-test job while the skeleton-safe control-plane job runs the compatibility test.
+
+## D-109 — 2026-08-01 — Approval hashes exclude volatile diff timestamps
+
+**Decision:** Every refreeze deletion diff that compares a tracked artifact with `/dev/null` supplies explicit `diff --label` values. The review output still identifies the real path and `/dev/null`, but neither header contains a filesystem timestamp. The existing end-to-end `--diff` then `--approve <hash>` tests remain the mechanical contract.
+
+**Reason:** D-107 added automatic retirement of the prior `ERD-DELTA.md`. Its unified diff used `/dev/null` directly, whose displayed timestamp changes between invocations. The approval token is the SHA-256 of that text, so an unchanged staging tree could produce a different hash seconds later and reject a valid approval. A hash-bound gate must vary only when the reviewed content varies.
+
+**Do not suggest:** Removing the hash binding; retrying until two timestamps happen to match; omitting deletion content from the review diff; normalizing the hash after displaying different bytes to the reviewer.
+
+## D-108 — 2026-07-30 — Successful task completions have a durable, exact-match ledger
+
+> Amended 2026-08-01 by D-113: post-success re-freeze detection recovers the
+> prior successful spec from this ledger before restoration and delta reset.
+
+**Decision:** On a full-suite-green run, `scripts/orchestrate.sh` records every completed task in tracked `.pipeline-completions.json` before deleting `.pipeline-state/` and includes the ledger in the `[success]` commit. Each record binds the task id to its full plan-entry fingerprint, output path, and output-file SHA-256. On a later run, the shell may restore `done` markers only into an entirely empty runtime task-state and only when all three values still match; any live/partial checkpoint takes precedence. The ledger's newest successful spec replaces the runtime version erased by success cleanup (D-113); restore then runs before re-freeze invalidation, so the existing delta reset makes affected tasks pending when mapped test content changed without changing the plan entry. `SWBP_REBUILD_FROM_SCRATCH=1` bypasses restoration. The ledger retains the newest 50 successful spec versions and fails closed when malformed.
+
+**Reason:** D-99 fixed the permanent post-success halt by recognizing a covering `[success]` commit, but the success path still erased every `done` marker. The next milestone therefore knew it was safe to run yet forgot which unchanged work had already passed, contradicting D-24 resume economics and forcing needless coder calls. Git ancestry proves that cleanup was legitimate; it cannot prove that a particular current output still matches a particular completed task. The fingerprint-plus-output-hash binding supplies that missing proof without treating runtime counters, logs, retries, or escalations as durable state.
+
+**Alternatives considered:** Preserve all of `.pipeline-state/` after success (rejected — transient counters, locks, logs, and escalation artifacts would masquerade as a live run, and operator cleanup would erase the only record); infer completion from `[task]` commits (rejected — commit subjects do not bind the current plan entry or output bytes); trust only the output hash (rejected — the same bytes can sit under a materially changed brief or test mapping); store status in `tasks/plan.json` (rejected — D-26 keeps procedural state shell-owned and the validator forbids model-authored status).
+
+**Do not suggest:** Restoring a task when either its plan fingerprint or output hash differs; restoring over a non-empty crash checkpoint; moving retry/log/escalation state into the tracked ledger; bypassing delta-driven invalidation because a prior output hash still matches; making a malformed ledger silently authoritative.
+
 ## D-107 — 2026-07-28 — Behavioral freezes carry a fresh, checked current-change ERD
 
 **Decision:** Every post-v1 re-freeze that changes tests, retires tests, introduces AC ids, or substantively changes contracts must stage `ERD-DELTA.md`. It has mechanically recognizable sections for changed ACs, superseded ACs, changed files, and test-to-file mapping. `scripts/check-spec-delta.py` rejects missing sections, newly introduced AC ids absent from the delta, and `contracts.changed_files` entries absent from the delta. The EM treats this file as the authoritative current-milestone slice when it explicitly supersedes standing ERD prose. A later non-behavioral freeze that refreshes `ERD.md` without a new delta is the consolidation point: it retires the prior `ERD-DELTA.md` after the completed behavior has entered standing architecture. The EM prompt also states the already-enforced D-64 Playwright final-task rule and the empty-contract-list rule verbatim.
@@ -89,7 +146,11 @@
 
 ## D-99 — 2026-07-28 — Empty task state is legitimate only after a covering success
 
-**Decision:** The lost-state preflight compares git history before halting on an empty `.pipeline-state/tasks/`. If the newest `[task ...]` commit is an ancestor of the newest `[success]` commit, the empty state is the orchestrator's intentional post-success cleanup and the next run starts fresh. If a task is newer than the last success, state was lost mid-milestone and the fail-closed halt remains. An intentional full rebuild uses the explicit `SWBP_REBUILD_FROM_SCRATCH=1` override.
+> Amended 2026-07-30 by D-108: a covering success now permits an exact-match
+> restore from `.pipeline-completions.json` rather than always starting with
+> every task pending. Mid-milestone loss detection is unchanged.
+
+**Decision:** The lost-state preflight compares git history before halting on an empty `.pipeline-state/tasks/`. If the newest `[task ...]` commit is an ancestor of the newest `[success]` commit, the empty state is the orchestrator's intentional post-success cleanup and the next run may proceed (with D-108 exact-match restoration where available). If a task is newer than the last success, state was lost mid-milestone and the fail-closed halt remains. An intentional full rebuild uses the explicit `SWBP_REBUILD_FROM_SCRATCH=1` override.
 
 **Reason:** The success path has always removed `.pipeline-state/`, but the new lost-state guard treated every prior task commit as unfinished work. After the first successful run it therefore bricked every subsequent run, and its suggested recovery—deleting the already-empty directory—could never alter the verdict. Commit ancestry distinguishes the two states mechanically without weakening mid-milestone loss detection.
 

@@ -30,7 +30,8 @@ Modes:
   validate-plan.py --task ID --field F      print field F of task ID
                                             (F: file|brief|tests|contracts|smoke_check|fingerprint)
                                             smoke_check reads from contracts.json, not the plan
-  validate-plan.py --affected DELTA.json    print ids of tasks invalidated by a re-freeze
+  validate-plan.py --affected DELTA.json [DELTA.json ...]
+                                            print ids invalidated across re-freezes
                                             delta, including transitive dependents
   validate-plan.py --diagnosis FILE         validate an EM diagnosis; print its verdict
   validate-plan.py --spec-preflight OLD NEW
@@ -1232,10 +1233,13 @@ def _hit_task_ids(tasks, delta):
     return hit
 
 
-def cmd_affected(delta_path):
+def cmd_affected(delta_paths):
     plan, _ = validate()
-    delta = load_json(Path(delta_path), "delta")
-    for tid in sorted(_hit_task_ids(plan["tasks"], delta)):
+    hit = set()
+    for delta_path in delta_paths:
+        delta = load_json(Path(delta_path), "delta")
+        hit.update(_hit_task_ids(plan["tasks"], delta))
+    for tid in sorted(hit):
         print(tid)
 
 
@@ -1528,8 +1532,8 @@ def main(argv):
         else:
             fail([f"unknown field: {field}"])
         return
-    if argv[0] == "--affected" and len(argv) == 2:
-        cmd_affected(argv[1])
+    if argv[0] == "--affected" and len(argv) >= 2:
+        cmd_affected(argv[1:])
         return
     if argv[0] == "--subtree-scope" and len(argv) >= 3:
         cmd_subtree_scope(argv[1], argv[2:])
