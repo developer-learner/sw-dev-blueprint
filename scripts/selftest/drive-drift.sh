@@ -40,6 +40,9 @@
 #   SWBP_RUN_BUDGET  budget the block compares SWBP_ELAPSED against
 #   SWBP_FLAKE_ESCALATION_THRESHOLD  accepted occurrence that closes the
 #                  bypass (default 3)
+#   FROZEN_V       current frozen spec used for idempotent flake projection;
+#                  defaults to 3 so the existing v1/v2 threshold fixture
+#                  models a genuinely new occurrence
 # Workdir inputs:
 #   tasks/plan.json  the mapping data the block queries per failing id
 #
@@ -69,6 +72,7 @@ printf '%s' "$BLOCK" | grep -q '^FLAKE_NOTE=""' \
 
 # --- Env inputs (env → shell vars with defaults) ---
 TESTS_RC="${TESTS_RC:-1}"
+FROZEN_V="${FROZEN_V:-3}"
 FAILING="${FAILING:-}"
 FAIL_DETAIL="${FAIL_DETAIL:-}"
 RT_OUTCOMES="${RT_OUTCOMES:-}"

@@ -1468,13 +1468,13 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
   if [ "$all_carried" -eq 1 ] && [ "$isolation_supports_flake" -eq 1 ]; then
     recurring_evidence=""
     while IFS=$'\t' read -r flake_id flake_passes; do
-      prior_count=$(python3 "$FLAKE_LEDGER_TOOL" count \
-        --ledger "$FLAKE_LEDGER" --nodeid "$flake_id") \
+      projected_count=$(python3 "$FLAKE_LEDGER_TOOL" projected-count \
+        --ledger "$FLAKE_LEDGER" --nodeid "$flake_id" \
+        --spec-version "$FROZEN_V") \
         || die "recurring-flake ledger could not be read safely"
-      case "$prior_count" in
-        ''|*[!0-9]*) die "recurring-flake ledger returned invalid count '$prior_count' for $flake_id" ;;
+      case "$projected_count" in
+        ''|*[!0-9]*) die "recurring-flake ledger returned invalid projected count '$projected_count' for $flake_id" ;;
       esac
-      projected_count=$((prior_count + 1))
       if [ "$projected_count" -ge "$FLAKE_ESCALATION_THRESHOLD" ]; then
         RECURRING_FLAKE=1
         recurring_evidence="${recurring_evidence}${recurring_evidence:+; }$flake_id: occurrence $projected_count (threshold $FLAKE_ESCALATION_THRESHOLD)"

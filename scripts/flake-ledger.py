@@ -113,6 +113,17 @@ def count(args):
     print(len(ledger["nodes"].get(args.nodeid, [])))
 
 
+def projected_count(args):
+    validate_nodeid(args.nodeid)
+    ledger = load_ledger(args.ledger)
+    existing_versions = {
+        event["spec_version"]
+        for event in ledger["nodes"].get(args.nodeid, [])
+    }
+    existing_versions.add(args.spec_version)
+    print(len(existing_versions))
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="action", required=True)
@@ -128,6 +139,16 @@ def parse_args(argv):
     record_parser.add_argument(
         "--isolation-passes", type=int, choices=(1, 2), required=True
     )
+
+    projected_count_parser = subparsers.add_parser("projected-count")
+    projected_count_parser.add_argument(
+        "--ledger", type=Path, default=DEFAULT_LEDGER
+    )
+    projected_count_parser.add_argument("--nodeid", required=True)
+    projected_count_parser.add_argument(
+        "--spec-version", type=int, required=True
+    )
+
     args = parser.parse_args(argv)
     if getattr(args, "spec_version", 1) < 1:
         parser.error("--spec-version must be positive")
@@ -139,6 +160,8 @@ def main(argv=None):
     try:
         if args.action == "record":
             record(args)
+        elif args.action == "projected-count":
+            projected_count(args)
         else:
             count(args)
     except (LedgerError, OSError) as exc:

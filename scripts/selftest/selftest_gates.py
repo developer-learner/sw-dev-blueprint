@@ -2713,6 +2713,38 @@ def test_flake_ledger_records_specs_idempotently_and_counts(tmp_path):
     assert [event["spec_version"] for event in ledger["nodes"][nodeid]] == [1, 2]
 
 
+def test_flake_ledger_projected_counts_spec_versions(tmp_path):
+    """Verify projected counts across spec versions: absent ledger spec2 -> 1; record spec1; project spec1 -> 1; project spec2 -> 2."""
+    nodeid = "tests/test_flake.py::test_a"
+
+    projected = _run_flake_ledger(
+        tmp_path, "projected-count", "--spec-version", "2",
+        "--nodeid", nodeid,
+    )
+    assert projected.returncode == 0, (projected.stdout, projected.stderr)
+    assert projected.stdout.strip() == "1"
+
+    recorded = _run_flake_ledger(
+        tmp_path, "record", "--spec-version", "1",
+        "--nodeid", nodeid, "--isolation-passes", "1",
+    )
+    assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+
+    projected1 = _run_flake_ledger(
+        tmp_path, "projected-count", "--spec-version", "1",
+        "--nodeid", nodeid,
+    )
+    assert projected1.returncode == 0, (projected1.stdout, projected1.stderr)
+    assert projected1.stdout.strip() == "1"
+
+    projected2 = _run_flake_ledger(
+        tmp_path, "projected-count", "--spec-version", "2",
+        "--nodeid", nodeid,
+    )
+    assert projected2.returncode == 0, (projected2.stdout, projected2.stderr)
+    assert projected2.stdout.strip() == "2"
+
+
 def test_flake_ledger_fails_closed_when_history_is_malformed(tmp_path):
     ledger = tmp_path / ".pipeline-flakes.json"
     ledger.write_text('{"schema_version": 1, "nodes": []}\n')
@@ -2755,7 +2787,7 @@ FLAKE_PLAN = {
 
 def run_drive_drift(tmp_path, *, tests_rc=1, failing="", fail_detail="",
                     rt_outcomes="", swbp_elapsed=0, swbp_budget=0,
-                    plan=None):
+                    frozen_v=3, plan=None):
     (tmp_path / "tasks").mkdir(exist_ok=True)
     (tmp_path / "tasks" / "plan.json").write_text(
         json.dumps(plan if plan is not None else FLAKE_PLAN))
@@ -2765,7 +2797,8 @@ def run_drive_drift(tmp_path, *, tests_rc=1, failing="", fail_detail="",
            "FAIL_DETAIL": fail_detail,
            "RT_OUTCOMES": rt_outcomes,
            "SWBP_ELAPSED": str(swbp_elapsed),
-           "SWBP_RUN_BUDGET": str(swbp_budget)}
+           "SWBP_RUN_BUDGET": str(swbp_budget),
+           "FROZEN_V": str(frozen_v)}
     return subprocess.run(
         ["bash", str(DRIVE_DRIFT), str(tmp_path)],
         capture_output=True, text=True, env=env,
@@ -2840,6 +2873,25 @@ def test_flake_recurring_threshold_keeps_suite_red_for_escalation(tmp_path):
     assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
     assert "recurring flake threshold reached" in r.stdout
     assert _kv(r.stdout, "FLAKE_NOTE") == ""
+
+
+def test_flake_same_spec_rerun_does_not_reach_recurring_threshold(tmp_path):
+    """Same-spec idempotency: re-recording the same spec versions for a nodeid
+    does not increment the occurrence count toward the recurring threshold."""
+    nodeid = "tests/test_flake.py::test_a"
+    for spec in ("1", "2"):
+        recorded = _run_flake_ledger(
+            tmp_path, "record", "--spec-version", spec,
+            "--nodeid", nodeid, "--isolation-passes", "1",
+        )
+        assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    r = run_drive_drift(
+        tmp_path, failing=nodeid, rt_outcomes="1:0", frozen_v=2,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
+    assert _kv(r.stdout, "RECURRING_FLAKE") == "0"
+    assert "recurring flake threshold reached" not in r.stdout
 
 
 def test_recurring_flake_bypasses_em_and_routes_to_tpm_bundle():
