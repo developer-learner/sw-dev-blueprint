@@ -123,7 +123,9 @@ def escalations(state_dir: Path) -> list[str]:
         return []
     out = []
     for d in sorted(esc.iterdir()):
-        b = d / "BATCH.md"
+        if not d.is_dir():
+            continue
+        b = d / "bundle.md"
         if b.is_file():
             first = next((ln for ln in b.read_text().splitlines() if ln.strip()), "")
             out.append(f"{d.name}: {first[:80]}")
@@ -179,34 +181,26 @@ def main() -> int:
     # EXIT trap's own record; fall back to newest .pipeline-state activity if
     # the run predates the trap. If neither exceeds the last timings row we
     # trust the timings row.
+    # The trap's own `elapsed=Ns` field is authoritative — it's the wall
+    # clock of THIS run measured against RUN_T0. Prefer it. Fall back to
+    # mtime span only if the trap hasn't run yet (older feature, or
+    # in-flight rerun). Do not span multiple runs of the same feature via
+    # `min(mtimes)` — that inflates wall clock by every crashed retry
+    # between refreeze and now.
     exit_row = run_exit_row(state, since_epoch)
-    real_end_ts = None
+    real_duration = None
     real_end_source = None
     if exit_row:
-        try:
-            iso = exit_row.split("\t", 1)[0]
-            real_end_ts = datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+        m = re.search(r"elapsed=(\d+)s", exit_row)
+        if m:
+            real_duration = int(m.group(1))
             real_end_source = "run-exit.log"
-        except (ValueError, IndexError):
-            pass
-    if real_end_ts is None and state.is_dir():
+    if real_duration is None and state.is_dir():
         mtimes = [f.stat().st_mtime for f in state.rglob("*")
                   if f.is_file() and f.stat().st_mtime >= since_epoch]
-        if mtimes:
-            real_end_ts = max(mtimes)
-            real_end_source = "newest pipeline-state file mtime"
-
-    # Bound run_start from filesystem: the earliest .pipeline-state file the
-    # run touched (timings.tsv itself, .lock, etc). Reliable epoch regardless
-    # of the timings.tsv HH:MM:SS timezone. Falls back to the refreeze time.
-    run_start_ts = since_epoch
-    if state.is_dir():
-        touched = [f.stat().st_mtime for f in state.rglob("*")
-                   if f.is_file() and f.stat().st_mtime >= since_epoch]
-        if touched:
-            run_start_ts = min(touched)
-
-    real_duration = int(real_end_ts - run_start_ts) if real_end_ts else None
+        if len(mtimes) >= 2:
+            real_duration = int(max(mtimes) - min(mtimes))
+            real_end_source = "pipeline-state mtime span"
     unaccounted = None
     if real_duration is not None and real_duration > logged + 5:
         unaccounted = real_duration - logged
