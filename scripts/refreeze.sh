@@ -455,7 +455,10 @@ def entries(path):
     out = {}
     for ep in c.get("entry_points", []):
         out[ep] = ("entry_point", ep)
-    for key in ("routes", "schemas", "errors"):
+    # "ui" walks with the id-bearing families: pre-fix it was omitted, so a
+    # ui-only freeze produced an empty delta — silently pre-D-86, then as a
+    # false D-86 halt (testchat M31 break-log finding #5; D-86 alt (b)).
+    for key in ("routes", "schemas", "errors", "ui"):
         for e in c.get(key, []):
             out[e["id"]] = (key, json.dumps(e, sort_keys=True))
     return out

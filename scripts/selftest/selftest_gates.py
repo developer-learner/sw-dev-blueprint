@@ -3433,6 +3433,31 @@ def test_refreeze_identical_staged_test_does_not_widen_delta(freezable_repo):
     assert not any("test_carried" in node for node in delta["changed_tests"])
 
 
+def test_refreeze_ui_change_reaches_delta(freezable_repo):
+    """A changed `ui` contract entry lands its id in changed_contract_ids.
+    Pre-fix the delta walk visited only entry_points/routes/schemas/errors
+    (testchat M31 break-log finding #5; noted orthogonal in D-86 alt (b)),
+    so a ui-only freeze carried an empty contract delta — silently pre-D-86,
+    then as a false D-86 halt — and cmd_affected could not invalidate tasks
+    referencing the changed ui id."""
+    # first freezable_repo test to stage contracts.json — that path also
+    # runs the D-78 spec preflight, so the fixture needs its gate script
+    vp = freezable_repo / "scripts" / "validate-plan.py"
+    vp.write_bytes((SCRIPTS / "validate-plan.py").read_bytes())
+    incoming = freezable_repo / "scripts" / ".approved" / "incoming"
+    (incoming / "contracts.json").write_text(json.dumps({
+        "files": ["src/app.py"], "entry_points": [], "routes": [],
+        "schemas": [], "errors": [], "erd_version": 2,
+        "ui": [{"id": "ui:new-badge", "testid": "new-badge",
+                "description": "status badge"}],
+    }))
+    r = _run_refreeze_approve(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    delta = json.loads((freezable_repo / "scripts" / ".approved"
+                        / "DELTA-v2.json").read_text())
+    assert "ui:new-badge" in delta["changed_contract_ids"], delta
+
+
 # --- refreeze.sh D-95 auto mode (retires the ceremonial y/N) -----------------
 # The pre-D-95 default prompted the CEO for y/N after every mechanical
 # preflight had already passed — the material verdict was the gates
