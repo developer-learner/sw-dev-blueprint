@@ -35,6 +35,11 @@ APPLY_BLOCKS = SCRIPTS / "apply-edit-blocks.py"
 COMPLETION_LEDGER = SCRIPTS / "completion-ledger.py"
 FLAKE_LEDGER = SCRIPTS / "flake-ledger.py"
 
+# refreeze_delta is underscore-named precisely so its delta computation (and the
+# D-116 relabel guard inside it) can be imported and unit-tested directly.
+sys.path.insert(0, str(SCRIPTS))
+import refreeze_delta  # noqa: E402  (SCRIPTS must be on sys.path first)
+
 # Derived from the script under test, never hardcoded: a cap bump must not
 # break these tests (it did once — 2000→2500 left two tests asserting the
 # old boundary).
@@ -1540,6 +1545,89 @@ def test_refreeze_removed_accepts_plain_tests_path(stageable_repo):
     # but it must NOT fail at the REMOVED whitelist.
     combined = r.stdout + r.stderr
     assert "REMOVED entries must be" not in combined, combined
+
+
+# --- D-116: node-id relabel must not widen the delta -------------------------
+# testchat v77 refreeze: the frozen suite was byte-identical, but collection
+# flipped 60 node-ids from pytest's parametrized `name[chromium]` to static
+# AST's bare `name`. The old (old - new) "removed" term counted all 60 as
+# retirements, so the delta reset three already-done, green tasks. The guard
+# scopes the removed term to files this delta actually staged; these pin it on
+# the producer directly (the delta runs post-apply, past --diff, so a real
+# producer test is the only way to exercise it hermetically).
+
+# 60 relabeled ids, exactly the tonight shape, in a byte-identical suite.
+_FLICKER_OLD = {f"tests/test_ui.py::test_case_{i}[chromium]" for i in range(60)}
+_FLICKER_NEW = {f"tests/test_ui.py::test_case_{i}" for i in range(60)}
+
+
+def test_relabel_in_unchanged_file_does_not_widen_delta():
+    """The bug: no file staged, ids only relabeled -> zero changed_tests.
+    Pre-guard this returned all 60 `[chromium]` ids."""
+    out = refreeze_delta.compute_changed_tests(
+        old_nodeids=_FLICKER_OLD,
+        new_nodeids=_FLICKER_NEW,
+        changed_files=set(),
+        removed_files=set(),
+    )
+    assert out == [], out
+
+
+def test_reverse_relabel_also_does_not_widen():
+    """The flip runs both ways (AST-bare frozen, later pytest-parametrized).
+    Neither direction may widen when no file was staged."""
+    out = refreeze_delta.compute_changed_tests(
+        old_nodeids=_FLICKER_NEW,   # bare
+        new_nodeids=_FLICKER_OLD,   # parametrized
+        changed_files=set(),
+        removed_files=set(),
+    )
+    assert out == [], out
+
+
+def test_genuine_removed_file_still_counts():
+    """A real retirement (file in REMOVED) must still invalidate its ids —
+    the guard narrows the removed term, it must not delete it."""
+    out = refreeze_delta.compute_changed_tests(
+        old_nodeids={"tests/test_gone.py::test_x", "tests/test_keep.py::test_a"},
+        new_nodeids={"tests/test_keep.py::test_a"},
+        changed_files=set(),
+        removed_files={"tests/test_gone.py"},
+    )
+    assert out == ["tests/test_gone.py::test_x"], out
+
+
+def test_edited_file_counts_both_dropped_and_current_ids():
+    """A staged byte-different edit that drops a test: the dropped id (removed
+    term, file in changed_files) and the surviving id (changed-files term)
+    both belong to the delta."""
+    out = refreeze_delta.compute_changed_tests(
+        old_nodeids={"tests/test_x.py::test_a", "tests/test_x.py::test_b"},
+        new_nodeids={"tests/test_x.py::test_a"},
+        changed_files={"tests/test_x.py"},
+        removed_files=set(),
+    )
+    assert out == ["tests/test_x.py::test_a", "tests/test_x.py::test_b"], out
+
+
+def test_relabel_and_real_edit_are_separated():
+    """The decisive composition: one untouched file's ids relabel while another
+    file is genuinely edited. Only the edited file's ids enter the delta; the
+    phantom relabel is excluded."""
+    out = refreeze_delta.compute_changed_tests(
+        old_nodeids={
+            "tests/test_ui.py::test_send[chromium]",   # untouched, relabeled
+            "tests/test_edit.py::test_old",            # genuinely edited away
+        },
+        new_nodeids={
+            "tests/test_ui.py::test_send",             # untouched, relabeled
+            "tests/test_edit.py::test_new",            # genuinely edited in
+        },
+        changed_files={"tests/test_edit.py"},
+        removed_files=set(),
+    )
+    assert out == ["tests/test_edit.py::test_new", "tests/test_edit.py::test_old"], out
+    assert not any("test_ui.py" in n for n in out), out
 
 
 # --- validate-plan.py --spec-preflight (D-78) --------------------------------
@@ -3330,6 +3418,7 @@ def freezable_repo(tmp_path):
     (tmp_path / "tests").mkdir()
     for name in (
         "refreeze.sh",
+        "refreeze_delta.py",
         "check-test-surface.py",
         "spec_artifacts.py",
         "check-spec-delta.py",

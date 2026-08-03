@@ -595,50 +595,17 @@ TMP=".pipeline-state"
 mkdir -p "$TMP"
 printf '%s\n' "$OLD_NODEIDS"        > "$TMP/refreeze-old-nodeids"
 printf '%s\n' "$CHANGED_TEST_FILES" > "$TMP/refreeze-changed-files"
+printf '%s\n' "$REMOVED_FILES"      > "$TMP/refreeze-removed-files"
 printf '%s\n' "$DELTA_CONTRACTS"    > "$TMP/refreeze-changed-contracts"
 # D-86: changed_files is a PER-DELTA declaration. A freeze that does not stage
 # contracts.json declares no scope of its own — inheriting the previous
 # version's list would silently widen this delta.
 CONTRACTS_STAGED=0
 case " $CHANGED_DOCS " in *" contracts.json "*) CONTRACTS_STAGED=1 ;; esac
-python3 - "$NEW" "$APPROVED/test-nodeids" "$CONTRACTS_STAGED" <<'PYEOF'
-import json, sys
-from pathlib import Path
-new_v, nodeids_path = int(sys.argv[1]), sys.argv[2]
-contracts_staged = sys.argv[3] == "1"
-def lines(p):
-    return [line for line in Path(p).read_text().splitlines() if line.strip()]
-old_nodeids = set(lines(".pipeline-state/refreeze-old-nodeids"))
-new_nodeids = set(lines(nodeids_path))
-changed_files = set(lines(".pipeline-state/refreeze-changed-files"))
-changed_tests = sorted(
-    (old_nodeids - new_nodeids)                                      # removed
-    | {n for n in new_nodeids if n.split("::")[0] in changed_files}  # in changed files
-)
-# D-86: the TPM's own scope declaration. Until D-86 this was hardcoded [],
-# so the coder's editable set was reachable only through the EM's test
-# mapping — scope, a containment boundary, set implicitly by the mid tier.
-# validate-plan.py's preflight has already proved every entry is an editable
-# inventory member, so copy it through verbatim.
-declared_files = []
-if contracts_staged:
-    contracts = json.load(open("scripts/.approved/contracts.json"))
-    declared_files = [f for f in contracts.get("changed_files", []) if f]
-delta = {
-    "changed_contract_ids": lines(".pipeline-state/refreeze-changed-contracts"),
-    "changed_tests": changed_tests,
-    "changed_files": declared_files,
-}
-with open(f"scripts/.approved/DELTA-v{new_v}.json", "w") as f:
-    json.dump(delta, f, indent=2)
-if not (delta["changed_contract_ids"] or changed_tests or declared_files):
-    print("  WARNING (D-86): this delta scopes NOTHING — no changed tests, no "
-          "changed contract ids, no declared changed_files. With the inverted "
-          "no-edit default every existing file is untouchable, so a run will "
-          "invoke the coder for nothing and report normally. If a milestone is "
-          "unbuilt, declare its files in contracts.changed_files and re-freeze.")
-PYEOF
-rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-changed-contracts"
+# Delta computation (incl. the D-116 relabel guard) lives in refreeze_delta.py
+# so it has a real producer test; the state files above are its inputs.
+python3 scripts/refreeze_delta.py "$NEW" "$APPROVED/test-nodeids" "$CONTRACTS_STAGED"
+rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-removed-files" "$TMP/refreeze-changed-contracts"
 
 # --- D-75: red-before-green check on the delta (warn-only) -------------------
 # INV-1 means a newly frozen test is written before the code it gates. Run the
