@@ -626,6 +626,20 @@ brief; transcribe it into working code immediately."
         --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
     || { CODER_EVIDENCE="coder call failed: $(tail -3 "$LOG_DIR/$id-a$attempt.log" | tr '\n' ' ')"; write_state phase ""; return 1; }
+  # Coder-evidence archive (Phase 6, D-115): the flat log name above is a
+  # per-run scratchpad — a brief_wrong revision resets the strike counter, so
+  # a same-slot retry would silently overwrite the prior brief's only
+  # transcript. Archive every attempt verbatim under a version/task/revision/
+  # attempt name, best-effort (a full scratch dir must never gate the run).
+  # No sequencing, metadata, or pruning: the name is the ordering.
+  {
+    local coder_revs; coder_revs=$(counter "$id" revisions)
+    mkdir -p "$LOG_DIR/archive"
+    cp "$LOG_DIR/$id-a$attempt.raw" \
+       "$LOG_DIR/archive/$FROZEN_V.$id.$coder_revs.$attempt.raw" || true
+    cp "$LOG_DIR/$id-a$attempt.log" \
+       "$LOG_DIR/archive/$FROZEN_V.$id.$coder_revs.$attempt.log" || true
+  }
   if [ -n "$existing" ]; then
     # D-59 edit-block path: fail-closed applier; target untouched on any error
     if ! CODER_EVIDENCE=$(python3 scripts/apply-edit-blocks.py "$file" "$LOG_DIR/$id-a$attempt.raw" 2>&1); then

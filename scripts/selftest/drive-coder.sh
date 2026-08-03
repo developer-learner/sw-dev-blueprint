@@ -61,14 +61,18 @@ git -c user.email=selftest@local -c user.name=selftest commit -qm fixture
 
 # Environment the extracted function expects (mirrors orchestrate.sh's init).
 STATE_DIR=".pipeline-state"
+TASK_STATE="$STATE_DIR/tasks"
 LOG_DIR="$STATE_DIR/logs"
 APPROVED="scripts/.approved"
 AGENT_TIMEOUT=60
-mkdir -p "$STATE_DIR" "$LOG_DIR"
+FROZEN_V="42"
+SWBP_CODER_EDIT_MAX_OUTPUT=""
+mkdir -p "$STATE_DIR" "$TASK_STATE" "$LOG_DIR"
 
 die() { echo "FAIL: $*" >&2; exit 1; }
 read_state()  { [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }
 write_state() { printf '%s\n' "$2" > "$STATE_DIR/$1"; }
+counter()     { [ -f "$TASK_STATE/$1.$2" ] && cat "$TASK_STATE/$1.$2" || echo 0; }
 mark() { :; }
 
 # Extract the real functions — repo style is `name() {` and closing `}` both

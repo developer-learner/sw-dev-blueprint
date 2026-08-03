@@ -2219,7 +2219,7 @@ CODER_GOOD_REPLY = (
 
 def run_coder_drive(tmp_path, reply, gate_rc, task_file="src/x.py"):
     rdir = tmp_path / "replies"
-    rdir.mkdir()
+    rdir.mkdir(exist_ok=True)
     (rdir / "1").write_text(reply)
     return subprocess.run(
         ["bash", str(DRIVE_CODER), str(tmp_path), "T7", task_file, str(gate_rc)],
@@ -2275,6 +2275,42 @@ def test_coder_wrong_path_reply_is_strike_not_commit(tmp_path):
     # pre-fix defect. The nonempty message names the wrong path so a retry
     # brief can actually diagnose.
     assert "EVIDENCE=coder wrote to 'src/other.py'" in r.stdout
+
+
+def archive_names(tmp_path):
+    arch = tmp_path / ".pipeline-state" / "logs" / "archive"
+    return sorted(p.name for p in arch.glob("*")) if arch.exists() else []
+
+
+def test_coder_evidence_archive_survives_brief_revision(tmp_path):
+    """Phase 6: every coder attempt's raw+log is archived under
+    <spec_version>.<task>.<brief-rev>.<attempt>.{raw,log}. A brief_wrong
+    revision resets the strike counter (drive-coder paths key off it), so a
+    same-slot retry after a revision would OVERWRITE the flat log file the
+    run used — the archive is what keeps the earlier brief's transcript.
+    Assert both revisions' transcripts coexist under distinct names."""
+    r = run_coder_drive(tmp_path, CODER_GOOD_REPLY, gate_rc=0)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    first = archive_names(tmp_path)
+    assert "42.T7.0.1.raw" in first, first          # version=42 (drive-coder FROZEN_V)
+    assert "42.T7.0.1.log" in first, first
+    assert (tmp_path / ".pipeline-state" / "logs" / "archive" / "42.T7.0.1.raw"
+            ).read_text() == CODER_GOOD_REPLY
+    # Simulate a brief_wrong revision: the EM bumps revisions and resets
+    # strikes to 0, so the next attempt is again "attempt 1" of a new brief.
+    (tmp_path / ".pipeline-state" / "tasks" / "T7.revisions").write_text("1")
+    (tmp_path / ".pipeline-state" / "tasks" / "T7.strikes").write_text("0")
+    # Reset the created file so the second drive is CREATE-mode again (edit
+    # mode needs SEARCH/REPLACE blocks, a different reply shape entirely).
+    (tmp_path / "src" / "x.py").unlink()
+    (tmp_path / "replies" / "2").write_text(CODER_GOOD_REPLY)  # stub reply #2
+    r = run_coder_drive(tmp_path, CODER_GOOD_REPLY, gate_rc=0)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    second = archive_names(tmp_path)
+    assert "42.T7.0.1.raw" in second               # first brief's transcript retained
+    assert "42.T7.1.1.raw" in second               # second brief, distinct name
+    assert (tmp_path / ".pipeline-state" / "logs" / "archive" / "42.T7.1.1.raw"
+            ).read_text() == CODER_GOOD_REPLY
 
 
 # --- runtime verdict/state guards -------------------------------------------
