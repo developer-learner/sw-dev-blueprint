@@ -1061,6 +1061,66 @@ evidence="two failed coder attempts on src/x.py; token cap + mixed-mode reply"
     assert "T1" in text
 
 
+def test_run_exit_trap_records_every_termination_path(tmp_path):
+    """Regression: M33 v76 crashed with no HALT and no evidence — nothing
+    downstream could tell "died mid-task" from "halted for the operator".
+    The EXIT trap must record rc, phase, task target, and last timings row
+    on every path (success, die, uncaught error), so run-exit.log is a
+    reliable ground truth for the next feature-summary. Not an escalation
+    substitute: unexpected rc must not fabricate a bundle."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    fn = re.search(r"^record_exit\(\) \{.*?^\}$", source, re.M | re.S)
+    assert fn, "record_exit not found — extractor drift"
+    fn_body = fn.group(0)
+    trap_line = re.search(r"^trap 'record_exit' EXIT$", source, re.M)
+    assert trap_line, "EXIT trap not installed"
+
+    state = tmp_path / ".pipeline-state"
+    (state / "logs").mkdir(parents=True)
+    (state / "phase").write_text("task-T2\n")
+    (state / "task_target").write_text("src/api/threads.py\n")
+    (state / "logs" / "timings.tsv").write_text(
+        "19:25:25\t409s\tcoder T1 attempt 1 start (src/services/storage.py)\n"
+    )
+
+    def run(scenario: str) -> tuple[int, str]:
+        script = f"""#!/usr/bin/env bash
+set -euo pipefail
+STATE_DIR={state}
+LOG_DIR=$STATE_DIR/logs
+RUN_T0=$(date +%s)
+run_elapsed() {{ echo $(( $(date +%s) - RUN_T0 )); }}
+
+{fn_body}
+
+trap 'record_exit' EXIT
+{scenario}
+"""
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        exit_log = (state / "logs" / "run-exit.log")
+        return r.returncode, (exit_log.read_text() if exit_log.is_file() else "")
+
+    # 1) clean exit: rc=0 recorded
+    (state / "logs" / "run-exit.log").unlink(missing_ok=True)
+    rc, log = run("exit 0")
+    assert rc == 0 and "rc=0" in log and "phase=task-T2" in log
+    assert "task=src/api/threads.py" in log
+    assert "coder T1 attempt 1 start" in log
+
+    # 2) uncaught error (simulates the M33 crash): rc!=0 recorded, no bundle
+    (state / "logs" / "run-exit.log").unlink(missing_ok=True)
+    rc, log = run("false  # simulate unbounded-variable-style abort")
+    assert rc == 1 and "rc=1" in log and "phase=task-T2" in log
+    assert not (state / "escalations").exists(), \
+        "trap must not fabricate an escalation on unexpected exit"
+
+    # 3) explicit die-style: rc=1 recorded even with a wildly divergent phase
+    (state / "phase").write_text("plan\n")
+    (state / "logs" / "run-exit.log").unlink(missing_ok=True)
+    rc, log = run("echo halted >&2; exit 3")
+    assert rc == 3 and "rc=3" in log and "phase=plan" in log
+
+
 def test_full_suite_execution_is_confined_to_tests_directory():
     """No-argument run_tests cannot discover archives or selftests."""
     source = (SCRIPTS / "orchestrate.sh").read_text()

@@ -172,6 +172,32 @@ case "$FLAKE_ESCALATION_THRESHOLD" in
 esac
 run_elapsed() { echo $(( $(date +%s) - RUN_T0 )); }
 mark() { printf '%s\t%ss\t%s\n' "$(date '+%H:%M:%S')" "$(run_elapsed)" "$1" >> "$LOG_DIR/timings.tsv"; }
+
+# --- exit trap: record how the run ended, always ------------------------------
+# M33 v76 (2026-08-02): the run died mid-T1 with no HALT, no escalation, no
+# final timing mark — orchestrate crashed under `set -euo pipefail` and every
+# subsequent measurement was blind because no artifact recorded the exit. This
+# trap runs on EVERY exit path (success, die, uncaught error) and appends one
+# row to run-exit.log: iso-timestamp, exit code, last recorded phase, current
+# task target, last timings row. It does NOT invent an escalation for an
+# unexpected crash — that would blur real defects with harness bugs. Its
+# invariant is only: after this trap runs, the next feature-summary can
+# distinguish "died silently" from "halted cleanly", and can bound the
+# unaccounted wall-clock window.
+record_exit() {
+  local rc=$?
+  local phase task last_ts
+  phase=$( [ -f "$STATE_DIR/phase" ] && cat "$STATE_DIR/phase" 2>/dev/null || echo "" )
+  task=$( [ -f "$STATE_DIR/task_target" ] && cat "$STATE_DIR/task_target" 2>/dev/null || echo "" )
+  last_ts=$( [ -f "$LOG_DIR/timings.tsv" ] && tail -1 "$LOG_DIR/timings.tsv" 2>/dev/null | tr '\t' ' ' || echo "" )
+  printf '%s\trc=%s\tphase=%s\ttask=%s\telapsed=%ss\tlast_mark=%s\n' \
+    "$(date -u +%FT%TZ)" "$rc" "${phase:-<none>}" "${task:-<none>}" \
+    "$(run_elapsed)" "${last_ts:-<none>}" \
+    >> "$LOG_DIR/run-exit.log"
+  return $rc
+}
+trap 'record_exit' EXIT
+
 check_budget() {  # check_budget <checkpoint> — between-phase gate, fail-closed
   [ "$SWBP_RUN_BUDGET" -gt 0 ] || return 0
   local e; e=$(run_elapsed)
