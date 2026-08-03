@@ -80,8 +80,8 @@ pytest scripts/selftest/selftest_gates.py -q
 Steady-state cadence (D-28, D-75): each task's mapped frozen tests run
 right after that task; ONE full-suite run closes the milestone at run
 end; the freeze itself verifies only the delta (the D-75
-red-before-green check, which falls back to the host interpreter when
-the sandbox is unreachable and reports which path ran). A full-suite run
+red-before-green check, which is confined to the Linux sandbox and halts
+if it cannot obtain a readable report). A full-suite run
 at freeze time is **catch-up only** — for freezes where `src/` changed
 outside the pipeline (the testchat v65 case). A steady-state freeze that
 re-runs the whole suite is duplicating the run's own closing gate, not

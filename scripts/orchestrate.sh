@@ -675,12 +675,14 @@ PYEOF
 run_tests() {
   mkdir -p .cache
   mark "tests start ($# node-id(s); 0 = full suite)"
+  local test_args=("$@")
+  [ "${#test_args[@]}" -gt 0 ] || test_args=(tests/)
   # A sandbox launch/build/timeout failure may produce no report. Remove the
   # prior invocation's report first so that failure cannot replay a stale green
   # verdict; a missing new report is classified NO_REPORT below.
   rm -f .cache/test-report.json
   scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
-    --json-report-file=.cache/test-report.json "$@" >/dev/null 2>&1 || true
+    --json-report-file=.cache/test-report.json "${test_args[@]}" >/dev/null 2>&1 || true
   local out
   if out=$(python3 - <<'PYEOF'
 import json, re, sys
@@ -1357,24 +1359,24 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
 
   # EM consult (only when MAX_TASK_STRIKES > 1)
   echo "=== Task $id failed $strikes times -> EM consult ==="
+  revs=$(counter "$id" revisions)
+  if [ "$revs" -ge "$MAX_BRIEF_REVISIONS" ]; then
+    echo "brief revisions already exhausted for $id -> escalate to TPM without another EM consult"
+    package_escalation "caps-exhausted" "$id" "$evidence"
+    set_tstat "$id" escalated
+    continue
+  fi
   consult_em "$id" "failed $strikes attempts on $file. $evidence. Coder log tail: $(tail -5 "$LOG_DIR/$id-a$strikes.log" 2>/dev/null | tr '\n' ' ')"
   case "$DIAG_VERDICT" in
     brief_wrong)
-      revs=$(counter "$id" revisions)
-      if [ "$revs" -ge "$MAX_BRIEF_REVISIONS" ]; then
-        echo "brief revisions exhausted for $id -> escalate to TPM"
-        package_escalation "caps-exhausted" "$id" "$evidence" "$DIAG_FILE"
-        set_tstat "$id" escalated
-      else
-        set_counter "$id" revisions $((revs + 1))
-        python3 -c "
+      set_counter "$id" revisions $((revs + 1))
+      python3 -c "
 import json, sys
 d = json.load(open('$DIAG_FILE'))
 sys.stdout.write(d['revised_brief'])" > "$BRIEF_DIR/$id"
-        set_counter "$id" strikes 0
-        rm -f "$TASK_STATE/$id.lastfail"
-        echo "brief revised for $id (revision $((revs + 1))/$MAX_BRIEF_REVISIONS)"
-      fi
+      set_counter "$id" strikes 0
+      rm -f "$TASK_STATE/$id.lastfail"
+      echo "brief revised for $id (revision $((revs + 1))/$MAX_BRIEF_REVISIONS)"
       ;;
     decomposition_wrong)
       revs=$(plan_revisions_used)

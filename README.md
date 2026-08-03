@@ -64,11 +64,11 @@ container-image builds and model downloads.
 
 | Piece | Why | Notes |
 |-------|-----|-------|
-| macOS (Apple Silicon) host + a **Linux VM** (Lima works), or bare Linux | `scripts/orchestrate.sh` hard-refuses macOS; `scripts/refreeze.sh` runs on the host. The split is deliberate — see `docs/DEV-VM-SETUP.md` | Podman image stores are **per side**; pre-warm with `scripts/sandbox-run.sh -- true` on both |
-| **Podman** | The sandbox that runs the frozen suite over generated code (`--network none`, read-only repo). Mandatory — no unsandboxed fallback (D-30) | Host: `podman machine start` before a freeze |
+| macOS (Apple Silicon) host + a **Linux VM** (Lima works), or bare Linux | Both orchestration and refreeze test execution belong in Linux — see `docs/DEV-VM-SETUP.md` | The Mac remains the UI/model-server host; generated tests never execute there |
+| **Podman** | The sandbox that runs the frozen suite over generated code (`--network none`, read-only repo). Mandatory — no unsandboxed fallback (D-30/D-114) | Pre-warm inside Linux with `scripts/sandbox-run.sh -- true` |
 | **LM Studio** (or any OpenAI-compatible local server) | Serves the EM and coder seats | Map roles in `~/.config/sw-dev-blueprint/models.env` — the repo never names models (D-41) |
 | A **~27B-class dense local model, non-thinking, 32K context** | The proven floor for the coder/EM seats — smaller or heavily-MoE models failed task-level work in this repo's own history (D-12/D-14/D-66). Quantization: 4-bit is the CEO default (D-72); keep an 8-bit variant loadable for reactive escalation on the D-72 trigger signals | "Non-thinking" is a hard rule (BLUEPRINT.md Rule 1) |
-| **ruff** on the host | `refreeze.sh` lints staged tests at the freeze door and fails closed without it (D-67) | `brew install ruff` |
+| **ruff** inside Linux | `refreeze.sh` lints staged tests at the freeze door and fails closed without it (D-67) | Install it in the dev VM |
 | **python3, git**; `gh` optional | Gate scripts, version control, template drift-check | — |
 | A **frontier LLM web chat** (any) | Plays the TPM seat: writes the spec + tests you freeze | No API needed — the filesystem is the only integration (D-29) |
 
@@ -190,8 +190,8 @@ see BLUEPRINT.md Rule 9.
    escalation batch is waiting in `.pipeline-state/escalations/BATCH.md` —
    paste it into the TPM chat, stage the returned delta, refreeze, re-run.
 
-> **Platform:** `orchestrate.sh` must run on Linux (Lima VM on Apple
-> Silicon works; `refreeze.sh` runs on the macOS host).
+> **Platform:** orchestration and operational refreezes run on Linux (a Lima
+> VM on Apple Silicon works). Generated tests never execute on macOS.
 
 Neither EM nor coder has any tool or filesystem access at all (D-53) — the
 orchestrator reads whatever context a call needs, sends ONE HTTP completion

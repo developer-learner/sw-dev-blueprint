@@ -146,13 +146,13 @@ path.
 | 16 | `scripts/orchestrate.sh` + `scripts/phase-gate.sh` | The procedure owner + the gate | Before hand-running the pipeline internals |
 | 17 | `docs/CONDUCTOR-ROLE.md` | System prompt for the conductor seat | Setting up a conductor |
 | 18 | `opencode.json` + `.opencode/prompts/*.md` | OpenCode conductor config (optional, D-53) + the EM/coder prompt surface read by `scripts/llm-call.sh` | Conductor setup; prompt work |
-| 19 | `docs/DEV-VM-SETUP.md` | The macOS host / Linux VM split | macOS hosts — required before any run there |
+| 19 | `docs/DEV-VM-SETUP.md` | The macOS host / Linux VM boundary | macOS hosts — required before any run there |
 
 > **Platform note:** `scripts/orchestrate.sh` hard-refuses to run on macOS
 > and requires a Linux environment (Lima VM on Apple Silicon, or bare
-> Linux). `scripts/refreeze.sh` runs on the macOS host. The split-brain is
-> deliberate — see `docs/DEV-VM-SETUP.md` for the setup that made it
-> work in practice.
+> Linux). Refreeze may inspect and hash files anywhere, but generated-test
+> collection and execution go through the Linux sandbox; run operational
+> refreezes inside the VM. See `docs/DEV-VM-SETUP.md`.
 
 > `docs/SANDBOX-VALIDATION.md` is a historical validation record from
 > 2026-06-07 (pre-D-53); kept for provenance, not current setup guidance.

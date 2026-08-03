@@ -100,7 +100,7 @@ jobs:
           PYTHONPATH: .
         run: |
           mkdir -p .cache
-          pytest --cov=src --cov-report=term-missing --cov-fail-under=80 --json-report --json-report-file=.cache/test-report.json
+          pytest tests/ --cov=src --cov-report=term-missing --cov-fail-under=80 --json-report --json-report-file=.cache/test-report.json
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         if: always() && steps.guard.outputs.run == 'yes'

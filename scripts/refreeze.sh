@@ -99,7 +99,17 @@ CHANGED_DOCS=""
 for f in $(python3 scripts/spec_artifacts.py documents); do
   [ -f "$IN/$f" ] && CHANGED_DOCS="$CHANGED_DOCS $f"
 done
-CHANGED_TEST_FILES=$(cd "$IN" && find tests -type f 2>/dev/null | sed 's|^\./||' || true)
+# Whole-suite TPM returns are common. Presence in staging does not make a
+# test changed: only new or byte-different files may widen the delta, trigger
+# staged-test gates, or be reinstalled.
+CHANGED_TEST_FILES=""
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if [ ! -f "$f" ] || ! cmp -s "$IN/$f" "$f"; then
+    CHANGED_TEST_FILES="${CHANGED_TEST_FILES}${CHANGED_TEST_FILES:+
+}$f"
+  fi
+done < <(cd "$IN" && find tests -type f 2>/dev/null | sed 's|^\./||' | sort || true)
 CHANGED_CAPTURES=$(cd "$IN" && find captures -type f 2>/dev/null | sed 's|^\./||' || true)
 
 # --- Test-file removals: staging may carry a REMOVED file listing repo
@@ -577,13 +587,9 @@ done
 # finds MORE node-ids (parametrized tests expand at collect time), its set
 # replaces the AST set. If it fails or finds fewer, AST wins.
 #
-# pytest runs in the sandbox first (the canonical environment), then on the
-# host when the sandbox attempt is unreachable or incomplete: refreezes run
-# where TPM operators actually run them, and on the macOS host the podman
-# sandbox lives only inside the dev VM — testchat v64 AND v65 silently froze
-# AST-shaped, suffix-less node-id sets (no parametrized expansion, no
-# Playwright [chromium]) exactly this way. Which path won is printed;
-# falling all the way to AST is loud and names both failed attempts.
+# pytest runs only in the sandbox (the canonical Linux environment). Static
+# AST collection remains the non-executing fallback when imports are not yet
+# buildable; generated tests never execute on the operator's host.
 echo "collecting test node-ids..."
 AST_NODEIDS=$(python3 - <<'PYEOF'
 import ast
@@ -613,22 +619,10 @@ echo "  AST: $AST_COUNT node-ids"
 COLLECT_OUT=".pipeline-state/refreeze-collect.out"
 COLLECT_ERR=".pipeline-state/refreeze-collect.err"
 COLLECT_VIA="sandbox"
-scripts/sandbox-run.sh -- pytest --collect-only -q -p no:cacheprovider \
+scripts/sandbox-run.sh -- pytest tests/ --collect-only -q -p no:cacheprovider \
   >"$COLLECT_OUT" 2>"$COLLECT_ERR" || true
 PYTEST_NODEIDS=$(grep '::' "$COLLECT_OUT" || true)
 PYTEST_COUNT=$(printf '%s\n' "$PYTEST_NODEIDS" | grep -c '::' || true)
-
-if [ "$PYTEST_COUNT" -lt "$AST_COUNT" ]; then
-  PYTHONPATH=. python3 -m pytest --collect-only -q -p no:cacheprovider \
-    >"$COLLECT_OUT" 2>"$COLLECT_ERR" || true
-  HOST_NODEIDS=$(grep '::' "$COLLECT_OUT" || true)
-  HOST_COUNT=$(printf '%s\n' "$HOST_NODEIDS" | grep -c '::' || true)
-  if [ "$HOST_COUNT" -gt "$PYTEST_COUNT" ]; then
-    PYTEST_NODEIDS="$HOST_NODEIDS"
-    PYTEST_COUNT="$HOST_COUNT"
-    COLLECT_VIA="host (sandbox unreachable or incomplete)"
-  fi
-fi
 
 if [ "$PYTEST_COUNT" -gt "$AST_COUNT" ]; then
   echo "  pytest: $PYTEST_COUNT node-ids via $COLLECT_VIA (>AST, using pytest — parametrized expansion)"
@@ -637,7 +631,7 @@ elif [ "$PYTEST_COUNT" -eq "$AST_COUNT" ]; then
   echo "  pytest: $PYTEST_COUNT node-ids via $COLLECT_VIA (matches AST, using pytest)"
   NODEIDS="$PYTEST_NODEIDS"
 else
-  echo "  pytest: $PYTEST_COUNT node-ids (<AST after sandbox AND host attempts — import errors likely, using AST)"
+  echo "  pytest: $PYTEST_COUNT node-ids (<AST in sandbox — import errors likely, using static AST; tests were not run on the host)"
   NODEIDS="$AST_NODEIDS"
 fi
 rm -f "$COLLECT_OUT" "$COLLECT_ERR"
@@ -716,57 +710,30 @@ if [ -n "$RED_IDS" ]; then
   mkdir -p .cache
   RED_ARGS=()
   while IFS= read -r _t; do [ -n "$_t" ] && RED_ARGS+=("$_t"); done <<< "$RED_IDS"
-  rm -f .cache/redcheck-report.json .cache/redcheck-report.xml
-  RED_VIA="sandbox"
+  rm -f .cache/redcheck-report.json
   scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
     --json-report-file=.cache/redcheck-report.json "${RED_ARGS[@]}" >/dev/null 2>&1 || true
   if ! python3 -c 'import json; json.load(open(".cache/redcheck-report.json"))' 2>/dev/null; then
-    # Sandbox unreachable or its report unreadable — the macOS-host case
-    # (podman lives only in the dev VM, and refreezes run where TPM
-    # operators run them). Run the delta on the host interpreter rather
-    # than degrade the freeze's only mechanical test check to an advisory
-    # (testchat v65: INCONCLUSIVE at the exact freeze it existed for).
-    # junitxml, not --json-report: junit is pytest core — no plugin to be
-    # missing on a host — and stdlib-parseable.
-    RED_VIA="host (sandbox unreachable)"
-    PYTHONPATH=. python3 -m pytest -p no:cacheprovider \
-      --junitxml=.cache/redcheck-report.xml "${RED_ARGS[@]}" >/dev/null 2>&1 || true
+    die "red-before-green sandbox produced no readable report — run refreeze inside the Linux dev VM; staged tests are never executed on the host"
   fi
-  SWBP_RED_VIA="$RED_VIA" python3 - <<'PYEOF'
-import json, os
-import xml.etree.ElementTree as ET
-passed = None
-try:
-    r = json.load(open(".cache/redcheck-report.json"))
-    passed = sorted(t["nodeid"] for t in r.get("tests", [])
-                    if t.get("outcome") == "passed")
-except (FileNotFoundError, json.JSONDecodeError):
-    try:
-        root = ET.parse(".cache/redcheck-report.xml").getroot()
-        passed = sorted(
-            f"{tc.get('classname', '')}::{tc.get('name', '')}"
-            for tc in root.iter("testcase")
-            if all(tc.find(k) is None for k in ("failure", "error", "skipped"))
-        )
-    except (FileNotFoundError, ET.ParseError):
-        pass
-if passed is None:
-    print("  red-check INCONCLUSIVE: no readable report from the sandbox OR the host"
-          " — verify manually that the new tests fail before their tasks run")
+  python3 - <<'PYEOF'
+import json
+r = json.load(open(".cache/redcheck-report.json"))
+passed = sorted(t["nodeid"] for t in r.get("tests", [])
+                if t.get("outcome") == "passed")
+print("  red-check ran via: sandbox")
+if passed:
+    print("")
+    print("  WARNING (D-75): delta test(s) ALREADY PASS with no implementation done:")
+    for n in passed:
+        print(f"    {n}")
+    print("  A test that never goes red gates nothing. Expected only for no_edit_files")
+    print("  acceptance (D-65) or carried-forward behavior — anything else is a vacuous")
+    print("  test: bounce it back to the TPM before running the pipeline.")
 else:
-    print(f"  red-check ran via: {os.environ['SWBP_RED_VIA']}")
-    if passed:
-        print("")
-        print("  WARNING (D-75): delta test(s) ALREADY PASS with no implementation done:")
-        for n in passed:
-            print(f"    {n}")
-        print("  A test that never goes red gates nothing. Expected only for no_edit_files")
-        print("  acceptance (D-65) or carried-forward behavior — anything else is a vacuous")
-        print("  test: bounce it back to the TPM before running the pipeline.")
-    else:
-        print("  red-check: all delta tests red pre-implementation, as INV-1 expects")
+    print("  red-check: all delta tests red pre-implementation, as INV-1 expects")
 PYEOF
-  rm -f .cache/redcheck-report.json .cache/redcheck-report.xml
+  rm -f .cache/redcheck-report.json
 else
   echo "red-before-green check (D-75): delta carries no runnable test changes — nothing to check"
 fi
@@ -780,7 +747,7 @@ fi
   # could stage would otherwise install unpinned, and the phase-gate
   # cross-check (INV-1 addition coverage) requires the disk set and
   # pinned set to be equal. Bytecode caches (__pycache__, .pytest_cache)
-  # are runtime artifacts a host-side pytest run creates — hashing them
+  # are runtime artifacts a pytest run creates — hashing them
   # into the manifest guarantees a "spec tampered" halt on the next
   # test run (testchat M25 hit this three times in one session).
   find tests -type f \

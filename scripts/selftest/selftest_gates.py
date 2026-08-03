@@ -9,9 +9,9 @@ from incidents, do not pre-harden speculatively). That incident arrived:
 testchat M23's consult dead-ended on a schema-invalid EM diagnosis, so
 consult_em is now exercised here too, via drive-consult.sh (D-71).
 
-Deliberately NOT named test_*.py: orchestrate.sh and refreeze.sh run bare
-`pytest` / `pytest --collect-only` from the repo root, and a default-collected
-file here would leak into the frozen node-id set. Run explicitly:
+Deliberately NOT named test_*.py so project and control-plane suites stay
+visibly separate. Production collection and execution are explicitly
+confined to tests/, so this file cannot leak into the frozen oracle. Run:
 
     pytest scripts/selftest/selftest_gates.py -q
 
@@ -977,6 +977,28 @@ def test_consult_model_task_id_overwritten(tmp_path):
     r = run_consult(tmp_path, [dict(VALID_DIAG, task_id="T99")])
     assert r.returncode == 0, r.stderr
     assert consult_artifact(tmp_path)["task_id"] == "T7"
+
+
+def test_exhausted_brief_allowance_escalates_before_consult():
+    """Do not demand a revised brief that the next branch must discard."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    task_loop = source[source.index("# EM consult (only when"):
+                       source.index("# --- batch halt")]
+    cap_check = task_loop.index('[ "$revs" -ge "$MAX_BRIEF_REVISIONS" ]')
+    consult = task_loop.index('consult_em "$id"')
+    assert cap_check < consult
+    before_consult = task_loop[cap_check:consult]
+    assert 'package_escalation "caps-exhausted"' in before_consult
+    assert "without another EM consult" in before_consult
+
+
+def test_full_suite_execution_is_confined_to_tests_directory():
+    """No-argument run_tests cannot discover archives or selftests."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    block = source[source.index("run_tests() {"):
+                   source.index("# --- Plan phase")]
+    assert 'test_args=(tests/)' in block
+    assert '"${test_args[@]}"' in block
 
 
 def test_plan_prompt_names_every_required_schema_key():
@@ -3121,16 +3143,11 @@ def test_ci_override_skips_even_a_red_build(tmp_path):
     assert "RC=0" in r.stdout
 
 
-# --- refreeze.sh host fallbacks (proportionality Fix B) ----------------------
-# testchat v64 and v65 froze on the macOS host, where the podman sandbox is
-# unreachable: node-id collection silently fell back to AST (suffix-less, no
-# parametrized expansion) and the D-75 red-check degraded to INCONCLUSIVE —
-# the freeze's only mechanical test check went dark exactly where TPM
-# operators run refreezes. Both steps now try the host interpreter before
-# giving up. These tests run a REAL refreeze (--diff for the hash, then
-# --approve — the full apply path) in a fixture repo that has NO
-# sandbox-run.sh at all, the unreachable-sandbox shape, and pin both
-# fallbacks end-to-end against the frozen artifacts they produce.
+# --- refreeze oracle confinement --------------------------------------------
+# Collection is confined to tests/, staged files are content-classified, and
+# generated tests execute only through the Linux sandbox. The fixture uses a
+# local sandbox adapter so this behavior stays testable without containers;
+# production has no host fallback.
 
 
 @pytest.fixture()
@@ -3154,6 +3171,16 @@ def freezable_repo(tmp_path):
         target.write_bytes((SCRIPTS / name).read_bytes())
         if name.endswith(".sh"):
             target.chmod(0o755)
+    sandbox = tmp_path / "scripts" / "sandbox-run.sh"
+    sandbox.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        "  case \"$1\" in --rw) shift 2 ;; --) shift; break ;; *) break ;; esac\n"
+        "done\n"
+        "exec \"$@\"\n"
+    )
+    sandbox.chmod(0o755)
     (approved / "VERSION").write_text("1\n")
     (approved / "contracts.json").write_text(json.dumps({
         "files": ["src/app.py"], "entry_points": [], "routes": [],
@@ -3201,32 +3228,42 @@ def _run_refreeze_approve(repo):
     )
 
 
-def test_refreeze_collection_falls_back_to_host(freezable_repo):
-    """The v64/v65 regression: with the sandbox unreachable, collection
-    must reach the host interpreter and freeze the EXPANDED node-id set —
-    parametrized ids AST structurally cannot see — and print which path
-    won (Rule 4). Pre-fix code froze the AST-shaped set silently."""
+def test_refreeze_collection_is_sandboxed_and_confined(freezable_repo):
+    """Parametrized ids expand in the sandbox, while a test-shaped archive
+    outside tests/ can never enter the frozen oracle."""
+    decoy = freezable_repo / "project-trail" / "old" / "tests"
+    decoy.mkdir(parents=True)
+    (decoy / "test_decoy.py").write_text(
+        "def test_must_not_be_collected():\n    assert True\n")
     r = _run_refreeze_approve(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "via host" in r.stdout, r.stdout
+    assert "via sandbox" in r.stdout, r.stdout
     frozen = (freezable_repo / "scripts" / ".approved" / "test-nodeids").read_text()
     assert "tests/test_delta.py::test_param[a]" in frozen, frozen
     assert "tests/test_delta.py::test_param[b]" in frozen, frozen
-    assert "using AST" not in r.stdout, r.stdout
+    assert "test_must_not_be_collected" not in frozen, frozen
 
 
-def test_refreeze_redcheck_falls_back_to_host(freezable_repo):
-    """The v65 regression: the D-75 red-check must not report INCONCLUSIVE
-    merely because the sandbox is unreachable — it runs the delta on the
-    host (junitxml: pytest core, no host plugin to be missing), records
-    which path ran, and still fires the already-passing warning on a
-    vacuous delta test."""
+def test_refreeze_redcheck_runs_only_in_sandbox(freezable_repo):
+    """The red check is conclusive through the sandbox and has no host arm."""
     r = _run_refreeze_approve(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "red-check ran via: host" in r.stdout, r.stdout
+    assert "red-check ran via: sandbox" in r.stdout, r.stdout
     assert "INCONCLUSIVE" not in r.stdout, r.stdout
     assert "ALREADY PASS" in r.stdout, r.stdout
     assert "test_param" in r.stdout, r.stdout
+
+
+def test_refreeze_identical_staged_test_does_not_widen_delta(freezable_repo):
+    """A byte-identical carried test in a whole-suite return is not changed."""
+    incoming = freezable_repo / "scripts" / ".approved" / "incoming" / "tests"
+    (incoming / "test_carried.py").write_bytes(
+        (freezable_repo / "tests" / "test_carried.py").read_bytes())
+    r = _run_refreeze_approve(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    delta = json.loads((freezable_repo / "scripts" / ".approved"
+                        / "DELTA-v2.json").read_text())
+    assert not any("test_carried" in node for node in delta["changed_tests"])
 
 
 # --- refreeze.sh D-95 auto mode (retires the ceremonial y/N) -----------------

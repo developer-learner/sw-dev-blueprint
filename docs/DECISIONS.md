@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-114 — 2026-08-02 — Frozen oracle is content-scoped, tests/-confined, and Linux-sandbox-only
+
+**Decision:** Every production pytest entry point is explicitly confined to `tests/`. Refreeze classifies a staged test as changed only when it is new or byte-different from the tracked test. Pytest collection and the D-75 red-before-green check execute only through the Linux Podman sandbox; collection may use static AST when pre-implementation imports prevent sandbox collection, but generated tests never execute on macOS. If the red-check sandbox cannot produce a readable report, refreeze halts. D-90's host-execution fallback is retired. Separately, when a task has already consumed its brief-revision allowance, the orchestrator packages a TPM escalation before calling the EM; it does not require and validate a revised brief that it must discard.
+
+**Reason:** Testchat v75 collected 19 archived staging tests outside `tests/`, classified a byte-identical returned suite as 98 changed tests, and spent its final model call producing a schema-valid 2,631-character revised brief after the 2,500-character allowance was already exhausted. The artifact then failed validation before the existing escalation branch could run. These were scope and ordering defects: more machinery produced less useful evidence and added roughly 25 minutes to a run that completed no task.
+
+**Alternatives considered:** Keep bare repository-root pytest and exclude known archive paths (rejected — every new directory reopens collection); compare staged tests by path presence (rejected — whole-suite TPM returns make unchanged behavior look new); retry/compress the over-cap brief (rejected — the revision cannot be consumed); execute generated tests on the Mac when Podman is unavailable (rejected — it contradicts the VM boundary and turns TPM output into host code execution).
+
+**Do not suggest:** Restoring repository-root project pytest; treating a returned-but-identical test as changed; adding a host pytest fallback; consulting for a revised brief after its allowance is exhausted.
+
 ## D-113 — 2026-08-01 — Success cleanup recovers its prior spec from durable history
 
 **Decision:** When the runtime task checkpoint is empty after intentional success cleanup—or partial state loss—`scripts/orchestrate.sh` resolves the prior milestone from the newest validated entry in `.pipeline-completions.json` instead of trusting a lone `.pipeline-state/spec_version`. That recovered version drives `SPEC_ADVANCED` before exact-match completions are restored and is retained separately as `delta_baseline_spec` for the entire in-progress milestone, so same-spec retries preserve every intervening delta in D-65 edit scope. Task reset and edit scope share one fail-closed affected-task computation over that range, and every in-process plan revision recomputes and reapplies it before the DAG continues. `completion-ledger.py latest` returns the newest successful spec (or zero for no history), accepts only canonical positive version keys, validates the entire ledger, and makes malformed history halt. A prior version newer than the frozen spec and a missing intervening delta also halt rather than guessing through incomplete history.
@@ -225,7 +235,7 @@
 
 **Do not suggest:** Having the EM re-emit carried tasks "for context consistency" (the merge is the consistency mechanism); repairing wrong subtree ids in the merge (ambiguity is worse than a revision cycle); weakening the merged plan's validation because "the parts were already validated" (the merged artifact is the only thing the gate ever certifies); enabling subtree mode across inventory removals without a design pass on dependent-brief invalidation.
 
-## D-90 — 2026-07-27 — Freeze-time verification falls back to the host when the sandbox is unreachable
+## D-90 — 2026-07-27 — Freeze-time verification falls back to the host when the sandbox is unreachable (superseded by D-114)
 
 **Decision:** Both mechanical test steps in `refreeze.sh` gain a host-interpreter fallback, and both print which path ran. (1) Node-id collection: sandbox pytest `--collect-only` first (canonical env); if it yields fewer ids than the AST floor, host `python3 -m pytest --collect-only` (PYTHONPATH=.); AST wins only when BOTH fall short, and the message names both failed attempts. (2) The D-75 red-check: sandbox run first; if its report is unreadable, the delta runs on the host with `--junitxml` (pytest core — no plugin a host can be missing; `pytest-json-report` stays sandbox-only) and INCONCLUSIVE now requires both paths to have failed. Companion doc rule (TESTING.md): each task's mapped tests run per task and ONE full-suite run closes the milestone (D-28); the freeze verifies only the delta — a freeze-time full-suite run is catch-up only, for freezes where `src/` changed outside the pipeline.
 

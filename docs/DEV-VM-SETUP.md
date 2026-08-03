@@ -57,6 +57,9 @@ Podman becomes native.
    implementer's choice — `uname` check or a VM marker file; must be a
    `die`, not a warning). The conductor's host-side job shrinks to zero;
    the CEO talks to conductors that live in the VM.
+   D-114 extends this boundary to refreeze: node-id collection and the
+   red-before-green check use only the inner Podman sandbox. Run operational
+   refreezes in the VM; there is no macOS pytest fallback.
 4. **Model server stays on the host (GPU).** The VM reaches it via the
    Lima host-gateway address (`host.lima.internal:1234`). This requires
    parameterizing the endpoint host in `llm-call.sh`/`orchestrate.sh`
