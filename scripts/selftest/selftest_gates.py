@@ -1061,6 +1061,122 @@ evidence="two failed coder attempts on src/x.py; token cap + mixed-mode reply"
     assert "T1" in text
 
 
+def test_edit_mode_output_budget_has_no_hardcoded_call_site():
+    """The old 4096 literal was hardcoded at the run_coder call site.
+    After D-117, the coder edit-mode budget is a validated env var and the
+    call site must reference $SWBP_CODER_EDIT_MAX_OUTPUT — never a bare
+    integer. This is the regression check that a future edit doesn't
+    silently reintroduce the literal alongside the env var."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    assert re.search(
+        r'^SWBP_CODER_EDIT_MAX_OUTPUT="\$\{SWBP_CODER_EDIT_MAX_OUTPUT:-4096\}"$',
+        source, re.M,
+    ), "declaration missing or default changed"
+    run_coder = source[source.index("run_coder() {"):
+                       source.index("# --- D-115: protocol failures", 0)
+                       if "# --- D-115: protocol failures" in source
+                       else source.index("consult_em() {")]
+    boundary = re.search(r'SWBP_MAX_OUTPUT="\$out_budget"', run_coder)
+    assert boundary, "SWBP_MAX_OUTPUT plumb line moved — extractor drift"
+    edit_budget = re.search(
+        r'\[ -n "\$existing" \] && out_budget="\$SWBP_CODER_EDIT_MAX_OUTPUT"',
+        run_coder,
+    )
+    assert edit_budget, (
+        "run_coder no longer sources out_budget from SWBP_CODER_EDIT_MAX_OUTPUT — "
+        "either the env var was removed or a hardcoded literal snuck back"
+    )
+    # No stray literal 4096 remains at the SWBP_MAX_OUTPUT= assignment.
+    assert not re.search(r"out_budget=4096\b", run_coder), \
+        "hardcoded 4096 reappeared in run_coder"
+
+
+def test_edit_mode_budget_validates_input_strictly(tmp_path):
+    """SWBP_CODER_EDIT_MAX_OUTPUT must halt on empty/zero/negative/non-int.
+    Silent repair (defaulting a bad value to 4096) would hide config drift —
+    exactly the class of "detected but not enforced" defect Rule 6 warns
+    against. Extracts the validation block and drives it against every
+    invalid shape."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    validation = re.search(
+        r'case "\$SWBP_CODER_EDIT_MAX_OUTPUT" in.*?esac',
+        source, re.S,
+    )
+    assert validation, "validation block moved or removed"
+    prelude = 'die() { echo "$*" >&2; exit 1; }\n'
+    script = prelude + validation.group(0)
+
+    def run_with(val):
+        return subprocess.run(
+            ["bash", "-c", f'set -euo pipefail\nSWBP_CODER_EDIT_MAX_OUTPUT={val!r}\n{script}\necho ACCEPTED'],
+            capture_output=True, text=True,
+        )
+
+    # Rejects: empty, non-integer, zero, negative (leading '-' is non-digit),
+    # decimal (non-digit), whitespace.
+    for bad in ("", "abc", "0", "-1", "3.5", "   ", "8192a", "1 2"):
+        r = run_with(bad)
+        assert r.returncode != 0, f"silently accepted bad value {bad!r}: {r.stdout}"
+        assert "SWBP_CODER_EDIT_MAX_OUTPUT must be a positive integer" in r.stderr, \
+            f"die message missing for {bad!r}: {r.stderr}"
+        assert "ACCEPTED" not in r.stdout, f"proceeded past validation for {bad!r}"
+    # Accepts: 4096 (default), 8192 (diagnostic), 1 (smallest positive).
+    for good in ("4096", "8192", "1"):
+        r = run_with(good)
+        assert r.returncode == 0, f"rejected valid value {good}: {r.stderr}"
+        assert "ACCEPTED" in r.stdout, f"failed to proceed past validation for {good}"
+
+
+def test_edit_mode_budget_reaches_llm_call(tmp_path):
+    """End-to-end plumb: SWBP_CODER_EDIT_MAX_OUTPUT set at run entry must
+    reach the llm-call.sh boundary as SWBP_MAX_OUTPUT with the same value,
+    for edit-mode (existing-file) calls only. Create-mode calls must still
+    export SWBP_MAX_OUTPUT="" (D-59's "no per-call override" contract).
+    Uses a stub llm-call.sh that logs the env value the shell handed it —
+    the exact boundary the real llm-call would consume."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    # Isolate the exact line pattern from run_coder that exports the budget.
+    plumb = re.search(
+        r'SWBP_MAX_OUTPUT="\$out_budget" .*?scripts/llm-call\.sh coder',
+        source,
+    )
+    assert plumb, "SWBP_MAX_OUTPUT plumb line signature changed"
+
+    stub_dir = tmp_path / "scripts"
+    stub_dir.mkdir()
+    stub = stub_dir / "llm-call.sh"
+    stub.write_text('#!/usr/bin/env bash\n'
+                    # `-` (not `:-`) distinguishes empty-string from unset.
+                    'printf "%s\\n" "SEEN=${SWBP_MAX_OUTPUT-<unset>}" > log\n')
+    stub.chmod(0o755)
+
+    # Faithful mini-caller that mirrors the two run_coder shapes.
+    def call(existing_flag: str, env_override: str = "") -> str:
+        (tmp_path / "log").unlink(missing_ok=True)
+        script = f"""
+set -euo pipefail
+cd {tmp_path}
+SWBP_CODER_EDIT_MAX_OUTPUT="${{SWBP_CODER_EDIT_MAX_OUTPUT:-4096}}"
+out_budget=""
+existing={existing_flag!r}
+[ -n "$existing" ] && out_budget="$SWBP_CODER_EDIT_MAX_OUTPUT"
+SWBP_MAX_OUTPUT="$out_budget" scripts/llm-call.sh coder
+"""
+        env = {**os.environ}
+        if env_override:
+            k, v = env_override.split("=", 1)
+            env[k] = v
+        subprocess.run(["bash", "-c", script], env=env, capture_output=True, check=True)
+        return (tmp_path / "log").read_text().strip()
+
+    # Default: edit mode sees 4096.
+    assert call("src/x.py") == "SEEN=4096"
+    # Override reaches boundary: edit mode sees 8192.
+    assert call("src/x.py", "SWBP_CODER_EDIT_MAX_OUTPUT=8192") == "SEEN=8192"
+    # Create mode ignores the override; SWBP_MAX_OUTPUT is empty.
+    assert call("", "SWBP_CODER_EDIT_MAX_OUTPUT=8192") == "SEEN="
+
+
 def test_feature_summary_names_unaccounted_time_on_silent_crash(tmp_path):
     """Regression: the first feature-summary reported "wall clock: 409s"
     for the M33 crash while the real run lasted 869s. Reporting through-

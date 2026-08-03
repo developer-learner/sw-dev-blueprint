@@ -39,6 +39,16 @@ AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
 # run halts and prints the phase-timing table. State persists (D-24): a
 # re-run resumes from completed tasks, so a budget halt is cheap.
 SWBP_RUN_BUDGET="${SWBP_RUN_BUDGET:-1200}"
+# Edit-mode output allowance for the coder (D-59 anchored SEARCH/REPLACE
+# blocks). Historically hardcoded to 4096 — half of create mode — because
+# testchat M17 showed edit replies are small by design and a smaller budget
+# halves the wall-clock cost of a runaway attempt. Made overridable after
+# M33 v76 escalated with two attempts truncated mid-prose at the 4096-token
+# limit; the seat had exhausted its budget on explanation and never reached
+# an edit block. This is a bounded diagnostic control — the default stays
+# 4096, and the correct next step for a persistent budget bind is a seat
+# or prompt fix, not raising the default silently.
+SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-4096}"
 RUN_T0=$(date +%s)
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -166,6 +176,9 @@ guard_task_state() {
 # "where did 45 minutes go" was guesswork.
 case "$SWBP_RUN_BUDGET" in
   ''|*[!0-9]*) die "SWBP_RUN_BUDGET must be a non-negative integer (seconds), got '$SWBP_RUN_BUDGET'" ;;
+esac
+case "$SWBP_CODER_EDIT_MAX_OUTPUT" in
+  ''|*[!0-9]*|0) die "SWBP_CODER_EDIT_MAX_OUTPUT must be a positive integer (tokens), got '$SWBP_CODER_EDIT_MAX_OUTPUT'" ;;
 esac
 case "$FLAKE_ESCALATION_THRESHOLD" in
   ''|*[!0-9]*|0) die "SWBP_FLAKE_ESCALATION_THRESHOLD must be a positive integer, got '$FLAKE_ESCALATION_THRESHOLD'" ;;
@@ -607,7 +620,7 @@ brief; transcribe it into working code immediately."
   # at half the create-mode budget so a runaway attempt fails in half the
   # wall-clock time (testchat M17). Create mode keeps the full default.
   local out_budget=""
-  [ -n "$existing" ] && out_budget=4096
+  [ -n "$existing" ] && out_budget="$SWBP_CODER_EDIT_MAX_OUTPUT"
   { printf '%s\n' "$instr"; build_context "contracts:$APPROVED/contracts.json" "$existing"; } \
     | SWBP_MAX_OUTPUT="$out_budget" timeout "$AGENT_TIMEOUT" scripts/llm-call.sh coder .opencode/prompts/coder.md \
         --max-time "$AGENT_TIMEOUT" \
