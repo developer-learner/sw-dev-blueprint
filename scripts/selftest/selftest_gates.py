@@ -992,6 +992,75 @@ def test_exhausted_brief_allowance_escalates_before_consult():
     assert "without another EM consult" in before_consult
 
 
+def test_caps_exhausted_branch_survives_strict_mode(tmp_path):
+    """Regression: M33 v76 (2026-08-02) died silently mid-T1 because D-114's
+    exhausted-allowance branch called package_escalation with 3 args; the
+    function's `local diag="$4"` under `set -euo pipefail` aborted the whole
+    script with no HALT, no escalation, no final timing mark. The source-
+    order test above did not catch it — every predecessor observed the
+    write, not the write. This test extracts the REAL function and the REAL
+    call site, wires the minimum fixtures they read, and runs the branch
+    under strict mode. Any future regression to a 3-arg shape (or any
+    other mandatory-positional omission) crashes here loudly instead of
+    silently on the next milestone run."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    # Real function.
+    fn = re.search(r"^package_escalation\(\) \{.*?^\}$", source, re.M | re.S)
+    assert fn, "package_escalation not found — extractor drift"
+    fn_body = fn.group(0)
+    # Real call site, as it appears in the source. We match the block that
+    # wraps it so a future rewrite of variable names is still detected.
+    branch = re.search(
+        r'if \[ "\$revs" -ge "\$MAX_BRIEF_REVISIONS" \]; then'
+        r".*?"
+        r'package_escalation "caps-exhausted"[^\n]*',
+        source, re.S,
+    )
+    assert branch, "exhausted-allowance branch not found — extractor drift"
+    # Isolate just the package_escalation invocation line, verbatim.
+    call_line = re.search(
+        r'package_escalation "caps-exhausted"[^\n]*', branch.group(0)
+    ).group(0)
+
+    # Minimum fixtures the function reads.
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "plan.json").write_text(json.dumps({
+        "tasks": [{"id": "T1", "file": "src/x.py", "contracts": [], "tests": []}]
+    }))
+    (tmp_path / "scripts" / ".approved").mkdir(parents=True)
+    (tmp_path / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps({"entry_points": [], "routes": [], "schemas": [], "errors": []})
+    )
+
+    runner = f"""#!/usr/bin/env bash
+set -euo pipefail
+cd {tmp_path}
+STATE_DIR=.pipeline-state
+ESC_DIR=$STATE_DIR/escalations
+FROZEN_V=76
+mkdir -p "$ESC_DIR"
+
+{fn_body}
+
+# Reproduce the exact caller shape.
+id=T1
+evidence="two failed coder attempts on src/x.py; token cap + mixed-mode reply"
+{call_line}
+"""
+    r = subprocess.run(["bash", "-c", runner], capture_output=True, text=True)
+    assert r.returncode == 0, (
+        "exhausted-allowance branch aborted under strict mode — "
+        f"stderr:\n{r.stderr}\nstdout:\n{r.stdout}"
+    )
+    bundle = tmp_path / ".pipeline-state" / "escalations" / "T1" / "bundle.md"
+    assert bundle.is_file(), (
+        "no escalation bundle produced — the branch ran but wrote nothing"
+    )
+    text = bundle.read_text()
+    assert "caps-exhausted" in text
+    assert "T1" in text
+
+
 def test_full_suite_execution_is_confined_to_tests_directory():
     """No-argument run_tests cannot discover archives or selftests."""
     source = (SCRIPTS / "orchestrate.sh").read_text()

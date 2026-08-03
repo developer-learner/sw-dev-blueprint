@@ -1362,7 +1362,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
   revs=$(counter "$id" revisions)
   if [ "$revs" -ge "$MAX_BRIEF_REVISIONS" ]; then
     echo "brief revisions already exhausted for $id -> escalate to TPM without another EM consult"
-    package_escalation "caps-exhausted" "$id" "$evidence"
+    package_escalation "caps-exhausted" "$id" "$evidence" "-"
     set_tstat "$id" escalated
     continue
   fi
