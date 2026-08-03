@@ -92,7 +92,7 @@ scripts/refreeze.sh scripts/.approved/incoming
 `ERD-DELTA.md` uses the four required sections from `docs/TPM-ROLE.md`;
 refreeze checks that newly introduced AC ids and `contracts.changed_files`
 are represented there. Refreeze then runs every mechanical preflight
-(D-56/D-78/D-87/D-88/D-89/D-107/INV-4
+(D-56/D-78/D-87/D-88/D-107/INV-4
 plus staged-test parse+lint+determinism), prints the diff and DIFF-SHA,
 and — on preflight-green — applies automatically (D-95). Explicit paths
 remain: `--diff` prints and exits, `--approve <hash>` (D-42) is the

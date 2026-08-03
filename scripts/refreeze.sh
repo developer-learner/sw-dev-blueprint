@@ -7,8 +7,8 @@
 # directory and runs this script, which:
 #
 #   1. runs every mechanical preflight (D-56 externals, D-78 satisfiability,
-#      D-87 static-asset reachability, D-88 smoke-check quotes, D-89 ERD
-#      prose mass, INV-4 test surface, staged-test parse+lint+determinism),
+#      D-87 static-asset reachability, D-88 smoke-check quotes, INV-4 test
+#      surface, staged-test parse+lint+determinism),
 #   2. shows the full diff and its DIFF-SHA,
 #   3. by default: proceeds automatically when every preflight is green
 #      (D-95 — the y/N approval was ceremonial once every material check
@@ -328,37 +328,6 @@ if [ -f "$IN/contracts.json" ]; then
     || die "satisfiability preflight rejected the delta (D-78) — add the named implementing file(s) to contracts.files (or fix the entry_point) and restage"
 fi
 
-# --- D-89: per-file ERD prose mass advisory ---
-# The plan gate's MAX_BRIEF_CHARS cap fires AFTER the EM has produced the
-# whole plan (~250-280s per call on the 4-bit seat) — ~10 minutes to learn
-# what the ERD already implied at freeze time (testchat M31 v64). The freeze-
-# time signal is spec mass per inventory file: warn when any file's ERD
-# prose section is too big to transcribe into a passing brief. Advisory only;
-# the plan-gate cap is the hard backstop.
-ERD_MASS_ERD="$APPROVED/ERD.md"
-ERD_MASS_DELTA="$APPROVED/ERD-DELTA.md"
-ERD_MASS_CONTRACTS="$APPROVED/contracts.json"
-[ -f "$IN/ERD.md" ] && ERD_MASS_ERD="$IN/ERD.md"
-[ -f "$IN/ERD-DELTA.md" ] && ERD_MASS_DELTA="$IN/ERD-DELTA.md"
-[ "$RETIRE_ERD_DELTA" -eq 0 ] || ERD_MASS_DELTA=""
-[ -f "$IN/contracts.json" ] && ERD_MASS_CONTRACTS="$IN/contracts.json"
-if [ -f "$ERD_MASS_ERD" ] && [ -f "$ERD_MASS_CONTRACTS" ]; then
-  # Cut 3: both ERD.md and ERD-DELTA.md reach the EM as combined context, so
-  # the D-89 per-file mass must scan the union — otherwise moving prose
-  # from one to the other silences the warning without lowering the actual
-  # brief-cap pressure the EM will face. Concat at the callsite so
-  # --erd-mass keeps its single-file interface.
-  ERD_MASS_TMP=".pipeline-state/refreeze-erd-mass.md"
-  mkdir -p .pipeline-state
-  if [ -f "$ERD_MASS_DELTA" ]; then
-    cat "$ERD_MASS_ERD" "$ERD_MASS_DELTA" > "$ERD_MASS_TMP"
-    python3 scripts/validate-plan.py --erd-mass "$ERD_MASS_TMP" "$ERD_MASS_CONTRACTS" || true
-    rm -f "$ERD_MASS_TMP"
-  else
-    python3 scripts/validate-plan.py --erd-mass "$ERD_MASS_ERD" "$ERD_MASS_CONTRACTS" || true
-  fi
-fi
-
 # --- Build the full diff (deterministic — its hash is the approval token) ---
 DIFF_FILE=".pipeline-state/refreeze-pending.diff"
 mkdir -p .pipeline-state
@@ -409,23 +378,25 @@ echo "=============================================="
 cat "$DIFF_FILE"
 
 # --- D-56 visibility: the capture gate only fires on DECLARED externals, and
-# nothing mechanical can prove a spec touches no external interface. Surface
-# the declaration count at the human gate — the one actor who knows what the
-# milestone talks to — with a heuristic upgrade when staged artifacts
-# reference URLs. (testchat froze v8 and v9 with externals undeclared; the
-# gate D-56 built never fired.)
+# nothing mechanical can prove a spec touches no external interface. The only
+# non-gate action is a heuristic: when a spec declares ZERO externals but the
+# staged artifacts reference URLs, surface a focused warning — declaring
+# externals is the one actor the human knows about, and testchat froze v8 and
+# v9 with externals undeclared (the capture gate could never fire). Zero
+# externals with no URL evidence is silent by design — it is the common case
+# and the unconditional note was retired 2026-08-02 (repeated warnings
+# desensitize; the plan gate and the freeze-time human review remain).
 EXT_COUNT=$(SWBP_C="$EXT_CONTRACTS" python3 -c \
   "import json,os; print(len(json.load(open(os.environ['SWBP_C'])).get('externals') or []))" \
   2>/dev/null || echo 0)
 if [ "$EXT_COUNT" -eq 0 ]; then
-  echo ""
-  echo "  NOTE (D-56): this delta declares ZERO external interfaces."
-  echo "  If the spec assumes ANY third-party API, wire format, or model"
-  echo "  output shape, HALT and demand probes+captures from the TPM first —"
-  echo "  the M5 green-suite/broken-app failure entered exactly here."
   _http_hits=$( { grep -rlE 'https?://' "$IN/tests" "$IN/contracts.json" 2>/dev/null || true; } | head -5)
   if [ -n "$_http_hits" ]; then
-    echo "  WARNING: staged artifacts reference http(s):// URLs — likely undeclared externals:"
+    echo ""
+    echo "  WARNING (D-56): staged artifacts reference http(s):// URLs but the"
+    echo "  spec declares ZERO external interfaces — likely undeclared externals"
+    echo "  (the v8/v9 class). HALT and demand probes+captures from the TPM"
+    echo "  before running the pipeline:"
     echo "$_http_hits" | sed 's/^/    /'
   fi
 else
@@ -458,27 +429,6 @@ if [ -n "$SWEEP_FILES" ]; then
     echo "  on these OLD handlers regardless of the new work (M28 v54 recut"
     echo "  class). Get remediation directives into THIS spec, or bounce it:"
     echo "$SWEEP_OUT" | sed 's/^/    /'
-  fi
-fi
-
-# --- D-83: freeze-hygiene advisory -------------------------------------------
-# Both defect-bearing M28 freezes (v51 23:34, v52 23:49) were authored
-# minutes after the prior milestone closed at 22:50, at the end of a long
-# day — and each sailed through its human approval. A new milestone's spec
-# is next-session work by default (CEO-PLAYBOOK); this note is that rule
-# firing at the moment it matters. Advisory only, human-rhythm issue, never
-# a gate: same-milestone fix deltas legitimately freeze minutes after a
-# close.
-LAST_SUCCESS_TS=$(git log -1 --grep='\[success\]' --format=%ct 2>/dev/null || true)
-if [ -n "$LAST_SUCCESS_TS" ]; then
-  SUCCESS_AGE=$(( $(date +%s) - LAST_SUCCESS_TS ))
-  if [ "$SUCCESS_AGE" -ge 0 ] && [ "$SUCCESS_AGE" -lt 3600 ]; then
-    echo ""
-    echo "  NOTE (D-83): the previous [success] landed $((SUCCESS_AGE / 60)) minute(s) ago."
-    echo "  If this delta specs a NEW milestone, consider making it next-session"
-    echo "  work — both defect-bearing M28 freezes were authored minutes after a"
-    echo "  close, and both passed human approval. A same-milestone fix delta is"
-    echo "  fine to proceed."
   fi
 fi
 

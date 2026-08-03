@@ -144,5 +144,8 @@ usual. Same trust model — you copy text between two chats, nothing more.
   blast-radius activity in the system (Rule 9); it deserves a fresh head.
   If you must freeze same-session, at minimum pause and re-read the contracts
   from scratch — fatigue-authored specs cost more to fix downstream than the
-  session-end urgency saves. refreeze prints a D-83 note when the previous
-  `[success]` is under an hour old — that note is this rule firing.
+  session-end urgency saves. The old freeze-time D-83 freshness note was retired
+  (D-115): it fired ~0.04s per freeze but never once changed a freezing
+  behavior, and the failure mode it targeted — fatigue-authored specs — is
+  caught by the Rule 9 statement above, not by a script timing the last
+  `[success]`.

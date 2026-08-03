@@ -16,7 +16,7 @@ you, everything is driven by `scripts/orchestrate.sh` at shell-chosen points.
 
 You run in one of two modes; which one is stated when your session starts.
 In both, `scripts/refreeze.sh` is the only door your work enters through —
-mechanical preflights (D-56/D-78/D-87/D-88/D-89/INV-4/staged-test
+mechanical preflights (D-56/D-78/D-87/D-88/INV-4/staged-test
 parse+lint+determinism) hold the artifact accountable, and on preflight-
 green the freeze applies automatically (D-95). Optional pre-review paths
 for the conductor: `--diff` / `--approve <hash>` gated by its own
@@ -163,10 +163,9 @@ the EM as combined context. The delta is authoritative for the current
 milestone when it explicitly supersedes standing prose. A non-behavioral
 freeze that refreshes `ERD.md` retires the prior delta automatically: that is
 the explicit consolidation point where the completed milestone is folded into
-standing architecture. The plan
-gate's `MAX_BRIEF_CHARS` and D-89's per-file mass advisory both scan the
-union, so moving prose from one doc to the other does not silence either
-signal (`refreeze.sh` concatenates before running D-89).
+standing architecture. The plan gate's `MAX_BRIEF_CHARS` overflow scan
+remains the hard stop on oversized briefs (D-89's per-file freeze-time
+advisory was retired, D-115).
 
 Deliver all artifacts as complete files (never fragments) in the staging
 layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`,

@@ -24,7 +24,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -2061,126 +2060,17 @@ def test_preflight_compound_command_bails(tmp_path):
     assert r.returncode == 0, (r.stdout, r.stderr)
 
 
-# --- preflight: per-file ERD prose mass advisory (D-89) ----------------------
-# testchat M31 v64: 12 behavioral items concentrated on src/static/app.js. The
-# EM's brief came out 2697 chars against MAX_BRIEF_CHARS=2500, but the plan-
-# gate cap fires AFTER two EM plan calls (~250-280s each on the 4-bit seat) —
-# ~10 min to learn what the ERD already implied at freeze time. This is
-# advisory, not blocking: the correlation between ERD mass and brief size is
-# strong but heuristic, and the plan gate is the hard backstop.
+# --- plan gate: brief-overflow ERD hint (D-89, plan-gate half) ---------------
+# The freeze-time D-89 advisory was retired 2026-08-02 (measured ~0.04s, one
+# advisory print, one python subprocess per freeze); only the plan-gate
+# overflow hint consumes ERD_MASS now, at the point the brief is actually
+# rejected.
 
 # Derived from the script under test — a threshold bump must not require
 # retuning these tests (same discipline as MAX_BRIEF above).
 ERD_THRESHOLD = int(re.search(
     r"^ERD_MASS_ADVISORY_THRESHOLD = (\d+)", VALIDATE_PLAN.read_text(),
     re.M).group(1))
-
-
-def run_erd_mass(tmp_path, erd_text, contracts):
-    erd_p = tmp_path / "ERD.md"
-    erd_p.write_text(erd_text)
-    c_p = tmp_path / "contracts.json"
-    c_p.write_text(json.dumps(contracts))
-    return subprocess.run(
-        [sys.executable, str(VALIDATE_PLAN), "--erd-mass", str(erd_p), str(c_p)],
-        cwd=tmp_path, capture_output=True, text=True,
-    )
-
-
-def test_erd_mass_flags_oversized_section(tmp_path):
-    """The v64 shape: one inventory file's ERD section far exceeds the
-    threshold. The advisory must name that file and its char count."""
-    heavy = "x" * (ERD_THRESHOLD + 800)
-    erd = (
-        "# ERD\n\n"
-        "## As-built\n\n"
-        f"* `src/static/app.js` — {heavy}\n"
-        "* `src/static/threads.js` — small.\n"
-    )
-    r = run_erd_mass(tmp_path, erd, {
-        "files": ["src/static/app.js", "src/static/threads.js"]})
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "ERD MASS ADVISORY" in r.stderr, r.stderr
-    assert "src/static/app.js" in r.stderr, r.stderr
-    assert "src/static/threads.js" not in r.stderr, r.stderr
-
-
-def test_erd_mass_within_threshold_stays_quiet(tmp_path):
-    """A well-scoped ERD makes no noise — no advisory to consume, no false
-    positives to train the CEO to ignore the message."""
-    erd = (
-        "# ERD\n\n"
-        "## As-built\n\n"
-        "* `src/main.py` — a compact description of the module.\n"
-        "* `src/util.py` — another compact description.\n"
-    )
-    r = run_erd_mass(tmp_path, erd, {"files": ["src/main.py", "src/util.py"]})
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "ERD MASS ADVISORY" not in r.stderr, r.stderr
-
-
-def test_erd_mass_heading_caps_last_file_section(tmp_path):
-    """The last file in a list must NOT absorb every subsequent section —
-    if it did, threads.js in testchat's v65 ERD would report ~5.5KB and
-    a well-scoped file would false-positive on every freeze. A `#`-heading
-    ends the current file's section."""
-    trailing = "x" * (ERD_THRESHOLD + 500)
-    erd = (
-        "# ERD\n\n"
-        "## As-built\n\n"
-        "* `src/a.py` — compact.\n"
-        "* `src/b.py` — also compact.\n"
-        "\n## Behavior locked\n\n"
-        + trailing
-        + "\n"
-    )
-    r = run_erd_mass(tmp_path, erd, {"files": ["src/a.py", "src/b.py"]})
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "ERD MASS ADVISORY" not in r.stderr, r.stderr
-
-
-def test_erd_mass_file_not_mentioned_no_signal(tmp_path):
-    """A file with no section-start mention yields no measurement — no
-    signal, no advisory (a mid-sentence mention or absence is not proof
-    the file is oversized OR undersized)."""
-    erd = "# ERD\n\n## As-built\n\n* `src/a.py` — small.\n"
-    r = run_erd_mass(tmp_path, erd,
-                     {"files": ["src/a.py", "src/never_mentioned.py"]})
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "ERD MASS ADVISORY" not in r.stderr, r.stderr
-
-
-def test_erd_mass_table_format_recognized(tmp_path):
-    """sparkv3-style file inventory tables (`| \\`src/main.py\\` |`) must
-    match — the heuristic can't require a bullet marker or every non-
-    testchat spec silently produces zero measurements."""
-    heavy = "x" * (ERD_THRESHOLD + 400)
-    erd = (
-        "# ERD\n\n"
-        "## Inventory\n\n"
-        "| File | Purpose |\n"
-        "|---|---|\n"
-        f"| `src/main.py` | {heavy} |\n"
-        "| `src/util.py` | small. |\n"
-    )
-    r = run_erd_mass(tmp_path, erd, {"files": ["src/main.py", "src/util.py"]})
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "ERD MASS ADVISORY" in r.stderr, r.stderr
-    assert "src/main.py" in r.stderr, r.stderr
-
-
-def test_erd_mass_missing_erd_file_is_not_an_error(tmp_path):
-    """A contracts-only delta may not stage ERD.md — the advisory has no
-    input, exits 0, prints nothing."""
-    c_p = tmp_path / "contracts.json"
-    c_p.write_text(json.dumps({"files": ["src/a.py"]}))
-    r = subprocess.run(
-        [sys.executable, str(VALIDATE_PLAN), "--erd-mass",
-         str(tmp_path / "no-such-ERD.md"), str(c_p)],
-        cwd=tmp_path, capture_output=True, text=True,
-    )
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert r.stderr == "", r.stderr
 
 
 def test_plan_gate_brief_overflow_names_erd_mass(tmp_path):
@@ -2259,32 +2149,7 @@ def test_refreeze_diff_mode_runs_preflight(stageable_repo):
     assert "DIFF-SHA" not in combined, combined
 
 
-def test_refreeze_diff_mode_prints_erd_mass_advisory(stageable_repo):
-    """D-89: refreeze --diff must surface the ERD-mass advisory before the
-    human approval prompt on a staged ERD with an oversized file section,
-    so the CEO sees the size at the moment approval is possible."""
-    repo = stageable_repo
-    refreeze_scripts(repo)
-    (repo / "src").mkdir()
-    (repo / "src" / "app.py").write_text("# empty\n")
-    contracts = {"erd_version": 2, "files": ["src/app.py"],
-                 "entry_points": [], "routes": []}
-    (repo / "scripts" / ".approved" / "contracts.json").write_text(
-        json.dumps(contracts))
-    (repo / "scripts" / ".approved" / "ERD.md").write_text("# ERD v1\n")
-    heavy = "x" * (ERD_THRESHOLD + 800)
-    (repo / "scripts" / ".approved" / "incoming" / "contracts.json").write_text(
-        json.dumps(contracts))
-    (repo / "scripts" / ".approved" / "incoming" / "ERD.md").write_text(
-        "# ERD\n\n## As-built\n\n"
-        f"* `src/app.py` — {heavy}\n"
-    )
-    r = _run_refreeze_diff(repo)
-    combined = r.stdout + r.stderr
-    assert "ERD MASS ADVISORY" in combined, combined
-    assert "src/app.py" in combined, combined
-    # Advisory-only: --diff must still reach the DIFF-SHA gate.
-    assert "DIFF-SHA" in combined, combined
+
 
 
 # --- refreeze.sh D-68 debt sweep at freeze time (D-80) -----------------------
@@ -2330,42 +2195,6 @@ def test_refreeze_debt_sweep_silent_on_justified_swallow(stageable_repo):
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "WARNING (D-80)" not in r.stdout, r.stdout
     assert "DIFF-SHA" in r.stdout, r.stdout
-
-
-# --- refreeze.sh freeze-hygiene advisory (D-83) -------------------------------
-# Both defect-bearing M28 freezes were authored minutes after the prior
-# milestone closed. The note fires when the last [success] is under an
-# hour old; it is advisory — the freeze proceeds either way.
-
-CLEAN_APP = "def f():\n    return 1\n"
-
-
-def success_commit(repo, epoch=None):
-    env = dict(os.environ,
-               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@local",
-               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@local")
-    if epoch is not None:
-        env["GIT_COMMITTER_DATE"] = f"@{epoch} +0000"
-        env["GIT_AUTHOR_DATE"] = f"@{epoch} +0000"
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "[success] spec v1"],
-                   cwd=repo, env=env, check=True, capture_output=True)
-
-
-def test_refreeze_hygiene_note_on_fresh_success(stageable_repo):
-    debt_delta(stageable_repo, CLEAN_APP)
-    success_commit(stageable_repo)
-    r = _run_refreeze_diff(stageable_repo)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "NOTE (D-83)" in r.stdout, r.stdout
-    assert "DIFF-SHA" in r.stdout, r.stdout          # advisory, not a blocker
-
-
-def test_refreeze_hygiene_silent_on_old_success(stageable_repo):
-    debt_delta(stageable_repo, CLEAN_APP)
-    success_commit(stageable_repo, epoch=int(time.time()) - 7200)
-    r = _run_refreeze_diff(stageable_repo)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "NOTE (D-83)" not in r.stdout, r.stdout
 
 
 # --- run_coder: gate-failure propagation (review blocker #1, drive-coder.sh) -

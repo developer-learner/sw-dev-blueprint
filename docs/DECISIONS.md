@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-115 — 2026-08-02 — Retire non-decisional freeze advisories; admit/retire safeguards on measured blast radius
+
+**Decision:** The `refreeze.sh` freeze-time advisories D-83 (fresh-milestone note), D-56's ZERO-external NOTE, and D-89's per-file ERD prose-mass advisory are retired. `refreeze.sh` no longer prints them; `validate-plan.py` keeps only D-89's plan-gate half (the `MAX_BRIEF_CHARS` overflow hint names the ERD section size when a brief is actually rejected); `ERD-MASS` is no longer a preflight. Retiring an advisory is a doc-level amendment to the originating D-entry (D-83, D-56, D-89, D-107's "concatenates before running D-89" clause) — history stays, intent is updated. All hard gates are untouched: D-78 satisfiability, D-88 smoke quotes, D-87 static-asset, D-107 ERD-delta validation, INV-4 surface, staged-test parse+lint+determinism, D-75 red-before-green, the plan gate, and every coder/EM lane.
+
+**Reason:** The three advisories cost ~0.04-0.04s each per freeze and none ever changed a freezing behavior in twelve weeks (measured, not assumed). Each printed a verdict nobody consumed (the D-85 lesson generalized): D-83 fires only in the "same-session" case the CEO drives anyway; D-56's zero-external NOTE restates what the diff already shows; D-89's per-file mass correlated with brief size but never blocked a freeze and duplicated the plan gate's already-harder check. The advisory carve-out in D-95's auto-approval is textually unchanged — this is retirement, not promotion. New selection rule (applies from now on): a candidate freeze-time advisory is admitted only if its blast radius (a subclass defect it would plausibly catch) exceeds its runtime and false-positive costs; a paid advisory that has produced no behavioral change is retired rather than kept to demonstrate diligence.
+
+**Alternatives considered:** (a) Keep the advisories and make them toggle-able — rejected, three more code paths to test for no consumer; (b) only merge D-89's freeze and plan-gate halves into one scored gate — rejected, the plan gate is the only point where rejection happens and is the correct sole consumer; (c) move the rules to README prose so the history keeps the note while the pipeline drops it — rejected, docs still claim a script prints it and a docs-only claim is a lie (Rule 5); (d) apply the same measured-cost discipline to the retained hard gates — explicitly out of scope; gates that change what a violation does are stop-and-ask (Rule 3).
+
+**Do not suggest:** Re-adding any of the retired advisories "as a light diagnostic" — none had a consumer; converting any retired advisory into a hard gate; extending `refreeze.sh` preflight count as a delivery metric; removing a hard gate because an advisory was removed.
+
+---
+
 ## D-114 — 2026-08-02 — Frozen oracle is content-scoped, tests/-confined, and Linux-sandbox-only
 
 **Decision:** Every production pytest entry point is explicitly confined to `tests/`. Refreeze classifies a staged test as changed only when it is new or byte-different from the tracked test. Pytest collection and the D-75 red-before-green check execute only through the Linux Podman sandbox; collection may use static AST when pre-implementation imports prevent sandbox collection, but generated tests never execute on macOS. If the red-check sandbox cannot produce a readable report, refreeze halts. D-90's host-execution fallback is retired. Separately, when a task has already consumed its brief-revision allowance, the orchestrator packages a TPM escalation before calling the EM; it does not require and validate a revised brief that it must discard.

@@ -320,7 +320,22 @@ capability changes the failure class, not the need for gates — strong models
 fail quietly upstream where gates are absent; weak models fail loudly
 downstream where they exist. Never omit a gate because the seat is capable.
 
+**Safeguard admission and retirement (D-115):** gate density is ∝ blast
+radius, but every freeze-time check also carries a runtime and false-positive
+cost, so admission is earned, not assumed. A *new* non-decisional gate or
+advisory is admitted only when its blast radius (a subclass defect it would
+plausibly catch) exceeds its measured runtime and its probability of firing
+on a legitimate run. A *paid* check — one that runs but has never changed a
+decision — is retired rather than kept to demonstrate diligence: a verdict
+nobody consumes is not a gate (D-85), and a note nobody reads every freeze
+trains readers to skip the audit line. Retiring a check is doc-level (the
+originating D-entry is amended, D-115), never silent. The hard gates that
+change what a violation does are stop-and-ask to remove (Rule 3); the
+admission rule governs only the advisory/never-blocking layer.
+
 ---
+
+## Step 0 — Pre-Flight Check (run BEFORE anything else)
 
 ## Step 0 — Pre-Flight Check (run BEFORE anything else)
 

@@ -35,20 +35,12 @@ Modes:
                                             delta, including transitive dependents
   validate-plan.py --diagnosis FILE         validate an EM diagnosis; print its verdict
   validate-plan.py --spec-preflight OLD NEW
-                                            D-78 freeze-time satisfiability: every
-                                            new/changed route and entry_point in NEW
-                                            (vs OLD, which may not exist yet) must be
-                                            implementable by NEW's contracts.files;
-                                            exit 0/1. Run by refreeze.sh BEFORE the
-                                            human approval prompt.
-  validate-plan.py --erd-mass ERD CONTRACTS
-                                            D-89 freeze-time advisory: print a
-                                            warning for each inventory file whose
-                                            ERD prose section exceeds the advisory
-                                            threshold — the correlation with
-                                            brief-size overflow is heuristic; the
-                                            plan gate is the hard backstop. Exit 0
-                                            regardless. Run by refreeze.sh.
+                                                    D-78 freeze-time satisfiability: every
+                                                    new/changed route and entry_point in NEW
+                                                    (vs OLD, which may not exist yet) must be
+                                                    implementable by NEW's contracts.files;
+                                                    exit 0/1. Run by refreeze.sh BEFORE the
+                                                    human approval prompt.
   validate-plan.py --subtree-scope PRIOR DELTA [DELTA...]
                                             print the delta re-plan scope (JSON)
                                             for a re-freeze: which prior tasks the
@@ -105,12 +97,12 @@ VERSION = APPROVED / "VERSION"
 TASK_REQUIRED = {"id", "file", "depends_on", "brief", "contracts", "tests"}
 TASK_ALLOWED = TASK_REQUIRED
 MAX_BRIEF_CHARS = 2500
-# D-89: advisory threshold for per-file ERD prose mass at freeze time. Tuned
-# against testchat history: v63's app.js section transcribed to a brief that
-# fit the 2500-char plan-gate limit; v64's did not (12 behavioral items on
-# one file → 2697-char brief). No hard cap — the correlation between ERD
-# mass and brief size is strong but heuristic, and the plan gate is the hard
-# backstop. Never blocking; warnings only.
+# D-89 (plan-gate half): threshold for the brief-overflow hint's ERD prose
+# mass. Tuned against testchat history: v63's app.js section transcribed to a
+# brief that fit the 2500-char plan-gate limit; v64's did not (12 behavioral
+# items on one file → 2697-char brief). The freeze-time advisory was retired
+# 2026-08-02 — only the plan-gate hint consumes this now, where the brief is
+# actually rejected. Advisory only; the cap is the hard backstop.
 ERD_MASS_ADVISORY_THRESHOLD = 2000
 ERD_PATH = APPROVED / "ERD.md"
 VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
@@ -916,37 +908,6 @@ def _erd_mass_per_file(erd_text, inventory):
     return mass
 
 
-def cmd_erd_mass(erd_path, contracts_path):
-    """D-89 advisory: warn on inventory files whose ERD section prose exceeds
-    the threshold. Never fails — exits 0 whether or not any file is flagged.
-    Called by refreeze.sh after --spec-preflight, before the human sees the
-    approval prompt."""
-    erd_p = Path(erd_path)
-    if not erd_p.is_file():
-        return  # no staged ERD (contracts-only delta); no advisory possible
-    try:
-        erd_text = erd_p.read_text()
-    except OSError:
-        return
-    contracts = load_json(Path(contracts_path), "staged contracts")
-    inventory = contracts.get("files", [])
-    mass = _erd_mass_per_file(erd_text, inventory)
-    flagged = sorted(((f, m) for f, m in mass.items()
-                      if m > ERD_MASS_ADVISORY_THRESHOLD),
-                     key=lambda kv: -kv[1])
-    if not flagged:
-        return
-    for f, m in flagged:
-        print(
-            f"ERD MASS ADVISORY (D-89): {f} carries {m} chars of ERD prose "
-            f"(threshold {ERD_MASS_ADVISORY_THRESHOLD}). The EM will attempt "
-            f"to transcribe this into a single brief; the plan gate rejects "
-            f"briefs over {MAX_BRIEF_CHARS} chars (Rule 8: one concern per "
-            f"brief — split the feature into its own file).",
-            file=sys.stderr,
-        )
-
-
 def spec_preflight(old_path, new_path):
     """D-78: freeze-time satisfiability. The plan gate's exact plan↔inventory
     bijection means a task may only target contracts.files members — so a
@@ -1549,9 +1510,6 @@ def main(argv):
         return
     if argv[0] == "--spec-preflight" and len(argv) == 3:
         spec_preflight(argv[1], argv[2])
-        return
-    if argv[0] == "--erd-mass" and len(argv) == 3:
-        cmd_erd_mass(argv[1], argv[2])
         return
     fail([f"usage error: {' '.join(argv)} (see module docstring)"])
 
