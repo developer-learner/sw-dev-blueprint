@@ -130,6 +130,25 @@ def escalations(state_dir: Path) -> list[str]:
     return out
 
 
+def run_exit_row(state_dir: Path, since_epoch: int) -> str | None:
+    """Return the most recent run-exit.log row on or after this feature's
+    boundary, or None if the run predates the trap or never wrote a row."""
+    p = state_dir / "logs" / "run-exit.log"
+    if not p.is_file():
+        return None
+    for line in reversed(p.read_text().splitlines()):
+        if not line.strip():
+            continue
+        try:
+            iso = line.split("\t", 1)[0]
+            ts = datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+        except (ValueError, IndexError):
+            continue
+        if ts >= since_epoch:
+            return line
+    return None
+
+
 def commits_since(since_epoch: int) -> list[str]:
     if not since_epoch:
         return []
@@ -152,18 +171,61 @@ def main() -> int:
     escs = escalations(state)
     commits = commits_since(since_epoch)
 
-    total = rows[-1][1] if rows else 0
+    logged = rows[-1][1] if rows else 0
     productive = buckets.get("coding", 0) + buckets.get("tests", 0)
-    overhead = total - productive
+    overhead = logged - productive
+
+    # The last logged event is not necessarily when the run ended. Prefer the
+    # EXIT trap's own record; fall back to newest .pipeline-state activity if
+    # the run predates the trap. If neither exceeds the last timings row we
+    # trust the timings row.
+    exit_row = run_exit_row(state, since_epoch)
+    real_end_ts = None
+    real_end_source = None
+    if exit_row:
+        try:
+            iso = exit_row.split("\t", 1)[0]
+            real_end_ts = datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+            real_end_source = "run-exit.log"
+        except (ValueError, IndexError):
+            pass
+    if real_end_ts is None and state.is_dir():
+        mtimes = [f.stat().st_mtime for f in state.rglob("*")
+                  if f.is_file() and f.stat().st_mtime >= since_epoch]
+        if mtimes:
+            real_end_ts = max(mtimes)
+            real_end_source = "newest pipeline-state file mtime"
+
+    # Bound run_start from filesystem: the earliest .pipeline-state file the
+    # run touched (timings.tsv itself, .lock, etc). Reliable epoch regardless
+    # of the timings.tsv HH:MM:SS timezone. Falls back to the refreeze time.
+    run_start_ts = since_epoch
+    if state.is_dir():
+        touched = [f.stat().st_mtime for f in state.rglob("*")
+                   if f.is_file() and f.stat().st_mtime >= since_epoch]
+        if touched:
+            run_start_ts = min(touched)
+
+    real_duration = int(real_end_ts - run_start_ts) if real_end_ts else None
+    unaccounted = None
+    if real_duration is not None and real_duration > logged + 5:
+        unaccounted = real_duration - logged
 
     print(f"feature: v{spec or '?'}  (since refreeze @ {since_iso})")
-    print(f"wall clock: {total}s  productive: {productive}s  overhead: {overhead}s")
+    if unaccounted is not None:
+        print(f"wall clock: {real_duration}s  logged: {logged}s  "
+              f"UNACCOUNTED: {unaccounted}s  (source: {real_end_source})")
+        print(f"  ^^ the run ended {unaccounted}s after the last logged event — "
+              f"either it crashed without recording, or a phase ran without "
+              f"a boundary mark. Check .pipeline-state/logs/run-exit.log.")
+    else:
+        print(f"wall clock: {logged}s  productive: {productive}s  overhead: {overhead}s")
     print()
     print("time by bucket:")
     for k in ("preflight", "planning", "coding", "tests", "diagnosis", "other"):
         v = buckets.get(k, 0)
         if v:
-            print(f"  {k:10s} {v:5d}s  ({100*v/max(total,1):4.1f}%)")
+            print(f"  {k:10s} {v:5d}s  ({100*v/max(logged,1):4.1f}%)")
     print()
     if ems:
         print("EM calls (kind:outcome):")

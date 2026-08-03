@@ -1061,6 +1061,63 @@ evidence="two failed coder attempts on src/x.py; token cap + mixed-mode reply"
     assert "T1" in text
 
 
+def test_feature_summary_names_unaccounted_time_on_silent_crash(tmp_path):
+    """Regression: the first feature-summary reported "wall clock: 409s"
+    for the M33 crash while the real run lasted 869s. Reporting through-
+    last-event as wall clock hides silent halts — the exact defect
+    measurement is supposed to surface. When the exit trap did not run
+    and no run-exit.log exists, the tool must still detect the gap using
+    filesystem mtimes, and label the delta unaccounted rather than
+    swallowing it into "overhead"."""
+    import time
+    (tmp_path / "scripts" / ".approved").mkdir(parents=True)
+    (tmp_path / "scripts" / ".approved" / "VERSION").write_text("76\n")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "-c", "user.email=t@t", "-c", "user.name=t",
+         "add", "-A"], check=True)
+    refreeze_ts = int(time.time()) - 900   # refreeze 15 minutes ago
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "-m", "[refreeze v76]",
+         "--date", f"@{refreeze_ts} +0000"],
+        env={**os.environ,
+             "GIT_COMMITTER_DATE": f"@{refreeze_ts} +0000",
+             "GIT_AUTHOR_DATE": f"@{refreeze_ts} +0000"},
+        check=True,
+    )
+    state = tmp_path / ".pipeline-state"
+    (state / "logs").mkdir(parents=True)
+    timings = state / "logs" / "timings.tsv"
+    timings.write_text(
+        "19:00:00\t0s\trun start (budget 1200s)\n"
+        "19:00:01\t1s\tpre-flight done (spec v76)\n"
+        "19:00:01\t1s\tem-call start -> tasks/plan.json\n"
+        "19:06:49\t409s\tcoder T1 attempt 1 start (src/services/storage.py)\n"
+    )
+    # Simulate the actual M33 silent-halt: pipeline started ~600s ago,
+    # last logged event 409s into the run, real activity ended 100s ago
+    # (the trap did not run, so real end must be inferred from mtimes).
+    now = time.time()
+    run_start = now - 600
+    real_end = now - 100
+    os.utime(timings, (run_start, run_start))
+    fresh = state / "phase"
+    fresh.write_text("")
+    os.utime(fresh, (real_end, real_end))
+
+    r = subprocess.run(
+        ["python3", str(SCRIPTS / "feature-summary.py")],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "UNACCOUNTED:" in r.stdout, r.stdout
+    # The tool must not report "409s" as wall clock when the run kept running.
+    assert re.search(r"wall clock: (?!409s)\d+s", r.stdout), (
+        f"tool reported the through-last-event count as wall clock:\n{r.stdout}"
+    )
+
+
 def test_run_exit_trap_records_every_termination_path(tmp_path):
     """Regression: M33 v76 crashed with no HALT and no evidence — nothing
     downstream could tell "died mid-task" from "halted for the operator".
