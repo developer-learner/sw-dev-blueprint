@@ -524,6 +524,32 @@ def test_import_outside_inventory_ignored(repo):
     assert r.returncode == 0, r.stderr
 
 
+def test_import_of_preexisting_modified_module_passes(repo):
+    """M34 regression: a test file importing a MODIFIED inventory module — one
+    already present at the frozen baseline — imposes no DAG-ordering constraint.
+    The module is importable at collection time whatever the task order, so
+    mapping the test to an earlier task must not fire. Mirrors
+    test_import_of_downstream_module_fails, differing ONLY in that src/b.py
+    exists on disk (a modify, not a create). Before the fix this false-halted
+    M34's additive two-file delta, whose one test file imports both inventory
+    modules."""
+    (repo / "src").mkdir(parents=True, exist_ok=True)
+    (repo / "src" / "b.py").write_text("def handler():\n    return None\n")
+    route_repo(repo, (
+        "from src.b import handler\n"  # T2's module, but it already exists
+        "def test_service(client):\n"
+        "    assert True\n"
+        "def test_route(client):\n"
+        "    assert True\n"
+    ))
+    plan = route_plan(
+        t1_tests=["tests/test_w.py::test_service"],  # mapped to T1, earlier task
+        t2_tests=["tests/test_w.py::test_route"],
+    )
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
 # --- diagnosis: Rule 8 applies to revised briefs ------------------------------
 
 def run_diagnosis(repo, diag):

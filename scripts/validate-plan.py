@@ -519,9 +519,19 @@ def validate():
     # file must be owned by a task in the mapped task's dependency closure.
     # Fail-open: imports of modules outside the inventory (pre-existing code)
     # and dynamic imports are ignored.
-    module_owner = {}  # dotted module -> owning task id
+    # Only genuine CREATES gate collection. A module that already exists at the
+    # frozen baseline is importable no matter where its modifying task sits in
+    # the DAG, so a test file importing it can never hit an ordering collection
+    # error. Mapping a MODIFIED inventory file as "created by" its task is a
+    # false positive: it forces every test importing two inventory modules into
+    # one task's dependency closure — which spuriously halted M34's additive
+    # two-file delta (its frozen test imports both src.services.models and
+    # src.api.models). Restrict ownership to inventory files absent at baseline;
+    # modifies impose no ordering constraint. (The route check above gets this
+    # for free by keying only on explicitly-claimed route contracts.)
+    module_owner = {}  # dotted module -> owning task id (creates only)
     for t in tasks:
-        if t["file"].endswith(".py"):
+        if t["file"].endswith(".py") and not Path(t["file"]).exists():
             module_owner[t["file"][:-3].replace("/", ".")] = t["id"]
 
     def file_imports(path):

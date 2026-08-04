@@ -103,9 +103,31 @@ die() { echo "FAIL: $*" >&2; exit 1; }
 # flock -n fails immediately if another orchestrate is already holding
 # the lock, so a second run halts with a clear message instead of
 # silently corrupting the state files of the run in progress.
-exec 200> "$STATE_DIR/.lock"
-flock -n 200 \
-  || die "another scripts/orchestrate.sh is already running (holds $STATE_DIR/.lock) — wait for it to finish or kill it, then retry"
+# flock(1) ships with Linux/util-linux but not stock macOS. Where it exists,
+# use it — the kernel releases the lock automatically when the process exits,
+# even on a crash. Where it doesn't, fall back to an atomic mkdir lock keyed by
+# owner pid: mkdir is a portable test-and-set, and a liveness check on the
+# recorded pid reclaims a lock left by a crashed run (the release flock gets
+# for free). Either path makes a second concurrent run halt with a clear
+# message instead of corrupting the in-flight run's counter files.
+if command -v flock >/dev/null 2>&1; then
+  exec 200> "$STATE_DIR/.lock"
+  flock -n 200 \
+    || die "another scripts/orchestrate.sh is already running (holds $STATE_DIR/.lock) — wait for it to finish or kill it, then retry"
+else
+  _lockdir="$STATE_DIR/.lockdir"
+  if ! mkdir "$_lockdir" 2>/dev/null; then
+    _owner=$(cat "$_lockdir/pid" 2>/dev/null || true)
+    if [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; then
+      die "another scripts/orchestrate.sh is already running (pid $_owner, holds $_lockdir) — wait for it to finish or kill it, then retry"
+    fi
+    # stale lock from a dead run — reclaim it
+    rm -f "$_lockdir/pid"; rmdir "$_lockdir" 2>/dev/null || true
+    mkdir "$_lockdir" 2>/dev/null \
+      || die "could not acquire state lock $_lockdir (stale-lock reclaim failed) — inspect and remove it manually, then retry"
+  fi
+  printf '%s\n' "$$" > "$_lockdir/pid"
+fi
 
 # --- state helpers (files, not shell vars: crash checkpoint per D-24) ---
 read_state()  { [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }
@@ -203,10 +225,18 @@ record_exit() {
   phase=$( [ -f "$STATE_DIR/phase" ] && cat "$STATE_DIR/phase" 2>/dev/null || echo "" )
   task=$( [ -f "$STATE_DIR/task_target" ] && cat "$STATE_DIR/task_target" 2>/dev/null || echo "" )
   last_ts=$( [ -f "$LOG_DIR/timings.tsv" ] && tail -1 "$LOG_DIR/timings.tsv" 2>/dev/null | tr '\t' ' ' || echo "" )
-  printf '%s\trc=%s\tphase=%s\ttask=%s\telapsed=%ss\tlast_mark=%s\n' \
-    "$(date -u +%FT%TZ)" "$rc" "${phase:-<none>}" "${task:-<none>}" \
-    "$(run_elapsed)" "${last_ts:-<none>}" \
-    >> "$LOG_DIR/run-exit.log"
+  # The success teardown removes .pipeline-state/ (LOG_DIR included) BEFORE this
+  # EXIT trap fires, so an unguarded append failed and — under set -e — flipped
+  # a green run's exit code to 1 (misleading any exit-code-keyed automation).
+  # Recreate the dir so every exit (success included) is still recorded, and
+  # guard the write so it can never itself fail the run.
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  if [ -d "$LOG_DIR" ]; then
+    printf '%s\trc=%s\tphase=%s\ttask=%s\telapsed=%ss\tlast_mark=%s\n' \
+      "$(date -u +%FT%TZ)" "$rc" "${phase:-<none>}" "${task:-<none>}" \
+      "$(run_elapsed)" "${last_ts:-<none>}" \
+      >> "$LOG_DIR/run-exit.log"
+  fi
   return $rc
 }
 trap 'record_exit' EXIT
