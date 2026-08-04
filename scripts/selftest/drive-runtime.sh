@@ -30,6 +30,7 @@ case "$MODE" in
     mkdir -p scripts .cache
     cat > scripts/sandbox-run.sh <<'STUB'
 #!/usr/bin/env bash
+[ -z "${SANDBOX_ARG_LOG:-}" ] || printf '%s\n' "$@" > "$SANDBOX_ARG_LOG"
 [ -z "${SANDBOX_REPORT_SOURCE:-}" ] \
   || cp "$SANDBOX_REPORT_SOURCE" .cache/test-report.json
 exit "${SANDBOX_STUB_RC:-125}"
@@ -40,6 +41,10 @@ STUB
     run_tests
     echo "FINAL_TESTS_RC=$TESTS_RC"
     echo "FINAL_FAILING=$FAILING"
+    if [ -n "${SANDBOX_ARG_LOG:-}" ] && [ -f "$SANDBOX_ARG_LOG" ]; then
+      echo "SANDBOX_ARGS:"
+      cat "$SANDBOX_ARG_LOG"
+    fi
     ;;
   state)
     STATE_DIR=".pipeline-state"

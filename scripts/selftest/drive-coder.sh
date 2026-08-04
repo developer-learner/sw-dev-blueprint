@@ -16,15 +16,21 @@
 # committed. The pytest side asserts on BOTH the exit status and the git
 # history: a gate failure must halt the script (die) BEFORE any commit.
 #
-# Usage: drive-coder.sh <workdir> <task-id> <file> <gate-rc>
+# Usage: drive-coder.sh <workdir> <task-id> <file> <gate-rc> [budget]
+# Optional 5th arg: an explicit SWBP_CODER_EDIT_MAX_OUTPUT value to test the
+# budget plumb against the REAL run_coder. When set, the stub llm-call.sh
+# records the SWBP_MAX_OUTPUT the shell handed it into <workdir>/envlog and
+# the harness echoes it, so pytest can assert the boundary value without
+# re-implementing any run_coder logic.
 # Stdout on survival: "RC=<rc> COMMITS=<n>"  (die kills the script first on
 # a hard halt, so pytest sees a nonzero exit and no RC= line).
 set -euo pipefail
 
-WORK="${1:?usage: drive-coder.sh <workdir> <task-id> <file> <gate-rc>}"
+WORK="${1:?usage: drive-coder.sh <workdir> <task-id> <file> <gate-rc> [budget]}"
 TASK_ID="${2:?task id}"
 TASK_FILE="${3:?task file}"
 GATE_RC="${4:?gate rc (0=pass, 1=fail)}"
+BUDGET="${5:-}"
 REPO=$(cd "$(dirname "$0")/../.." && pwd -P)
 
 cd "$WORK"
@@ -39,6 +45,7 @@ cp "$REPO/scripts/check-swallowed-errors.py" scripts/
 cat > scripts/llm-call.sh <<'STUB'
 #!/usr/bin/env bash
 n=$(cat .calls 2>/dev/null || echo 0); n=$((n + 1)); printf '%s\n' "$n" > .calls
+printf 'SWBP_MAX_OUTPUT=%s\n' "${SWBP_MAX_OUTPUT-<unset>}" >> envlog
 cat > "prompts/$n"
 cat "replies/$n" 2>/dev/null || printf 'no scripted reply %s\n' "$n"
 STUB
@@ -66,7 +73,8 @@ LOG_DIR="$STATE_DIR/logs"
 APPROVED="scripts/.approved"
 AGENT_TIMEOUT=60
 FROZEN_V="42"
-SWBP_CODER_EDIT_MAX_OUTPUT=""
+# Mirrors orchestrate.sh's entry default exactly: unset OR empty means 4096.
+SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-4096}"
 mkdir -p "$STATE_DIR" "$TASK_STATE" "$LOG_DIR"
 
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -100,3 +108,7 @@ else
   rc=1
 fi
 echo "RC=$rc COMMITS=$(git rev-list --count HEAD) EVIDENCE=${CODER_EVIDENCE:--}"
+if [ -n "$BUDGET" ] && [ -f envlog ]; then
+  echo "ENVLOG:"
+  cat envlog
+fi

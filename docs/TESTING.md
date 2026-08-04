@@ -30,6 +30,28 @@ edit).
   ERD, refreeze) rather than tolerate untestable code
 - Coverage target: 80% on business logic, not on route boilerplate — the
   ratchet may drift per project (Rule 3)
+- **Parsimony is a spec property.** One test per acceptance criterion is
+  the default; a second test earns its place only by exercising a
+  different surface (unit vs API vs UI) or a distinct failure class. When
+  a unit test and an API test would assert the same fact, one is carrying
+  the other — write the one that reads better as documentation.
+- **Suite size is a review item at every freeze.** A diff that grows
+  `tests/` without a corresponding PRD acceptance-criterion change is a
+  smell, and it belongs in the freeze review. The suite is the oracle, but
+  it is also collected, parsed, and diffed on every run — weight is debt
+  with a hash.
+
+## Test retirement (spec-delta only)
+
+A frozen test that has not failed for five consecutive milestones, or that
+no longer maps to a current acceptance criterion or locked surface, is a
+retirement candidate: the TPM flags it at the next refreeze, and it leaves
+through the same `refreeze.sh` delta path as any other spec change — never
+by direct edit. This is advisory TPM guidance, not a mechanical gate: the
+per-node failure history that would mechanize it is not yet tracked, and a
+check with no consumer is decoration (D-85). The standing question at every
+freeze: if a test could not fail under any plausible regression, it is
+ceremony, not coverage.
 
 ---
 
@@ -140,9 +162,12 @@ def auth_headers(test_user):
 
 ## Known Issues / Flaky Tests
 
-| Test | Issue | Workaround |
-|------|-------|------------|
-| [test name] | [why it's flaky] | [current workaround] |
+The flake ledger — `.pipeline-flakes.json` (D-111), local to each project —
+is the machine-readable record of accepted flakes; it is never populated by
+hand. `orchestrate.sh` reads it for D-77 triage and the D-111 recurring
+threshold. A flaky test belongs in the ledger via the pipeline's own triage
+or goes back to the TPM as a spec defect (D-58) — never in a prose table
+that nothing reads.
 
 ---
 

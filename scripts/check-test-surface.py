@@ -108,7 +108,16 @@ def locked_testids(contracts):
 
 
 def path_matches(path, template):
-    """Segment-wise match; {param} template segments match any one segment."""
+    """Segment-wise match; {param} template segments match any one segment.
+
+    Leniency is symmetric and intentional: a test-side `{...}` segment
+    matches any template {param} slot, because f-string variables are never
+    template-identical (f"/items/{id}" vs the template "/items/{item_id}"),
+    and the gate pins the route SURFACE, not the test's variable names.
+    A test-side literal segment that differs from a literal template segment
+    is still flagged — that is the accident class (and the pinning tests are
+    route_param_template_matches / route_check_fails_open_on_dynamic_path).
+    """
     path = path.split("?", 1)[0].rstrip("/") or "/"
     template = template.rstrip("/") or "/"
     ps, ts = path.split("/"), template.split("/")

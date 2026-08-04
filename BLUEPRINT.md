@@ -680,8 +680,8 @@ still governs any human-written test: derive from the spec, not from `src/`.
 
 ## Files the LLM Should Never Touch Without Explicit Instruction
 
-- `DECISIONS.md` — human-approved record of deliberate choices; do not edit without explicit instruction
-- `CLAUDE.md` correction log — human-maintained; rows added per the rule, not by the LLM
+- `DECISIONS.md` — the decision ledger; LLM-authored on every non-obvious decision per the maintenance contract, but choices recorded are human-approved — no entry without a real decision behind it
+- `CLAUDE.md` correction log — LLM-updated per the correction-log rule: every LLM mistake the human corrects becomes a row; rows are added only for actual corrections
 - `tasks/BACKLOG.md` completed section — historical record; entries move here from `CURRENT.md`, not edited
 - `scripts/.approved/` and `tests/` — the frozen spec; changes ONLY via `scripts/refreeze.sh`
 - `scripts/`, `.githooks/` in a child project — template-owned; changes ONLY via `scripts/update-template.sh`

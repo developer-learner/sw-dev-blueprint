@@ -1132,53 +1132,59 @@ def test_edit_mode_budget_validates_input_strictly(tmp_path):
 
 
 def test_edit_mode_budget_reaches_llm_call(tmp_path):
-    """End-to-end plumb: SWBP_CODER_EDIT_MAX_OUTPUT set at run entry must
-    reach the llm-call.sh boundary as SWBP_MAX_OUTPUT with the same value,
-    for edit-mode (existing-file) calls only. Create-mode calls must still
-    export SWBP_MAX_OUTPUT="" (D-59's "no per-call override" contract).
-    Uses a stub llm-call.sh that logs the env value the shell handed it —
-    the exact boundary the real llm-call would consume."""
-    source = (SCRIPTS / "orchestrate.sh").read_text()
-    # Isolate the exact line pattern from run_coder that exports the budget.
-    plumb = re.search(
-        r'SWBP_MAX_OUTPUT="\$out_budget" .*?scripts/llm-call\.sh coder',
-        source,
+    """End-to-end plumb through the REAL run_coder (drive-coder extracts it):
+    SWBP_CODER_EDIT_MAX_OUTPUT set at run entry must reach the llm-call
+    boundary as SWBP_MAX_OUTPUT with the same value, for edit-mode
+    (existing-file) calls only. Create-mode calls must still export
+    SWBP_MAX_OUTPUT="" (D-59's "no per-call override" contract). The stub
+    llm-call.sh records the env value the shell handed it — the exact
+    boundary the real llm-call would consume. No run_coder logic is
+    re-implemented here; the entry default mirrors orchestrate.sh:51."""
+    # Edit mode needs a pre-existing file and a NO-CHANGES reply (applier
+    # noop, so the budget assertion is what this test is about).
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.py").write_text("X = 1\n")
+
+    def drive(budget, preexist):
+        if preexist:
+            (tmp_path / "replies").mkdir(exist_ok=True)
+            (tmp_path / "replies" / "1").write_text("=== NO CHANGES ===\n")
+        env = {**os.environ, "SWBP_CODER_EDIT_MAX_OUTPUT": budget}
+        return subprocess.run(
+            ["bash", str(DRIVE_CODER), str(tmp_path), "T7",
+             "src/x.py", "0", budget],
+            capture_output=True, text=True, env=env,
+        )
+
+    def seen(r):
+        assert "ENVLOG:" in r.stdout, (r.stdout, r.stderr)
+        return [line for line in r.stdout.splitlines()
+                if line.startswith("SWBP_MAX_OUTPUT=")][0]
+
+    # Override reaches the boundary: edit mode sees 8192.
+    assert seen(drive("8192", preexist=True)) == "SWBP_MAX_OUTPUT=8192"
+    # Default (mirrored from orchestrate.sh entry): edit mode sees 4096.
+    (tmp_path / "envlog").unlink(missing_ok=True)
+    # A budget-only FIFTH arg with no env override is not how the test drives
+    # the default; drive the harness default by passing nothing over env.
+    default = subprocess.run(
+        ["bash", str(DRIVE_CODER), str(tmp_path), "T7", "src/x.py", "0", "4096"],
+        capture_output=True, text=True,
     )
-    assert plumb, "SWBP_MAX_OUTPUT plumb line signature changed"
-
-    stub_dir = tmp_path / "scripts"
-    stub_dir.mkdir()
-    stub = stub_dir / "llm-call.sh"
-    stub.write_text('#!/usr/bin/env bash\n'
-                    # `-` (not `:-`) distinguishes empty-string from unset.
-                    'printf "%s\\n" "SEEN=${SWBP_MAX_OUTPUT-<unset>}" > log\n')
-    stub.chmod(0o755)
-
-    # Faithful mini-caller that mirrors the two run_coder shapes.
-    def call(existing_flag: str, env_override: str = "") -> str:
-        (tmp_path / "log").unlink(missing_ok=True)
-        script = f"""
-set -euo pipefail
-cd {tmp_path}
-SWBP_CODER_EDIT_MAX_OUTPUT="${{SWBP_CODER_EDIT_MAX_OUTPUT:-4096}}"
-out_budget=""
-existing={existing_flag!r}
-[ -n "$existing" ] && out_budget="$SWBP_CODER_EDIT_MAX_OUTPUT"
-SWBP_MAX_OUTPUT="$out_budget" scripts/llm-call.sh coder
-"""
-        env = {**os.environ}
-        if env_override:
-            k, v = env_override.split("=", 1)
-            env[k] = v
-        subprocess.run(["bash", "-c", script], env=env, capture_output=True, check=True)
-        return (tmp_path / "log").read_text().strip()
-
-    # Default: edit mode sees 4096.
-    assert call("src/x.py") == "SEEN=4096"
-    # Override reaches boundary: edit mode sees 8192.
-    assert call("src/x.py", "SWBP_CODER_EDIT_MAX_OUTPUT=8192") == "SEEN=8192"
+    assert seen(default) == "SWBP_MAX_OUTPUT=4096"
     # Create mode ignores the override; SWBP_MAX_OUTPUT is empty.
-    assert call("", "SWBP_CODER_EDIT_MAX_OUTPUT=8192") == "SEEN="
+    fresh = tmp_path / "create"
+    fresh.mkdir()
+    create_env = {**os.environ, "SWBP_CODER_EDIT_MAX_OUTPUT": "8192"}
+    (fresh / "replies").mkdir()
+    (fresh / "replies" / "1").write_text("Y = 2\n")
+    created = subprocess.run(
+        ["bash", str(DRIVE_CODER), str(fresh), "T7",
+         "src/new.py", "0", "8192"],
+        capture_output=True, text=True, env=create_env,
+    )
+    assert seen(created) == "SWBP_MAX_OUTPUT="
 
 
 def test_feature_summary_names_unaccounted_time_on_silent_crash(tmp_path):
@@ -1299,7 +1305,14 @@ trap 'record_exit' EXIT
 
 
 def test_full_suite_execution_is_confined_to_tests_directory():
-    """No-argument run_tests cannot discover archives or selftests."""
+    """No-argument run_tests cannot discover archives or selftests.
+
+    Static pin: orchestrate.sh hard-refuses to run on macOS (the VM
+    boundary, D-55), so this seam's static shape is pinned here and its
+    runtime behavior by test_run_tests_invokes_pytest_only_on_tests_dir
+    below (drive-runtime.sh stubs sandbox-run.sh and records the real
+    argv). Keep the two in step; the behavioral test is the evidence, this
+    grep is the cheap backstop against a rename."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
     block = source[source.index("run_tests() {"):
                    source.index("# --- Plan phase")]
@@ -1307,7 +1320,36 @@ def test_full_suite_execution_is_confined_to_tests_directory():
     assert '"${test_args[@]}"' in block
 
 
+def test_run_tests_invokes_pytest_only_on_tests_dir(tmp_path):
+    """Real run_tests (drive-runtime extracts it from orchestrate.sh) hands
+    the sandbox runner a pytest argv whose collectable paths are all under
+    tests/ — both for the no-arg full-suite default and for node-id runs."""
+    arg_log = tmp_path / "sandbox-args.log"
+    env = {**os.environ, "SANDBOX_ARG_LOG": str(arg_log), "SANDBOX_STUB_RC": "0"}
+    r = subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "tests", str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    args = arg_log.read_text().splitlines()
+    assert args and args[0] == "--rw" and "pytest" in args
+    # "--" separates the sandbox-run options from the pytest command; the
+    # only positional args in that pytest argv are collectable paths.
+    sep = args.index("--")
+    pytest_args = args[sep + 1:]
+    assert pytest_args[0] == "pytest"
+    pathy = [a for a in pytest_args[1:]
+             if a == "tests/" or a.endswith(".py") or "::" in a]
+    assert pathy == ["tests/"], args
+    assert all(p == "tests/" or p.startswith("tests/") for p in pathy)
+
+
 def test_plan_prompt_names_every_required_schema_key():
+    # This seam is intentionally a source pin, not an extracted artifact:
+    # the EM plan prompt is a bash template with live interpolation at call
+    # time (Set erd_version to $FROZEN_V, ${verrs:+ ...}). Pulling it into a
+    # static file would require eval-style templating in the model-call path
+    # — a worse trade than the one-line anchor cost on prompt rewording.
     # linkbox M1 (2026-07-16): the EM omitted the required top-level
     # "version" key on BOTH fresh-plan emissions — the prompt's checklist
     # named erd_version but not version, and with no plan-being-revised to
