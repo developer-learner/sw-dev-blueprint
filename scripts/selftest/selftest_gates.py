@@ -4731,3 +4731,197 @@ def test_teardown_rejects_unknown_flag(housekeeping_repo):
     )
     assert r.returncode != 0, (r.stdout, r.stderr)
     assert "--help" in r.stdout + r.stderr
+
+
+# --- closure auto-repair (validate-plan.py --repair-closures, f757bb4) ------
+# The synthetic gate for the plan-gate pre-pass: detection reads test-file ASTs
+# via cwd-relative paths and route ownership off contracts.json, so the repo
+# fixture needs on-disk test files and method-carrying routes. Safety is
+# architectural (validate() runs unchanged after), so these tests prove the
+# repair adds exactly the edge the gate computes — and never more.
+
+REPAIR_ROUTES = [{"id": "route-items", "method": "get", "path": "/items"}]
+REPAIR_CONTRACTS = {
+    "files": ["src/a.py", "src/b.py"],
+    "entry_points": ["src.a", "src.b:handler"],
+    "routes": REPAIR_ROUTES,
+}
+
+
+def _repair_repo(repo):
+    """repo fixture + a contracts.json whose routes carry methods (the closure
+    checks need id+method+path, the default fixture has path-only routes)."""
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(REPAIR_CONTRACTS))
+    return repo
+
+
+def _write_test_files(repo, files):
+    d = repo / "tests"
+    d.mkdir()
+    for name, content in files.items():
+        (d / name).write_text(content)
+
+
+def run_repair(repo, plan):
+    plan_path = repo / "tasks" / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--repair-closures", "tasks/plan.json"],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def _route_plan():
+    """T1 owns route-items (and src.a); T2 maps the browser-less test that
+    exercises /items but does not depend on T1 — the exact M-34-shaped gap."""
+    return {
+        "version": 1,
+        "erd_version": 1,
+        "tasks": [
+            {
+                "id": "T1",
+                "file": "src/a.py",
+                "depends_on": [],
+                "brief": "implement a",
+                "contracts": ["route-items", "src.a"],
+                "tests": ["tests/test_a.py::test_one"],
+            },
+            {
+                "id": "T2",
+                "file": "src/b.py",
+                "depends_on": [],
+                "brief": "implement b",
+                "contracts": ["src.b:handler"],
+                "tests": ["tests/test_b.py::test_two"],
+            },
+        ],
+    }
+
+
+def _route_test_files():
+    return {
+        "test_a.py": "def test_one():\n    pass\n",
+        "test_b.py": "def test_two():\n    client.get(\"/items\")\n",
+    }
+
+
+def test_repair_route_adds_exact_edge_and_gate_passes(repo):
+    """Case 1: the route closure violation the gate would reject becomes a
+    repair — T2 gains exactly T1 — and the repaired plan passes validate()."""
+    _repair_repo(repo)
+    _write_test_files(repo, _route_test_files())
+    plan = _route_plan()
+
+    r0 = run_validate(repo, plan)
+    assert r0.returncode == 1
+    assert "exercises route-items" in r0.stderr
+
+    r = run_repair(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "closure-repair: T2 depends_on += ['T1']" in r.stdout
+
+    repaired = json.loads((repo / "tasks" / "plan.json").read_text())
+    assert repaired["tasks"][1]["depends_on"] == ["T1"]
+
+    r1 = run_validate(repo, repaired)
+    assert r1.returncode == 0, r1.stderr
+    assert "plan ok" in r1.stdout
+
+
+def test_repair_import_adds_exact_edge(repo):
+    """Case 2: a module-level import of a CREATED-only file (absent on disk)
+    forces the importing task to depend on its owner."""
+    _repair_repo(repo)
+    _write_test_files(repo, {
+        "test_a.py": "def test_one():\n    pass\n",
+        "test_b.py": "import src.a\n\ndef test_two():\n    pass\n",
+    })
+    r = run_repair(repo, _route_plan())
+    assert r.returncode == 0, r.stderr
+    assert "closure-repair: T2 depends_on += ['T1']" in r.stdout
+    repaired = json.loads((repo / "tasks" / "plan.json").read_text())
+    assert repaired["tasks"][1]["depends_on"] == ["T1"]
+
+
+def test_repair_browser_gains_all_tasks(repo):
+    """Case 3: D-64 — a Playwright test can observe any inventory file, so its
+    task's closure must equal the whole DAG; repair adds the missing tasks."""
+    _repair_repo(repo)
+    _write_test_files(repo, {
+        "test_a.py": "def test_one():\n    pass\n",
+        "test_b.py": "import playwright.sync_api\n\ndef test_two():\n    pass\n",
+    })
+    r = run_repair(repo, _route_plan())
+    assert r.returncode == 0, r.stderr
+    assert "closure-repair: T2 depends_on += ['T1']" in r.stdout
+    repaired = json.loads((repo / "tasks" / "plan.json").read_text())
+    assert repaired["tasks"][1]["depends_on"] == ["T1"]
+
+
+def test_repair_reverts_cycle_and_validate_still_rejects(repo):
+    """Case 4: adding the computed edge would close a cycle (T1→T2 plus the
+    needed T2→T1) — the repair reverts it (byte-unchanged) and validate()
+    still rejects the plan with the closure error, exactly as without repair."""
+    _repair_repo(repo)
+    _write_test_files(repo, _route_test_files())
+    plan = _route_plan()
+    plan["tasks"][0]["depends_on"] = ["T2"]          # T1 → T2 …
+    original = json.dumps(plan)                       # … would cycle on add-back
+
+    r = run_repair(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "closure-repair" not in r.stdout
+    assert (repo / "tasks" / "plan.json").read_text() == original
+
+    r0 = run_validate(repo, plan)
+    assert r0.returncode == 1
+    assert "exercises route-items" in r0.stderr       # the unrepairable rejection
+
+
+def test_repair_clean_plan_is_byte_unchanged_noop(repo):
+    """Case 5: a plan whose closures are already satisfied is left exactly
+    as-is — no stdout, no file write."""
+    _repair_repo(repo)
+    _write_test_files(repo, {
+        "test_a.py": "def test_one():\n    pass\n",
+        "test_b.py": "def test_two():\n    pass\n",
+    })
+    plan = good_plan()
+    original = json.dumps(plan)
+    r = run_repair(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+    assert (repo / "tasks" / "plan.json").read_text() == original
+
+
+def test_repair_never_self_deps():
+    """Case 6: the self-dependency guard in _repair_apply — a need whose only
+    owner IS the task (defense-in-depth; can't arise from _closure_needs, where
+    a task is always in its own closure) adds nothing."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "validate_plan_under_test", VALIDATE_PLAN)
+    vp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vp)
+    tasks = [{
+        "id": "T1", "file": "src/a.py", "depends_on": [],
+        "brief": "a", "contracts": [], "tests": [],
+    }]
+    repairs = vp._repair_apply(tasks, lambda ts: [("T1", frozenset({"T1"}))])
+    assert repairs == []
+    assert tasks[0]["depends_on"] == []
+
+
+def test_repair_satisfied_closure_adds_no_edge(repo):
+    """Case 7: when the computed owner is already in the closure, nothing is
+    added — the satisfied case must stay byte-identical, not re-add."""
+    _repair_repo(repo)
+    _write_test_files(repo, _route_test_files())
+    plan = _route_plan()
+    plan["tasks"][1]["depends_on"] = ["T1"]
+    original = json.dumps(plan)
+    r = run_repair(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+    assert (repo / "tasks" / "plan.json").read_text() == original

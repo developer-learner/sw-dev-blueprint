@@ -78,6 +78,18 @@ Modes:
                                             trivial_construct. The output is fed
                                             to --merge-subtree exactly as an EM
                                             subtree reply would be.
+  validate-plan.py --repair-closures [PLAN]
+                                            best-effort closure auto-repair: add
+                                            the depends_on edges the route /
+                                            import / browser-D-64 closure checks
+                                            would reject on — only when the add
+                                            keeps the DAG acyclic — write the
+                                            plan, print each edge. Exit 0 always;
+                                            validate() runs after and is the
+                                            authority. Monotone (edges only push
+                                            tests later), so it can never make a
+                                            bad plan pass. Run by orchestrate.sh
+                                            before the gate.
 """
 import ast
 import hashlib
@@ -1484,6 +1496,200 @@ def cmd_diagnosis(path):
     print(d["verdict"])
 
 
+# ---------------------------------------------------------------------------
+# Closure auto-repair (D-64 browser / import / route). Best-effort PRE-PASS,
+# run by orchestrate.sh BEFORE the validate() gate. Only ADDS depends_on edges
+# (monotone: tests schedule later, never earlier) and only when the addition
+# keeps the DAG acyclic; a would-be cycle is reverted and left for validate()
+# to reject — identical to no repair. validate() runs UNCHANGED after this and
+# is the authority: a bug here can never make a bad plan pass, only fail to
+# repair. Detection mirrors validate()'s route/import/browser closure checks.
+# ---------------------------------------------------------------------------
+def _closure_needs(tasks, contracts):
+    """[(task_id, frozenset(owner_ids the task's closure must gain))] for every
+    mapped test whose route/import/browser closure is unsatisfied. Mirrors the
+    validate() closure checks (route ~L497, import ~L562, browser D-64 ~L603)."""
+    deps_of = {t["id"]: set(t.get("depends_on", [])) for t in tasks}
+
+    def ancestors(tid):
+        out, stack = set(), list(deps_of.get(tid, ()))
+        while stack:
+            d = stack.pop()
+            if d in out:
+                continue
+            out.add(d)
+            stack.extend(deps_of.get(d, ()))
+        return out
+
+    all_ids = {t["id"] for t in tasks}
+    cache = {}
+
+    def tree(path):
+        if path not in cache:
+            try:
+                cache[path] = ast.parse(Path(path).read_text(), filename=path)
+            except (OSError, SyntaxError):
+                cache[path] = None
+        return cache[path]
+
+    route_by_key = {}
+    for r in contracts.get("routes", []):
+        if isinstance(r, dict) and {"id", "method", "path"} <= set(r):
+            route_by_key[(r["method"].upper(), r["path"])] = r["id"]
+
+    def match_route(method, path):
+        rid = route_by_key.get((method, path))
+        if rid:
+            return rid
+        p = path.strip("/").split("/")
+        for (m, tmpl), rid in route_by_key.items():
+            if m != method:
+                continue
+            ts = tmpl.strip("/").split("/")
+            if len(ts) == len(p) and all(
+                a == b or (a[:1] == "{" and a[-1:] == "}")
+                for a, b in zip(ts, p)
+            ):
+                return rid
+        return None
+
+    claimers = {}
+    for t in tasks:
+        for cid in t.get("contracts", []):
+            claimers.setdefault(cid, set()).add(t["id"])
+
+    def test_routes(nodeid):
+        p = nodeid.split("::")[0]
+        func = nodeid.split("::")[-1].split("[")[0]
+        tr = tree(p)
+        if tr is None:
+            return set()
+        fn = next((n for n in ast.walk(tr)
+                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and n.name == func), None)
+        if fn is None:
+            return set()
+        hit = set()
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in HTTP_METHODS
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)):
+                rid = match_route(node.func.attr.upper(), node.args[0].value)
+                if rid:
+                    hit.add(rid)
+        return hit
+
+    module_owner = {}
+    for t in tasks:
+        if t["file"].endswith(".py") and not Path(t["file"]).exists():
+            module_owner[t["file"][:-3].replace("/", ".")] = t["id"]
+
+    def file_imports(tf):
+        tr = tree(tf)
+        if tr is None:
+            return set()
+        found = set()
+        for node in tr.body:
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name in module_owner:
+                        found.add(a.name)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module in module_owner:
+                    found.add(node.module)
+                for a in node.names:
+                    cand = f"{node.module}.{a.name}"
+                    if cand in module_owner:
+                        found.add(cand)
+        return found
+
+    def is_browser(tf):
+        tr = tree(tf)
+        if tr is None:
+            return False
+        for node in ast.walk(tr):
+            if isinstance(node, ast.Import) and any(
+                    a.name.split(".")[0] == "playwright" for a in node.names):
+                return True
+            if (isinstance(node, ast.ImportFrom) and node.module
+                    and node.module.split(".")[0] == "playwright"):
+                return True
+        return False
+
+    needs = []
+    for t in tasks:
+        closure = {t["id"]} | ancestors(t["id"])
+        test_files = {n.split("::")[0] for n in t.get("tests", [])}
+        for nodeid in t.get("tests", []):
+            for rid in test_routes(nodeid):
+                owners = claimers.get(rid, set())
+                if owners and not (owners & closure):
+                    needs.append((t["id"], frozenset(owners)))
+        for tf in test_files:
+            for mod in file_imports(tf):
+                owner = module_owner[mod]
+                if owner not in closure:
+                    needs.append((t["id"], frozenset({owner})))
+        if closure != all_ids and any(is_browser(tf) for tf in test_files):
+            needs.append((t["id"], frozenset(all_ids - closure)))
+    return needs
+
+
+def _repair_apply(tasks, needs_fn):
+    """Add depends_on edges to satisfy needs_fn(tasks), skipping any addition
+    that would create a cycle (toposort None). Fixpoint, bounded by task count.
+    Returns [(task_id, [added_ids])]. Pure w.r.t. detection — unit-tested with a
+    synthetic needs_fn."""
+    by_id = {t["id"]: t for t in tasks}
+    repairs = []
+    for _ in range(len(tasks) + 1):
+        progressed = False
+        for tid, owners in needs_fn(tasks):
+            task = by_id.get(tid)
+            if task is None:
+                continue
+            add = {o for o in owners if o != tid and o in by_id} \
+                - set(task["depends_on"])
+            if not add:
+                continue
+            saved = list(task["depends_on"])
+            task["depends_on"] = sorted(set(task["depends_on"]) | add)
+            if toposort(tasks) is None:
+                task["depends_on"] = saved          # would cycle — leave for validate()
+            else:
+                repairs.append((tid, sorted(add)))
+                progressed = True
+        if not progressed:
+            break
+    return repairs
+
+
+def cmd_repair_closures(plan_path=None):
+    """Best-effort closure auto-repair. Adds the depends_on edges the
+    route/import/browser closure checks would otherwise reject on (when
+    acyclic), writes the repaired plan, and prints each edge added. Exit 0
+    always — validate() is the authority and runs after."""
+    p = Path(plan_path) if plan_path else PLAN
+    try:
+        plan = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    tasks = plan.get("tasks")
+    if not isinstance(tasks, list) or not all(
+            isinstance(t, dict) and "id" in t and "file" in t
+            and isinstance(t.get("depends_on"), list) for t in tasks):
+        return
+    contracts = load_json(CONTRACTS, "frozen contracts")
+    repairs = _repair_apply(tasks, lambda ts: _closure_needs(ts, contracts))
+    if repairs:
+        p.write_text(json.dumps(plan, indent=2) + "\n")
+        for tid, add in repairs:
+            print(f"closure-repair: {tid} depends_on += {add}")
+
+
 def main(argv):
     if not argv:
         validate()
@@ -1528,6 +1734,9 @@ def main(argv):
         return
     if argv[0] == "--construct-one-file" and len(argv) == 3:
         cmd_construct_one_file(argv[1], argv[2])
+        return
+    if argv[0] == "--repair-closures" and len(argv) <= 2:
+        cmd_repair_closures(argv[1] if len(argv) == 2 else None)
         return
     if argv[0] == "--diagnosis" and len(argv) == 2:
         cmd_diagnosis(argv[1])
