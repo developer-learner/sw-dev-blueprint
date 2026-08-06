@@ -62,6 +62,12 @@ AGENT_TIMEOUT=60
 MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"
 SWBP_RUN_BUDGET=0
 FROZEN_V=$(cat "$APPROVED/VERSION")
+# Wave 1: ensure_plan's extracted prompt references EM_TASK_KEYS (defined in
+# orchestrate.sh's init, not exported) — mirror it by extraction, same
+# anti-drift rule as the function extract() above. Fail loudly if the
+# assignment shape changes.
+EM_TASK_KEYS=$(sed -n "s/^EM_TASK_KEYS='\(.*\)'$/\1/p" "$REPO/scripts/orchestrate.sh")
+[ -n "$EM_TASK_KEYS" ] || { echo "drive-plan: could not extract EM_TASK_KEYS from orchestrate.sh" >&2; exit 65; }
 mkdir -p "$STATE_DIR" "$TASK_STATE" "$BRIEF_DIR" "$LOG_DIR" "$ESC_DIR"
 
 die() { echo "FAIL: $*" >&2; exit 1; }
