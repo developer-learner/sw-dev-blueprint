@@ -1224,8 +1224,16 @@ def _load_plan_lenient(path, what="prior plan"):
         fail([f"{what}: not a plan-shaped object (non-empty tasks array required)"])
     errs = []
     for i, t in enumerate(plan["tasks"]):
-        if not isinstance(t, dict) or TASK_REQUIRED - set(t):
-            errs.append(f"{what}: tasks[{i}] is not a complete task object")
+        if not isinstance(t, dict):
+            errs.append(f"{what}: tasks[{i}] is not an object")
+            continue
+        missing = TASK_REQUIRED - set(t)
+        if missing:
+            extra = sorted(set(t) - TASK_REQUIRED)
+            errs.append(
+                f"{what}: tasks[{i}] missing required key(s) {sorted(missing)}"
+                + (f"; has unexpected {extra} (task keys are exactly "
+                   f"{sorted(TASK_REQUIRED)})" if extra else ""))
             continue
         if not isinstance(t["id"], str) or not isinstance(t["file"], str):
             errs.append(f"{what}: tasks[{i}]: id and file must be strings")
@@ -1390,9 +1398,15 @@ def cmd_merge_subtree(prior_path, subtree_path, scope_path):
         sub_tasks = sub["tasks"]
         errs = []
         for i, t in enumerate(sub_tasks):
-            if not isinstance(t, dict) or TASK_REQUIRED - set(t):
-                errs.append(f"subtree reply: tasks[{i}] is not a complete "
-                            f"task object")
+            if not isinstance(t, dict):
+                errs.append(f"subtree reply: tasks[{i}] is not an object")
+            elif TASK_REQUIRED - set(t):
+                missing = sorted(TASK_REQUIRED - set(t))
+                extra = sorted(set(t) - TASK_REQUIRED)
+                errs.append(
+                    f"subtree reply: tasks[{i}] missing required key(s) {missing}"
+                    + (f"; has unexpected {extra} (task keys are exactly "
+                       f"{sorted(TASK_REQUIRED)})" if extra else ""))
         if errs:
             fail(errs)
         sub_files = [t["file"] for t in sub_tasks]
