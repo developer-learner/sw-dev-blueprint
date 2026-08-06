@@ -912,6 +912,7 @@ ensure_plan() {
     # authority, so this can only turn a rejectable plan into a passing one it
     # was one edge away from, never mask a real defect. Prints each edge added.
     [ -f tasks/plan.json ] && python3 scripts/validate-plan.py --repair-closures tasks/plan.json || true
+    [ -f tasks/plan.json ] && python3 scripts/validate-plan.py --repair-contracts tasks/plan.json || true
     if [ -f tasks/plan.json ] && verrs=$(python3 scripts/validate-plan.py 2>&1); then
       echo "plan ok (v$(python3 -c 'import json;print(json.load(open("tasks/plan.json"))["version"])'))"
       if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then

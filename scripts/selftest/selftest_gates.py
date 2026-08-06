@@ -4925,3 +4925,166 @@ def test_repair_satisfied_closure_adds_no_edge(repo):
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == ""
     assert (repo / "tasks" / "plan.json").read_text() == original
+
+def run_repair_contracts(repo, plan):
+    plan_path = repo / "tasks" / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--repair-contracts",
+         "tasks/plan.json"],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_contract_repair_drops_unknown_and_gate_passes(repo):
+    """Case 1: an invented dotted id ('src.api.models' — the archived corpus
+    class) is dropped, known ids stay byte-identical in order, the repaired
+    plan passes validate()."""
+    _write_test_files(repo, _route_test_files())
+    plan = good_plan()
+    plan["tasks"][0]["contracts"] = ["src.a", "src.api.models"]
+
+    r0 = run_validate(repo, plan)
+    assert r0.returncode == 1
+    assert "unknown contract id" in r0.stderr
+
+    r = run_repair_contracts(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "contract-repair: T1 dropped ['src.api.models']" in r.stdout
+
+    repaired = json.loads((repo / "tasks" / "plan.json").read_text())
+    assert repaired["tasks"][0]["contracts"] == ["src.a"]
+
+    r1 = run_validate(repo, repaired)
+    assert r1.returncode == 0, r1.stderr
+    assert "plan ok" in r1.stdout
+
+
+def test_contract_repair_drops_entry_point_prefix(repo):
+    """Case 2: the invented 'entry_point:' prefix form (archived corpus 235145
+    class) is dropped; the registered ids around it survive."""
+    _write_test_files(repo, _route_test_files())
+    plan = good_plan()
+    plan["tasks"][1]["contracts"] = [
+        "src.b:handler", "route-items", "entry_point:src.b"]
+
+    r = run_repair_contracts(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "contract-repair: T2 dropped ['entry_point:src.b']" in r.stdout
+
+    repaired = json.loads((repo / "tasks" / "plan.json").read_text())
+    assert repaired["tasks"][1]["contracts"] == ["src.b:handler", "route-items"]
+
+
+def test_contract_repair_clean_plan_is_byte_unchanged_noop(repo):
+    """Case 3: a plan whose contracts are all registered is left exactly as-is
+    — no stdout, no file write."""
+    _write_test_files(repo, _route_test_files())
+    plan = good_plan()
+    original = json.dumps(plan)
+    r = run_repair_contracts(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+    assert (repo / "tasks" / "plan.json").read_text() == original
+
+
+def test_contract_repair_is_idempotent(repo):
+    """Case 4: repairing the repaired plan is a no-op — one clean run per
+    plan, and a second run leaves it byte-identical."""
+    _write_test_files(repo, _route_test_files())
+    plan = good_plan()
+    plan["tasks"][0]["contracts"] = ["src.api.models", "src.a"]
+
+    r = run_repair_contracts(repo, plan)
+    assert r.returncode == 0, r.stderr
+    once = (repo / "tasks" / "plan.json").read_text()
+
+    r2 = subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--repair-contracts",
+         "tasks/plan.json"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert r2.returncode == 0, r2.stderr
+    assert r2.stdout.strip() == ""
+    assert (repo / "tasks" / "plan.json").read_text() == once
+
+
+def test_contract_repair_empty_after_drop_stays_valid(repo):
+    """Case 5: a task whose ONLY entries were invented ends with an empty
+    contracts array — explicitly valid per the EM prompt — and validate()
+    still passes."""
+    _write_test_files(repo, _route_test_files())
+    plan = good_plan()
+    plan["tasks"][0]["contracts"] = ["src.api.models"]
+
+    r = run_repair_contracts(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "contract-repair: T1 dropped ['src.api.models']" in r.stdout
+
+    repaired = json.loads((repo / "tasks" / "plan.json").read_text())
+    assert repaired["tasks"][0]["contracts"] == []
+
+    r1 = run_validate(repo, repaired)
+    assert r1.returncode == 0, r1.stderr
+    assert "plan ok" in r1.stdout
+
+
+def test_contract_repair_reports_each_task_separately(repo):
+    """Case 6: multiple tasks with inventions each get their own
+    contract-repair line; each task keeps only its registered ids."""
+    _write_test_files(repo, _route_test_files())
+    plan = good_plan()
+    plan["tasks"][0]["contracts"] = ["src.a", "src.bogus"]
+    plan["tasks"][1]["contracts"] = ["src.b:handler", "src.static.app.js"]
+
+    r = run_repair_contracts(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "contract-repair: T1 dropped ['src.bogus']" in r.stdout
+    assert "contract-repair: T2 dropped ['src.static.app.js']" in r.stdout
+
+    repaired = json.loads((repo / "tasks" / "plan.json").read_text())
+    assert repaired["tasks"][0]["contracts"] == ["src.a"]
+    assert repaired["tasks"][1]["contracts"] == ["src.b:handler"]
+
+
+def test_contract_repair_malformed_plan_noop(repo):
+    """Case 7: a plan without a usable tasks array is left alone — exit 0, no
+    file write, no crash (the call site is '|| true'; validate() judges)."""
+    plan_path = repo / "tasks" / "plan.json"
+    plan_path.write_text('{"version": 1, "not_tasks": []}')
+    original = plan_path.read_text()
+    r = subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--repair-contracts",
+         "tasks/plan.json"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+    assert plan_path.read_text() == original
+
+
+ORCHESTRATE = SCRIPTS / "orchestrate.sh"
+DRIVE_PLAN_SH = SCRIPTS / "selftest" / "drive-plan.sh"
+
+
+def test_repair_contracts_wired_before_gate():
+    orch = ORCHESTRATE.read_text()
+    closure = ("[ -f tasks/plan.json ] && python3 scripts/validate-plan.py "
+               "--repair-closures tasks/plan.json || true")
+    contracts = ("[ -f tasks/plan.json ] && python3 scripts/validate-plan.py "
+                 "--repair-contracts tasks/plan.json || true")
+    assert contracts in orch, "repair-contracts pre-gate call site missing"
+    assert orch.count("--repair-contracts") == 1, (
+        "exactly one repair-contracts call site"
+    )
+    lines = orch.splitlines()
+    for i, ln in enumerate(lines):
+        if closure in ln:
+            assert contracts in lines[i + 1], (
+                "repair-contracts must sit directly after --repair-closures "
+                "inside ensure_plan (drive-plan extracts the whole body — the "
+                "EM_TASK_KEYS regression class)"
+            )
+            break
+    else:
+        raise AssertionError("closure pre-pass line missing")

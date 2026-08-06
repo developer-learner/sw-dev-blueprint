@@ -1690,6 +1690,35 @@ def cmd_repair_closures(plan_path=None):
             print(f"closure-repair: {tid} depends_on += {add}")
 
 
+def cmd_repair_contracts(plan_path=None):
+    """Best-effort contract-id repair. Drops any task contracts entry that is
+    not a registered id in contracts.json (monotone: removal only), writes
+    the repaired plan, and prints each id dropped. Exit 0 always — validate()
+    is the authority and runs after."""
+    p = Path(plan_path) if plan_path else PLAN
+    try:
+        plan = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    tasks = plan.get("tasks")
+    if not isinstance(tasks, list) or not all(
+            isinstance(t, dict) and "id" in t
+            and isinstance(t.get("contracts"), list) for t in tasks):
+        return
+    contracts = load_json(CONTRACTS, "frozen contracts")
+    known = contract_ids(contracts)
+    drops = []
+    for t in tasks:
+        keep = [c for c in t["contracts"] if c in known]
+        if len(keep) != len(t["contracts"]):
+            drops.append((t["id"], sorted(set(t["contracts"]) - known)))
+            t["contracts"] = keep
+    if drops:
+        p.write_text(json.dumps(plan, indent=2) + "\n")
+        for tid, dropped in drops:
+            print(f"contract-repair: {tid} dropped {dropped}")
+
+
 def main(argv):
     if not argv:
         validate()
@@ -1737,6 +1766,9 @@ def main(argv):
         return
     if argv[0] == "--repair-closures" and len(argv) <= 2:
         cmd_repair_closures(argv[1] if len(argv) == 2 else None)
+        return
+    if argv[0] == "--repair-contracts" and len(argv) <= 2:
+        cmd_repair_contracts(argv[1] if len(argv) == 2 else None)
         return
     if argv[0] == "--diagnosis" and len(argv) == 2:
         cmd_diagnosis(argv[1])
