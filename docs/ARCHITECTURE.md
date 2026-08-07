@@ -140,11 +140,11 @@ DELETE /api/v1/[resource]/:id       delete
 
 - **D-06**: EARS format for acceptance criteria
 - **D-26**: Schema-validated artifact handoffs; plan.json validation gate
-- **D-31**: Versioned re-freeze — frozen spec changes only via human-approved delta
+- **D-31**: Versioned re-freeze — frozen spec changes only via delta (human approval removed by D-121)
 - **D-32**: INV-4 — test-visible surface ⊆ ERD-locked surface
 - **D-38**: TPM shuttle scripts (`tpm-pack.sh`/`tpm-unpack.sh`)
 - **D-39**: Agent-mode TPM — scoped repo access via `tpm-agent.sh`
-- **D-42**: Refreeze approval without a terminal — `--diff`/`--approve <hash>`
+- **D-42**: Refreeze approval without a terminal — `--diff`/`--approve <hash>` (both superseded by D-121: no approval flag exists, `--diff` remains)
 - **D-49**: `tpm-pack.sh` defaults to stdout; conductor relays the bundle verbatim
 - **D-51**: Initial freeze collects node-ids statically
 - **D-54**: Spec-drift policy — test surface is binding; ERD prose is advisory

@@ -33,7 +33,7 @@ mkdir -p scripts/.approved/incoming/tests
 cp examples/minimal-spec/{PRD.md,ERD.md,contracts.json} scripts/.approved/incoming/
 cp examples/minimal-spec/tests/storage_tests.py scripts/.approved/incoming/tests/test_storage.py
 cp examples/minimal-spec/tests/api_tests.py     scripts/.approved/incoming/tests/test_api.py
-scripts/refreeze.sh scripts/.approved/incoming    # human-approved diff → frozen v1
+scripts/refreeze.sh scripts/.approved/incoming    # auto-applies on green preflights → frozen v1 (D-121)
 scripts/orchestrate.sh                            # (inside the Linux VM) builds it
 ```
 

@@ -4,7 +4,8 @@
 > One-time setup. Every new project bootstraps from this.
 >
 > **Execution model:** Tell the TPM (frontier LLM, web chat) what you want. It
-> writes the PRD, the contracts, and the tests. You approve the freeze. The shell
+> writes the PRD, the contracts, and the tests. The freeze applies itself once
+> every mechanical preflight is green (D-121). The shell
 > orchestrator drives an EM (mid-tier) to plan and a local coder to execute, one
 > file per task. Git is the undo. The frozen tests are the truth.
 
@@ -119,7 +120,8 @@ CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside the conduc
                         → batched TPM bundle → refreeze → affected subtree resumes)
 ```
 
-**Your touch-points:** give the TPM chat your intent, approve the refreeze diff,
+**Your touch-points:** give the TPM chat your intent, read the refreeze diff
+(`--diff` prints it; apply is automatic on green preflights, D-121),
 run the orchestrator, and answer escalation batches by carrying
 `.pipeline-state/escalations/BATCH.md` to the TPM chat. See `docs/ESCALATION.md`.
 
@@ -141,7 +143,7 @@ symbolic validation — and the pieces map onto the usual split:
 `scripts/.approved/contracts.json` is the domain model those checks reason
 over: entities (`files`, `routes`, `schemas`, `errors`, `externals`,
 `entry_points`, `ui`), their relationships, and the constraints binding them —
-versioned, frozen, human-approved. Call it an ontology if the word helps.
+versioned, frozen, gate-approved at freeze time (D-121). Call it an ontology if the word helps.
 
 Two things this repo learned that the general form of the idea leaves out:
 
@@ -179,8 +181,8 @@ see BLUEPRINT.md Rule 9.
 1. **TPM (web chat)** — describe what you want in the frontier chat. It returns
    the PRD, the ERD with machine-readable `contracts.json`, and the test suite.
    Save them under `scripts/.approved/incoming/` and run `scripts/refreeze.sh`:
-   review the diff, approve with y — the spec freezes here (version-stamped,
-   hash-pinned; no agent can touch it).
+   `--diff` previews; the freeze auto-applies on green preflights (D-121) —
+   the spec is version-stamped, hash-pinned; no agent can touch it.
 2. **`scripts/orchestrate.sh`** — drives everything: the EM emits a validated
    task plan, the coder receives one prompt per task (host-side HTTP, no
    filesystem access — the shell writes the reply to disk), mapped frozen

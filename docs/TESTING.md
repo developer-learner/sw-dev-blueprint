@@ -12,8 +12,9 @@
 
 The TPM (frontier LLM in a web chat) authors the frozen suite alongside
 the ERD/contracts, at spec time, **before the implementation exists**
-(INV-1, D-31). They enter the repo only via `scripts/refreeze.sh` under
-a human-approved diff, and are hash-pinned in
+(INV-1, D-31). They enter the repo only via `scripts/refreeze.sh` — which
+auto-applies once every mechanical preflight is green (D-121) — and are
+hash-pinned in
 `scripts/.approved/frozen-manifest`. No agent — coder, EM, or conductor
 — may create or modify a file under `tests/`. See `docs/TPM-ROLE.md`
 for the top tier's job description and `docs/ESCALATION.md` for how

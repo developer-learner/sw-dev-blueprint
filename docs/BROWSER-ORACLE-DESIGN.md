@@ -124,7 +124,7 @@ Sandbox container (unchanged contract: repo RO, lanes RW, --network none)
   trades a speed problem for a correctness problem on local non-thinking
   models).
 - **refreeze flow:** UI tests enter like every other frozen artifact —
-  staged, diffed, human-approved, hash-pinned.
+  staged, diffed, auto-applied on green preflights (D-121), hash-pinned.
 
 ## Acceptance (this template milestone is done when)
 

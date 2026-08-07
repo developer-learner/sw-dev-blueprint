@@ -52,7 +52,7 @@ Testing:      pytest
 │   ├── phase-gate.sh     # lane + integrity gate (INV-2/3, frozen spec)
 │   ├── orchestrate.sh    # shell-driven task-DAG conductor (owns all procedure)
 │   ├── validate-plan.py  # plan.json gate (atomicity, DAG, coverage, mapping)
-│   ├── refreeze.sh       # ONLY path frozen TPM artifacts change (D-95 auto on preflight-green; --approve <hash> D-42; --interactive opt-in)
+│   ├── refreeze.sh       # ONLY path frozen TPM artifacts change (auto-applies when all mechanical preflights are green; no human approval step, D-121)
 │   ├── check-test-surface.py  # INV-4: tests ⊆ locked surface
 │   ├── schemas/          # plan / diagnosis / contracts schemas
 │   └── .approved/        # frozen TPM spec: PRD, ERD, contracts, VERSION, hashes
@@ -97,7 +97,7 @@ Testing:      pytest
 - **No agent authors or edits tests** — the suite is TPM-authored, installed only via `scripts/refreeze.sh`, and hash-pinned in `scripts/.approved/frozen-manifest` (INV-1, now structural: tests are written before the code exists, by a tier that never sees the implementation).
 - **Do not cross role boundaries** — Coder writes exactly the one file its task names (`phase-gate.sh task`); EM writes `tasks/` only (`phase-gate.sh em`). Post-D-53 enforcement is shell-owned: the model reply never touches the filesystem — the shell parses it and writes to exactly the task's declared path. `scripts/phase-gate.sh` re-verifies the working tree after every phase and fails closed on any out-of-lane change (INV-2).
 - **Tests observe only the locked surface** — imports from `contracts.entry_points`, routes from `contracts.routes` (INV-4, checked at freeze time by `scripts/check-test-surface.py`).
-- **Do not skip escalation** — retry → EM consult → brief/plan revision (bounded) → batched TPM bundle → human-approved re-freeze. All counters shell-owned. See `docs/ESCALATION.md`.
+- **Do not skip escalation** — retry → EM consult → brief/plan revision (bounded) → batched TPM bundle → re-freeze (gate-approved: refreeze auto-applies on green preflights, D-121). All counters shell-owned. See `docs/ESCALATION.md`.
 - **Sync the stack before every freeze (D-50).** The TPM chooses the tech stack at spec time. Before running `refreeze.sh`, check the staged tests' imports against `requirements.txt` and add anything missing (this edit is in the conductor's lane). The sandbox image rebuilds itself when `requirements.txt` or `Containerfile` change — never manually delete or rebuild images.
 - **TPM shuttle is a verbatim relay (D-49).** When the CEO asks for the TPM prompt/briefing: run `scripts/tpm-pack.sh` and reproduce its ENTIRE stdout in your reply, unabridged — never summarize it, never point the CEO at repo files (the bundle is assembled from several sources; it cannot be hand-collected), never claim it is "in the clipboard." When the CEO pastes a TPM reply back: write it to a temp file unmodified and run `scripts/tpm-unpack.sh <file>` — do not re-type or edit it.
 
@@ -123,8 +123,8 @@ the TPM web chat (see `docs/TPM-ROLE.md`) and enter via `scripts/refreeze.sh`.
 
 | Tier | Where it runs | Produces | Writes |
 |------|---------------|----------|--------|
-| **CEO** (human) | conversation with the conductor | business intent, freeze approvals | — (runs no commands, D-40) |
-| **TPM** (frontier LLM) | web chat (D-38) or scoped repo agent via `scripts/tpm-agent.sh` (D-39) | PRD, ERD + `contracts.json`, the test suite | nothing directly — installed via `scripts/refreeze.sh` (human-approved diff, D-42), frozen in `scripts/.approved/` + `tests/` |
+| **CEO** (human) | conversation with the conductor | business intent | — (runs no commands, D-40) |
+| **TPM** (frontier LLM) | web chat (D-38) or scoped repo agent via `scripts/tpm-agent.sh` (D-39) | PRD, ERD + `contracts.json`, the test suite | nothing directly — installed via `scripts/refreeze.sh` (auto-applies on green preflights, D-121), frozen in `scripts/.approved/` + `tests/` |
 | **Conductor** | any chat agent the CEO chooses (Claude Code, OpenCode's Build, or a plain shell) | status reports, script invocations | docs/session notes; denied on `tests/`, `scripts/`, `src/`, control plane (D-40) |
 | **EM** (mid-tier LLM) | one HTTP completion via `scripts/llm-call.sh` (D-53) | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) — the shell writes both, not the model | `tasks/**` only |
 | **Coder** (local LLM) | one HTTP completion via `scripts/llm-call.sh` (D-53) | one file per task, sentinel-wrapped in the reply | that one file only (gate-enforced) |
@@ -145,12 +145,11 @@ gathers whatever context a call needs into the prompt and writes the reply to
 disk itself (D-53); there is no agent harness in the execution loop at all,
 only in the CEO-facing conductor seat, which never touches trusted state.
 
-**The loop (all steps conductor-driven; the CEO only talks and approves):**
-TPM spec frozen (`refreeze.sh` — D-95 auto on preflight-green; conductor
-`--diff` / `--approve <hash>` behind its own ask-prompt when a pre-review
-audit is wanted, D-42; `--interactive` opt-in for the rare eyeball case) →
-`scripts/orchestrate.sh` → EM emits plan → validated → coder executes one
-task at a time → mapped frozen tests + gate after each → full frozen suite
+**The loop (all steps conductor-driven; the CEO only talks):**
+TPM spec frozen (`refreeze.sh` — applies automatically when every
+mechanical preflight is green, D-95/D-121; `--diff` shows a read-only
+preview) → `scripts/orchestrate.sh` → EM emits plan → validated → coder executes
+one task at a time → mapped frozen tests + gate after each → full frozen suite
 green = done. Failures climb the escalation ladder (`docs/ESCALATION.md`);
 spec problems come back as a batched bundle for the TPM web chat and
 re-enter via `refreeze.sh`.
@@ -214,7 +213,7 @@ Seven rules for agents working in this repo, derived from failures in prior sess
 
 | Date | Mistake | Guard Added |
 |------|---------|-------------|
-| [DATE] | [What went wrong] | [What rule prevents recurrence] |
+| 2026-08-07 | The D-121 back-port rolled `refreeze.sh` (approval flags removed) into the blueprint but left its state-describing docs still instructing the removed `--approve`/`--interactive` paths — same gap that remained in testchat's own CEO-PLAYBOOK.md/TPM-ROLE.md after D-121 landed there (its commit only touched CLAUDE.md + DECISIONS). A gate removal is only complete when no doc tells an operator to invoke the removed capability. | When a flag/mode is removed from any control-plane script, sweep ALL state-describing docs (BLUEPRINT.md, CLAUDE.md, README.md, docs/CEO-PLAYBOOK.md, docs/TPM-ROLE.md, docs/ESCALATION.md, docs/ARCHITECTURE.md, docs/TESTING.md, examples/) for the removed tokens (`--approve`, `--interactive`, `human-approved diff`, `approve the freeze`) — not just the doc that names the decision. Historical decision records (DECISIONS.md, correction log, project-trail) stay verbatim; a supersede note goes on the ARCHITECTURE index line. The blueprint's D-121 docs reconcile is instantiated in this commit and the same sweep is owed to testchat's CEO-PLAYBOOK.md/TPM-ROLE.md. |
 | 2026-08-06 | Phase 3 replay harness bypassed `llm-call.sh` and set an arbitrary `max_tokens: 4096`: all 5 replayed EM calls died with `finish=length` (archived plan replies were 6–7k tokens). The pipeline had already solved this exact class (M11a output cap, M17 budget tightening, llm-call.sh default 8192 + per-call SWBP_MAX_OUTPUT) — the harness just went around it. CEO ruling on hearing this: an EM/coder failure is never re-run blind. | **CARDINAL RULE:** never re-run a failed EM/coder call expecting a different result — halt, read the failure message, fix the root cause (harness/context/spec), then exactly one clean run. Any replay that measures model calls goes through `llm-call.sh` (schema + fence-strip + profile budget), never a raw reimplementation with a hand-set cap. |
 | 2026-08-06 | A control-plane variable added to `orchestrate.sh` init (Wave 1's `EM_TASK_KEYS`) was never mirrored in the selftest harness that extracts and exercises those functions: `drive-plan.sh` pulls `ensure_plan` out of `orchestrate.sh` at run time (anti-drift design) and runs with `set -u`, so every drive-plan selftest died with an unbound-variable error from the moment the variable landed. The failures were mislabeled "pre-existing/environmental" twice — the full `scripts/selftest/` suite had not been run after the change, and a stash-based clean-tree check exonerated only the current working diff, not the committed baseline that introduced the regression. (Incident details: testchat correction log 2026-08-06.) | Three guards: (1) run the full `scripts/selftest/` suite after ANY `orchestrate.sh`/`validate-plan.py` change — the app suite and prompt measurements never exercise the control plane, and the control-plane suite is the template's own gate; (2) any variable added to `orchestrate.sh` init must be mirrored in `drive-plan.sh`'s env section, extracted by the same sed anti-drift pattern with a fail-loud guard on shape change; (3) never classify a failing selftest as "pre-existing/environmental" from its name or history — reproduce it on a baseline BEFORE the suspect commit (a stash clears only the working diff) and read the failure message itself. |
 | 2026-08-04 | The 2026-08-04 review pass recommended retiring D-88 (quote-brittle smoke-check preflight) and trimming `check-test-surface.py`'s selector blocklist as "overengineering," alleging a "fires on legitimate runs" cost. Neither claim had evidence: D-88's originating D-entry carries an explicit anti-retirement clause ("do not suggest: demoting to advisory once 'we haven't seen a false positive in N freezes'"), and D-58/D-32 document that each selector regex maps 1:1 to a 2026-07-11 audit finding. The recommendation was withdrawn at stop-and-ask before any code changed. The same pass also mislabeled the correction log as human-maintained and deferred writing its own row. | D-117 records the keep-decision and the standing rule: before recommending retirement of any hard gate, read its originating D-entry's "Do not suggest" section and apply the D-115 measured-cost admission rule — "the check is complex" is not evidence of false-positive cost, and a gate with no track record either way is unretirable until an incident or measured evidence says otherwise. Meta-rule for this log: the LLM maintains it — a correction-row omission is itself a correction. |
