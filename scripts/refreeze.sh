@@ -10,41 +10,30 @@
 #      D-87 static-asset reachability, D-88 smoke-check quotes, INV-4 test
 #      surface, staged-test parse+lint+determinism),
 #   2. shows the full diff and its DIFF-SHA,
-#   3. by default: proceeds automatically when every preflight is green
-#      (D-95 — the y/N approval was ceremonial once every material check
-#      already ran; a verdict nobody consumes is not a gate). Halts on any
-#      preflight failure with the specific finding.
-#      Explicit paths remain: --diff (print diff, apply nothing),
-#      --approve <sha> (D-42 hash-bound apply), --interactive (opt-in y/N
-#      for the rare "I want to eyeball this one" case).
+#   3. applies automatically when every preflight is green (D-95, then
+#      D-121): the y/N and hash-bound approvals were ceremonial once every
+#      material check already ran — a verdict nobody consumes is not a gate.
+#      The CEO ruling (2026-08-06): "remove ceo approval for refreeze run —
+#      the business ceo or human can't add any value there." There is NO
+#      human approval step in this lane; halts on any preflight failure
+#      with the specific finding. --diff remains as a read-only dry-run
+#      preview (prints the diff and DIFF-SHA, applies nothing).
 #   4. applies the files, re-collects test node-ids, records the delta,
 #   5. re-freezes: bumps VERSION, regenerates the hash manifest,
 #      commits [refreeze vN].
 #
 # Wrongness gets a protocol instead of a workaround: frozen artifacts can be
-# legitimately revised (bounded, versioned, human-approved) and can NEVER be
+# legitimately revised (bounded, versioned, gate-approved) and can NEVER be
 # silently mutated — every gate run verifies the frozen-manifest, fail-closed.
 #
 # Usage:
 #   refreeze.sh [<staging-dir>]             auto: preflight-green → apply
-#                                           (D-95 default; halts on any
+#                                           (D-95/D-121; halts on any
 #                                           preflight failure)
 #   refreeze.sh --diff [<staging-dir>]      validate + print full diff and its
-#                                           DIFF-SHA, apply nothing (agent flow
-#                                           step 1: conductor shows this to the CEO)
-#   refreeze.sh --approve <sha> [<staging-dir>]
-#                                           explicit-apply, D-42: the sha
-#                                           must match the recomputed diff hash;
-#                                           the conductor's "ask" permission
-#                                           prompt on this exact command is the
-#                                           human gate — the CEO approves a
-#                                           command carrying the hash of the
-#                                           diff they read.
-#   refreeze.sh --interactive [<staging-dir>]
-#                                           opt-in y/N (the pre-D-95 default).
-#                                           For the rare case where the CEO
-#                                           wants to eyeball this specific
-#                                           freeze before it applies.
+#                                           DIFF-SHA, apply nothing (read-only
+#                                           preview; the install is the same
+#                                           command without the flag)
 # Default staging dir: scripts/.approved/incoming
 # Staging layout — ONLY the changed files, full new content, paths preserved:
 #   PRD.md  ERD.md  ERD-DELTA.md  contracts.json
@@ -63,19 +52,19 @@ cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 APPROVED="scripts/.approved"
 
 MODE="auto"
-APPROVE_SHA=""
 case "${1:-}" in
   --diff)        MODE="diff"; shift ;;
-  --approve)     MODE="approve"; APPROVE_SHA="${2:?usage: refreeze.sh --approve <sha> [staging-dir]}"; shift 2 ;;
-  --interactive) MODE="interactive"; shift ;;
 esac
 IN="${1:-$APPROVED/incoming}"
 
 die() { echo "REFREEZE FAIL: $*" >&2; exit 1; }
 
+case "${1:-}" in
+  --approve|--interactive)
+    die "the ${1} approval path was removed (D-121) — refreeze installs by gate verdict once every preflight is green; use --diff for a read-only preview" ;;
+esac
+
 [ -d "$IN" ] || die "staging dir not found: $IN (see docs/ESCALATION.md for the layout)"
-[ "$MODE" != "interactive" ] || [ -t 0 ] \
-  || die "--interactive requires a terminal — drop the flag (D-95 auto mode) or use --diff / --approve <sha> (D-42)"
 
 V=$(cat "$APPROVED/VERSION" 2>/dev/null || echo 0)
 NEW=$((V + 1))
@@ -229,6 +218,22 @@ if [ "$SPEC_DELTA_KIND" = "nonbehavioral" ] \
    && [ -f "$IN/ERD.md" ] \
    && [ ! -f "$IN/ERD-DELTA.md" ]; then
   RETIRE_ERD_DELTA=1
+fi
+
+# --- S5: state-changing ACs must carry post-condition clauses -----------
+# The M29 defect class: ACs specifying mechanisms ("SIGINT the process")
+# without observable postconditions ("such that the health endpoint returns
+# 503") produce tests that cannot fail and implementations that can fail
+# silently (5 of 8 process-lifecycle ACs; correction log 2026-07-25). Any
+# staged PRD or ERD-DELTA carrying a state-changing AC without a "such that"
+# clause is rejected before it enters the frozen spec.
+S5_FILES=""
+for _s5f in PRD.md ERD-DELTA.md; do
+  [ -f "$IN/$_s5f" ] && S5_FILES="$S5_FILES $IN/$_s5f"
+done
+if [ -n "$S5_FILES" ]; then
+  python3 scripts/check-ac-postconditions.py $S5_FILES \
+    || die "S5 rejected: state-changing AC(s) without 'such that' post-condition clause — every AC that spawns/terminates/kills/unloads/evicts/deletes/releases/clears/cancels MUST name an observable check"
 fi
 
 # --- Sanity-check incoming contracts against the schema's structural core ---
@@ -432,11 +437,42 @@ if [ -n "$SWEEP_FILES" ]; then
   fi
 fi
 
+# --- S7: ERD section size advisory (brief overrun warning) ---------------
+# An ERD section exceeding 1200 chars will likely overflow MAX_BRIEF_CHARS
+# (2500) downstream when the EM builds the plan brief. Advisory, not a halt:
+# the right response may be to restructure, split, or accept the risk — a
+# TPM call. Fires only on staged files (the approved copy was checked at
+# its own freeze).
+for _s7f in ERD.md ERD-DELTA.md; do
+  [ -f "$IN/$_s7f" ] || continue
+  _S7_OUT=$(python3 - "$IN/$_s7f" 1200 <<'PYS7'
+import re, sys
+path, limit = sys.argv[1], int(sys.argv[2])
+text = open(path).read()
+parts = re.split(r"^(## .+)$", text, flags=re.MULTILINE)
+for i in range(1, len(parts), 2):
+    body = parts[i + 1] if i + 1 < len(parts) else ""
+    chars = len(body.strip())
+    if chars > limit:
+        print(f"  {parts[i].strip()}: {chars} chars (threshold {limit})")
+PYS7
+  )
+  if [ -n "$_S7_OUT" ]; then
+    echo ""
+    echo "  WARNING (S7): ERD section(s) in $_s7f exceed 1200 chars — downstream"
+    echo "  plan briefs will likely exceed MAX_BRIEF_CHARS and trigger the plan"
+    echo "  gate's mass rejection. Trim or restructure before the pipeline burns"
+    echo "  EM calls against an impossible brief:"
+    echo "$_S7_OUT"
+  fi
+done
+
 if [ "$MODE" = "diff" ]; then
   echo ""
   echo "DIFF-SHA: $DIFF_SHA"
-  echo "(nothing applied — to install, the CEO approves:"
-  echo "  scripts/refreeze.sh --approve $DIFF_SHA $IN)"
+  echo "(nothing applied — dry-run preview. Install by re-running without flags:"
+  echo "  scripts/refreeze.sh $IN)"
+  echo "  The mechanical preflights above ARE the verdict (D-121)."
   exit 0
 fi
 
@@ -473,43 +509,25 @@ PYEOF
   )
 fi
 
-# --- Approval gate ---
-# D-95 auto (default): every mechanical preflight above already died on hard
-# failure — reaching this line means the artifact IS approved by the gates
-# the pipeline actually enforces. The old interactive y/N prompted the CEO
-# after that point, on artifacts the gates had already cleared, on a diff
-# the CEO could not judge (~62KB re-touched ERDs turned it into a
-# rubber-stamp for five straight testchat refreezes v60–v64; CEO delegated
-# the approval to the model 2026-07-27 as an interim). Auto proceeds; the
-# DIFF-SHA above is the audit trail; the escalation paths that DO summon
-# the CEO stay untouched (--diff for pre-review, --approve <sha> for
-# D-42 explicit apply, --interactive for opt-in eyeball).
-case "$MODE" in
-  approve)
-    # D-42: hash-bound explicit apply. The human gate is the conductor's
-    # "ask" permission prompt on this exact command — approving it means
-    # approving THIS diff, because the sha on the command line must equal
-    # the hash of the recomputed diff.
-    [ "$APPROVE_SHA" = "$DIFF_SHA" ] \
-      || die "diff hash mismatch — staging changed since the CEO reviewed it (expected $DIFF_SHA, got $APPROVE_SHA). Re-run --diff and re-approve."
-    echo ""
-    echo "approved via diff-hash $DIFF_SHA (D-42)"
-    ;;
-  interactive)
-    # Opt-in eyeball path — rare, for freezes the CEO chose to inspect.
-    echo ""
-    printf 'Approve this delta and re-freeze as v%s? [y/N] ' "$NEW"
-    read -r ANSWER
-    case "$ANSWER" in
-      y|Y|yes|YES) ;;
-      *) echo "aborted — nothing changed"; exit 1 ;;
-    esac
-    ;;
-  auto)
-    echo ""
-    echo "auto-approved (D-95): all mechanical preflights green; DIFF-SHA $DIFF_SHA"
-    ;;
-esac
+# Pre-apply snapshot of the frozen contracts: the M35 smoke red-check
+# compares against THIS, not against the installed copy (which by the time
+# the check runs has already been overwritten by the apply).
+mkdir -p .pipeline-state
+cp "$APPROVED/contracts.json" .pipeline-state/refreeze-old-contracts.json 2>/dev/null || true
+
+# --- Apply decision ---
+# D-95 (auto default) then D-121 (2026-08-06): every mechanical preflight
+# above already died on hard failure — reaching this line means the artifact
+# IS approved by the gates the pipeline actually enforces. The old y/N
+# prompted the CEO after that point, on artifacts the gates had already
+# cleared, on a diff the CEO could not judge (~62KB re-touched ERDs turned
+# it into a rubber-stamp for five straight testchat refreezes v60–v64).
+# D-121 removes the remaining approval paths (--approve hash-bound apply,
+# --interactive y/N) entirely, per the CEO ruling that a human verdict adds
+# no value on a machine-authored diff whose gates already ran. The DIFF-SHA
+# above is the audit trail.
+echo ""
+echo "auto-approved (D-121): all mechanical preflights green; DIFF-SHA $DIFF_SHA"
 
 # --- Apply ---
 for f in $CHANGED_DOCS; do
@@ -616,6 +634,7 @@ rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-r
 # acceptance per D-65, carried-forward behavior), so this surfaces a claim
 # for the human, never a halt. changed_tests includes REMOVED node-ids —
 # filter to ids that exist in the new frozen set before running.
+rm -f .cache/redcheck-already-green
 RED_IDS=$(python3 - "$NEW" "$APPROVED/test-nodeids" <<'PYEOF'
 import json, sys
 from pathlib import Path
@@ -643,6 +662,7 @@ passed = sorted(t["nodeid"] for t in r.get("tests", [])
                 if t.get("outcome") == "passed")
 print("  red-check ran via: sandbox")
 if passed:
+    open(".cache/redcheck-already-green", "w").close()
     print("")
     print("  WARNING (D-75): delta test(s) ALREADY PASS with no implementation done:")
     for n in passed:
@@ -656,6 +676,55 @@ PYEOF
   rm -f .cache/redcheck-report.json
 else
   echo "red-before-green check (D-75): delta carries no runnable test changes — nothing to check"
+fi
+
+# --- M35: smoke checks must be RED on the pre-implementation tree ------------
+# A smoke check that passes on the tree BEFORE the milestone runs gates
+# nothing: the task can be accepted with zero implementation. testchat M35:
+# the app.js smoke check grepped three pre-existing symbols
+# (webToggle/pollStatus/queueRender) and T1 sailed through with no real
+# acceptance — the milestone's new behavior was never probed. So a NEW or
+# CHANGED smoke check must fail on the current tree. Exemptions: D-65
+# no_edit_files (their acceptance is green-on-unchanged BY CONTRACT), and a
+# re-freeze over a tree that already carries an earlier run's implementation
+# (the D-75 marker above — then the check passes for the right reason and the
+# warning is the verdict, not a halt).
+if [ "$CONTRACTS_STAGED" = "1" ] && [ -f "$IN/contracts.json" ]; then
+  NEW_SMOKE=$(python3 - ".pipeline-state/refreeze-old-contracts.json" "$IN/contracts.json" <<'PYEOF'
+import json, sys
+old = json.load(open(sys.argv[1])).get("smoke_checks", {})
+new = json.load(open(sys.argv[2])).get("smoke_checks", {})
+no_edit = set(json.load(open(sys.argv[2])).get("no_edit_files", []))
+for f, cmd in sorted(new.items()):
+    if f in no_edit:
+        continue
+    if old.get(f) != cmd:
+        print(f + "\t" + cmd)
+PYEOF
+)
+  if [ -n "$NEW_SMOKE" ]; then
+    echo "smoke red-check (M35): running new/changed smoke check(s) against the current tree..."
+    SMOKE_RED_FAIL=0
+    while IFS=$'\t' read -r _f _cmd; do
+      [ -n "$_f" ] || continue
+      if [ -n "$_cmd" ] && scripts/sandbox-run.sh -- sh -c "$_cmd" >/dev/null 2>&1; then
+        echo "  NOT RED: smoke check for $_f PASSES on the current tree — it gates nothing:"
+        echo "    $_cmd"
+        SMOKE_RED_FAIL=1
+      else
+        echo "  red as expected: $_f"
+      fi
+    done <<< "$NEW_SMOKE"
+    if [ "$SMOKE_RED_FAIL" = "1" ]; then
+      if [ -e .cache/redcheck-already-green ]; then
+        echo "  WARNING: tree already carries this delta's implementation — a passing smoke"
+        echo "  check here proves nothing about the milestone; re-verify after the run."
+      else
+        die "a staged smoke check passes on the pre-implementation tree — it gates nothing (M35: a vacuous app.js smoke check accepted T1 with zero evidence). Reauthor the check to probe the delta's new behavior so it is red before the milestone runs, or pin real tests."
+      fi
+    fi
+    rm -f .cache/redcheck-already-green
+  fi
 fi
 
 # --- Re-freeze: hash-pin every frozen artifact, bump VERSION ---

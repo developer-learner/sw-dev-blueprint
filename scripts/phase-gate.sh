@@ -85,7 +85,8 @@ if [ -f "$FROZEN_VERSION" ]; then
   done < "$FROZEN"
   # INV-1 addition coverage: the hash loop catches modification and deletion
   # of pinned files, but a hand-added new tests/test_x.py is invisible to it
-  # and would run in the full frozen suite. Cross-check: every git-visible
+  # and would run in the frozen suite (and the on-demand --full-suite
+  # regression check). Cross-check: every git-visible
   # file (tracked + untracked, gitignore-respecting) under tests/ must be
   # pinned. gitignored bytecode caches (__pycache__/*, .pytest_cache/*) are
   # runtime artifacts and correctly excluded here.

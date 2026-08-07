@@ -48,13 +48,18 @@
      "method": {
       "type": "string"
      },
-     "path": {
-      "type": "string",
-      "description": "Path template, e.g. '/api/v1/items/{item_id}'."
+      "path": {
+       "type": "string",
+       "description": "Path template, e.g. '/api/v1/items/{item_id}'."
+      },
+      "file": {
+       "type": "string",
+       "pattern": "^src/.*\\.py$",
+       "description": "D-120: the source file that owns this entry — the file whose code must satisfy it. Enables the mechanical contracts-delta slice for the EM's per-milestone context. entry_points need no tag (dotted paths derive their file)."
+      }
      }
-    }
-   },
-   "description": "HTTP surface. INV-4: any route-shaped string a test sends a request to must appear here."
+    },
+    "description": "HTTP surface. INV-4: any route-shaped string a test sends a request to must appear here."
   },
   "schemas": {
    "type": "array",
@@ -68,13 +73,18 @@
       "type": "string",
       "description": "e.g. 'schema:Item'."
      },
-     "fields": {
-      "type": "object",
-      "description": "Field name -> type, as locked by the TPM."
+      "fields": {
+       "type": "object",
+       "description": "Field name -> type, as locked by the TPM."
+      },
+      "file": {
+       "type": "string",
+       "pattern": "^src/.*\\.py$",
+       "description": "D-120: the source file that owns this entry."
+      }
      }
-    }
-   },
-   "description": "Data shapes crossing a seam (request/response bodies, persisted records)."
+    },
+    "description": "Data shapes crossing a seam (request/response bodies, persisted records)."
   },
   "errors": {
    "type": "array",
@@ -91,13 +101,18 @@
      "status": {
       "type": "integer"
      },
-     "shape": {
-      "type": "object",
-      "description": "Error body shape."
+      "shape": {
+       "type": "object",
+       "description": "Error body shape."
+      },
+      "file": {
+       "type": "string",
+       "pattern": "^src/.*\\.py$",
+       "description": "D-120: the source file that owns this entry."
+      }
      }
-    }
-   },
-   "description": "Locked error responses."
+    },
+    "description": "Locked error responses."
   },
   "externals": {
    "type": "array",
@@ -129,6 +144,13 @@
     }
    },
    "description": "D-56: every external interface the spec makes assumptions about (third-party APIs, model output formats, wire protocols) must be declared here with a captured real response. refreeze.sh fails the freeze if a declared capture is missing. Mocks and tests derive from captures, never from the TPM's memory of how the dependency probably behaves."
+  },
+  "test_mapping": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "M35 correction: the TPM's frozen declaration of behavioral ownership — maps each delta node-id to the inventory file that behaviorally owns it (one entry per node-id; the file must be in the files array). The plan gate places every pinned node-id at the task owning its pinned file, wherever the EM mapped it; placement is derived from this data, never from a heuristic or an EM interpretation. check-spec-delta.py rejects keys that are not frozen node-ids and targets outside the files array."
   },
   "smoke_checks": {
    "type": "object",

@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -421,6 +422,454 @@ def test_route_test_mapped_to_claiming_task_passes(repo):
     )
     r = run_validate(repo, plan)
     assert r.returncode == 0, r.stderr
+
+
+def test_browser_test_auto_placed_at_final_task(repo):
+    """M35: a browser (Playwright-importing) test mapped to a NON-final task
+    is moved to the DAG's final task by the gate, not rejected — the
+    placement is deterministic, so it is gate-owned (D-64). The fix is
+    written back to tasks/plan.json so downstream readers see it."""
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_browser.py").write_text(
+        "from playwright.sync_api import sync_playwright\n"
+        "def test_sees_page():\n"
+        "    assert True\n"
+    )
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
+        "tests/test_a.py::test_one\n"
+        "tests/test_b.py::test_two\n"
+        "tests/test_browser.py::test_sees_page\n"
+    )
+    plan = good_plan()
+    plan["tasks"][0]["tests"] = [
+        "tests/test_a.py::test_one",
+        "tests/test_browser.py::test_sees_page",
+    ]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "gate-owned placement (test_mapping/D-64)" in r.stderr
+    assert "T1 -> T2" in r.stderr
+    on_disk = json.loads((repo / "tasks" / "plan.json").read_text())
+    placed = [t["id"] for t in on_disk["tasks"]
+              if "tests/test_browser.py::test_sees_page" in t["tests"]]
+    assert placed == ["T2"]
+    assert "tests/test_browser.py::test_sees_page" not in on_disk["tasks"][0]["tests"]
+
+
+def test_browser_test_already_on_final_task_untouched(repo):
+    """A browser test already mapped to the final task is left alone."""
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_browser.py").write_text(
+        "from playwright.sync_api import sync_playwright\n"
+        "def test_sees_page():\n"
+        "    assert True\n"
+    )
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
+        "tests/test_a.py::test_one\n"
+        "tests/test_b.py::test_two\n"
+        "tests/test_browser.py::test_sees_page\n"
+    )
+    plan = good_plan()
+    plan["tasks"][1]["tests"] = [
+        "tests/test_b.py::test_two",
+        "tests/test_browser.py::test_sees_page",
+    ]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+    on_disk = json.loads((repo / "tasks" / "plan.json").read_text())
+    by_id = {t["id"]: t for t in on_disk["tasks"]}
+    assert "tests/test_browser.py::test_sees_page" in by_id["T2"]["tests"]
+
+
+def test_d64_leaves_mapping_pinned_nodeid_at_owner(repo):
+    """M35b regression: a node-id PINNED by contracts.test_mapping to a
+    NON-final task stays at its pinned owner — D-64 is the fallback for
+    unpinned browser node-ids only, and must not sweep a pinned one off
+    its owner. (The v84 run died here: T1's pinned tests were moved to
+    the final task, the emptied plan was persisted after "plan ok", and
+    the re-validation on the committed plan failed the acceptance gate.)"""
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_browser.py").write_text(
+        "from playwright.sync_api import sync_playwright\n"
+        "def test_sees_page():\n"
+        "    assert True\n"
+    )
+    (repo / "scripts" / ".approved" / "test-nodeids").write_text(
+        "tests/test_a.py::test_one\n"
+        "tests/test_b.py::test_two\n"
+        "tests/test_browser.py::test_sees_page\n"
+    )
+    contracts = dict(CONTRACTS)
+    contracts["test_mapping"] = {
+        "tests/test_a.py::test_one": "src/a.py",
+        "tests/test_b.py::test_two": "src/b.py",
+        "tests/test_browser.py::test_sees_page": "src/a.py",
+    }
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(contracts))
+    plan = good_plan()
+    plan["tasks"][0]["tests"] = ["tests/test_browser.py::test_sees_page"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+    on_disk = json.loads((repo / "tasks" / "plan.json").read_text())
+    by_id = {t["id"]: t for t in on_disk["tasks"]}
+    assert "tests/test_browser.py::test_sees_page" in by_id["T1"]["tests"]
+    assert "tests/test_browser.py::test_sees_page" not in by_id["T2"]["tests"]
+
+
+def test_mapping_pins_nodeid_to_owner_task(repo):
+    """M35 correction: a node-id pinned by contracts.test_mapping is
+    accepted at the task owning its pinned file, wherever the EM mapped
+    it — declared behavioral ownership is the authority, not the EM's
+    guess. The receiving task must still gate something itself (the
+    non-vacuous invariant), so a smoke check covers the emptied task."""
+    contracts = dict(CONTRACTS, smoke_checks={"src/b.py": "grep -q . src/b.py"})
+    contracts["test_mapping"] = {
+        "tests/test_b.py::test_two": "src/a.py",
+        "tests/test_a.py::test_one": "src/a.py",
+    }
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(contracts))
+    plan = good_plan()
+    plan["tasks"][1]["tests"] = [
+        "tests/test_b.py::test_two",      # mis-placed by the EM on T2
+    ]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "(pinned by test_mapping)" in r.stderr
+    assert "T2 -> T1" in r.stderr
+    on_disk = json.loads((repo / "tasks" / "plan.json").read_text())
+    by_id = {t["id"]: t for t in on_disk["tasks"]}
+    assert "tests/test_b.py::test_two" in by_id["T1"]["tests"]
+    assert "tests/test_b.py::test_two" not in by_id["T2"]["tests"]
+
+
+def test_mapping_pinned_owner_outside_plan_fails(repo):
+    """A node-id pinned to a file no task owns is a spec defect: the
+    declaration says this delta must exercise a file it does not plan."""
+    contracts = dict(CONTRACTS)
+    contracts["test_mapping"] = {"tests/test_b.py::test_two": "src/nope.py"}
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(contracts))
+    r = run_validate(repo, good_plan())
+    assert r.returncode == 1
+    assert "no task in this plan owns" in r.stderr
+
+
+def test_task_gating_nothing_rejected(repo):
+    """M35 correction: a task with no mapped test and no smoke check can
+    never be proven or disproven — its acceptance is theater and a broken
+    implementation would sail through green. Rejected."""
+    plan = good_plan()
+    plan["tasks"][0]["tests"] = []
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "every task needs an acceptance signal" in r.stderr
+    assert "src/a.py" in r.stderr
+
+
+def run_spec_delta(staging, approved, repo, version=2):
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "check-spec-delta.py"),
+         "--staging", str(staging), "--approved", str(approved),
+         "--repo", str(repo), "--current-version", str(version)],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+@pytest.fixture
+def delta_repo(tmp_path):
+    """approved spec at v2 + a staging dir holding the v3 delta candidate."""
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    staging = tmp_path / "scripts" / ".approved" / "incoming"
+    staging.mkdir()
+    (approved / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py"],
+        "changed_files": [],
+    }))
+    (approved / "test-nodeids").write_text(
+        "tests/test_a.py::test_one\n")
+    (approved / "PRD.md").write_text("# PRD\nAC-1\n")
+    return tmp_path, approved, staging
+
+
+def _stage_delta(staging, mapping):
+    (staging / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py"],
+        "changed_files": ["src/a.py"],
+        "test_mapping": mapping,
+    }))
+    (staging / "ERD-DELTA.md").write_text(
+        "## Changed acceptance criteria\nAC-1\n"
+        "## Superseded acceptance criteria\nNone\n"
+        "## Changed files\nsrc/a.py\n"
+        "## Test-to-file mapping\nAC-1 -> src/a.py\n"
+    )
+
+
+def test_spec_delta_valid_test_mapping_passes(delta_repo):
+    """A test_mapping whose keys are frozen node-ids and whose pinned
+    files are in contracts.files is well-formed."""
+    _, approved, staging = delta_repo
+    _stage_delta(staging, {"tests/test_a.py::test_one": "src/a.py"})
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "behavioral"
+
+
+def test_spec_delta_mapping_unknown_nodeid_fails(delta_repo):
+    """A mapping key that is not a frozen node-id is a spec defect: the
+    gate cannot honor a placement for a test that does not exist."""
+    _, approved, staging = delta_repo
+    _stage_delta(staging, {"tests/test_a.py::test_ghost": "src/a.py"})
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 1
+    assert "unknown node-id" in r.stderr
+
+
+def test_spec_delta_mapping_file_outside_inventory_fails(delta_repo):
+    """A mapping pinned to a file outside contracts.files claims the
+    delta exercises work the freeze does not plan."""
+    _, approved, staging = delta_repo
+    _stage_delta(staging, {"tests/test_a.py::test_one": "src/nope.py"})
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 1
+    assert "not in contracts.files" in r.stderr
+
+
+def _stage_pinned_delta(staging, routes):
+    (staging / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py"],
+        "changed_files": ["src/a.py"],
+        "routes": routes,
+    }))
+    (staging / "ERD-DELTA.md").write_text(
+        "## Changed acceptance criteria\nAC-1\n"
+        "## Superseded acceptance criteria\nNone\n"
+        "## Changed files\nsrc/a.py\n"
+        "## Test-to-file mapping\nAC-1 -> src/a.py\n"
+    )
+
+
+def test_spec_delta_new_pinned_entry_passes_pin_gate(delta_repo):
+    """A new or changed entry carrying a src/*.py file pin (D-120) is
+    well-formed — the pin is what makes the milestone slice possible."""
+    _, approved, staging = delta_repo
+    _stage_pinned_delta(staging, [
+        {"id": "route:GET /a", "path": "/a", "method": "GET",
+         "file": "src/a.py"},
+    ])
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 0, r.stderr
+
+
+def test_spec_delta_new_unpinned_entry_fails_pin_gate(delta_repo):
+    """A new or changed entry without a file pin defeats the slice: the EM
+    would silently lose the entry's body when files outside the milestone
+    inventory are trimmed."""
+    _, approved, staging = delta_repo
+    _stage_pinned_delta(staging, [
+        {"id": "route:GET /a", "path": "/a", "method": "GET"},
+    ])
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 1
+    assert "carries no file pin" in r.stderr
+    assert "(D-120)" in r.stderr
+
+
+def test_spec_delta_carried_unchanged_entry_exempt_from_pin_gate(delta_repo):
+    """Carried-unchanged entries (byte-identical to the frozen copy) keep
+    the slice safe without a pin: nothing new is being added, so nothing
+    can be lost by the trim."""
+    _, approved, staging = delta_repo
+    (approved / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py"],
+        "changed_files": [],
+        "routes": [{"id": "route:GET /a", "path": "/a", "method": "GET"}],
+    }))
+    _stage_pinned_delta(staging, [
+        {"id": "route:GET /a", "path": "/a", "method": "GET"},
+        {"id": "route:POST /b", "path": "/b", "method": "POST",
+         "file": "src/a.py"},
+    ])
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 0, r.stderr
+
+
+# --- D-122: DELTA-vN bookkeeping completeness -------------------------------
+# The DELTA-vN file is the orchestrator's ONLY scope source (subtree reset,
+# verdict scope, red-check). A freeze whose changes the bookkeeping cannot
+# see is lost to the run — the v82 class: ERD-DELTA.md claimed a test
+# UPDATED while the freeze staged no bytes for its file, so DELTA-v82
+# recorded changed_tests: [] and the milestone's stated work was invisible.
+# Ergo: a claimed update must ship its bytes, and a contracts change must
+# carry visible scope (declared changed_files, staged test bytes, or entry
+# deltas) or the freeze is a lie-green risk.
+
+def _stage_claim_delta(staging, marker="(UPDATED)"):
+    (staging / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py"],
+        "changed_files": ["src/a.py"],
+        "test_mapping": {"tests/test_a.py::test_one": "src/a.py"},
+    }))
+    (staging / "ERD-DELTA.md").write_text(
+        "## Changed acceptance criteria\nAC-1\n"
+        "## Superseded acceptance criteria\nNone\n"
+        "## Changed files\nsrc/a.py\n"
+        "## Test-to-file mapping\n"
+        f"- tests/test_a.py::test_one {marker} -> src/a.py\n"
+    )
+
+
+def test_spec_delta_updated_claim_without_staged_bytes_fails(delta_repo):
+    """The v82 shape: ERD-DELTA.md marks a frozen test UPDATED but the
+    freeze stages no bytes for its file — the DELTA-vN bookkeeping would
+    record no test change, and the milestone's claim vanishes from scope."""
+    _, approved, staging = delta_repo
+    _stage_claim_delta(staging)
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 1
+    assert "(D-122)" in r.stderr
+    assert "tests/test_a.py" in r.stderr
+
+
+def test_spec_delta_updated_claim_with_staged_bytes_passes(delta_repo):
+    """A claimed update that actually stages changed bytes for the test's
+    file is complete: the DELTA-vN walk will see it."""
+    _, approved, staging = delta_repo
+    repo = staging.parents[2]
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_a.py").write_text("def test_one():\n    assert True\n")
+    (staging / "tests").mkdir()
+    (staging / "tests" / "test_a.py").write_text("def test_one():\n    assert False\n")
+    _stage_claim_delta(staging)
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 0, r.stderr
+
+
+def test_spec_delta_invisible_contract_change_fails(delta_repo):
+    """A freeze touching only bookkeeping-invisible contract keys (e.g.
+    test_mapping) with no declared changed_files, no staged test bytes, and
+    no entry deltas would bookkeep as changed_contract_ids: [] — the
+    orchestrator could never scope the freeze at all."""
+    _, approved, staging = delta_repo
+    (staging / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py"],
+        "changed_files": [],
+        "test_mapping": {"tests/test_a.py::test_one": "src/a.py"},
+    }))
+    (staging / "ERD-DELTA.md").write_text(
+        "## Changed acceptance criteria\nnone\n"
+        "## Superseded acceptance criteria\nNone\n"
+        "## Changed files\nnone\n"
+        "## Test-to-file mapping\nunchanged\n"
+    )
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 1
+    assert "invisible to the DELTA-vN bookkeeping" in r.stderr
+    assert "(D-122)" in r.stderr
+
+
+def test_spec_delta_invisible_contract_change_with_visible_scope_passes(delta_repo):
+    """The same invisible-key change is complete once the freeze declares
+    the changed files the mapping pins — the bookkeeping sees the scope."""
+    _, approved, staging = delta_repo
+    (staging / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py"],
+        "changed_files": ["src/a.py"],
+        "test_mapping": {"tests/test_a.py::test_one": "src/a.py"},
+    }))
+    (staging / "ERD-DELTA.md").write_text(
+        "## Changed acceptance criteria\nnone\n"
+        "## Superseded acceptance criteria\nNone\n"
+        "## Changed files\nsrc/a.py\n"
+        "## Test-to-file mapping\n"
+        "- tests/test_a.py::test_one -> src/a.py\n"
+    )
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 0, r.stderr
+
+
+def run_contracts_delta(contracts_path, tmp_path):
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "contracts-delta.py"), str(contracts_path)],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+
+
+def test_contracts_delta_no_pins_emits_full_file(tmp_path):
+    """Inert activation: while no entry carries a file pin (the backfill is
+    TPM-seat, D-120), the generator must emit the full file — the trim must
+    not bite before the pins land."""
+    source = tmp_path / "contracts.json"
+    payload = {
+        "files": ["src/a.py"],
+        "routes": [{"id": "route:GET /a", "path": "/a", "method": "GET"}],
+        "entry_points": ["src.main:app"],
+    }
+    source.write_text(json.dumps(payload))
+    r = run_contracts_delta(source, tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == json.dumps(payload)
+
+
+def test_contracts_delta_slices_out_of_scope_pins(tmp_path):
+    """With pins present, the slice keeps in-inventory pinned entries and
+    every unpinned entry in full, reduces out-of-inventory pins to a
+    one-line index, and derives entry_points to their owning module (D-120)."""
+    source = tmp_path / "contracts.json"
+    source.write_text(json.dumps({
+        "files": ["src/a.py"],
+        "changed_files": ["src/a.py"],
+        "routes": [
+            {"id": "route:GET /a", "path": "/a", "method": "GET",
+             "file": "src/a.py"},
+            {"id": "route:GET /b", "path": "/b", "method": "GET",
+             "file": "src/b.py"},
+            {"id": "route:GET /old", "path": "/old", "method": "GET"},
+        ],
+        "schemas": [
+            {"id": "schema:A", "file": "src/a.py"},
+            {"id": "schema:B", "file": "src/b.py"},
+        ],
+        "errors": [
+            {"id": "err:A", "file": "src/a.py"},
+            {"id": "err:B", "file": "src/b.py", "shape": "plain text"},
+        ],
+        "ui": [
+            {"id": "ui:keep", "testid": "keep", "file": "src/a.py"},
+            {"id": "ui:drop", "testid": "drop", "file": "src/b.py"},
+            {"id": "ui:carry", "testid": "carry"},
+        ],
+        "entry_points": [
+            "src.a:app",
+            "src.b:handler",
+            "not-a-module",
+        ],
+    }))
+    r = run_contracts_delta(source, tmp_path)
+    assert r.returncode == 0, r.stderr
+    kept = json.loads(r.stdout)
+    assert kept["files"] == ["src/a.py"]
+    assert [e["id"] for e in kept["routes"]] == [
+        "route:GET /a", "route:GET /old"]
+    assert [e["id"] for e in kept["schemas"]] == ["schema:A"]
+    assert [e["id"] for e in kept["errors"]] == ["err:A"]
+    assert [e["id"] for e in kept["ui"]] == ["ui:keep", "ui:carry"]
+    assert kept["entry_points"] == ["src.a:app", "not-a-module"]
+    assert kept["out_of_scope"] == [
+        "route:GET /b — GET /b; pinned src/b.py (outside this milestone)",
+        "schema:B; pinned src/b.py (outside this milestone)",
+        "err:B — plain text; pinned src/b.py (outside this milestone)",
+        "ui:drop — testid drop; pinned src/b.py (outside this milestone)",
+        "src.b:handler — module outside this milestone (import path exists)",
+    ]
+
+
+def test_contracts_delta_missing_input_fails(tmp_path):
+    r = run_contracts_delta(tmp_path / "absent.json", tmp_path)
+    assert r.returncode == 1
 
 
 def test_route_check_fails_open_on_dynamic_path(repo):
@@ -945,15 +1394,14 @@ DRIVE_CONSULT = SCRIPTS / "selftest" / "drive-consult.sh"
 VALID_DIAG = {"verdict": "decomposition_wrong", "reason": "T2 split is wrong"}
 
 
-def run_consult(tmp_path, replies, task_id="T7"):
+def run_consult(tmp_path, replies, task_id="T7", evidence="failed 2 attempts on src/x.py"):
     rdir = tmp_path / "replies"
     rdir.mkdir()
     for i, reply in enumerate(replies, 1):
         raw = reply if isinstance(reply, str) else json.dumps(reply)
         (rdir / str(i)).write_text(raw)
     return subprocess.run(
-        ["bash", str(DRIVE_CONSULT), str(tmp_path), task_id,
-         "failed 2 attempts on src/x.py"],
+        ["bash", str(DRIVE_CONSULT), str(tmp_path), task_id, evidence],
         capture_output=True, text=True,
     )
 
@@ -1068,6 +1516,7 @@ cd {tmp_path}
 STATE_DIR=.pipeline-state
 ESC_DIR=$STATE_DIR/escalations
 FROZEN_V=76
+APPROVED=scripts/.approved
 mkdir -p "$ESC_DIR"
 
 {fn_body}
@@ -1089,6 +1538,316 @@ evidence="two failed coder attempts on src/x.py; token cap + mixed-mode reply"
     text = bundle.read_text()
     assert "caps-exhausted" in text
     assert "T1" in text
+
+
+def test_escalation_bundle_carries_milestone_slice(tmp_path):
+    """D-118: a TPM-bound escalation bundle must carry the milestone slice
+    it revises against — the standing summary (D-116) and the frozen
+    ERD-DELTA.md (D-107). The D-117 audit found the bundle shipped the task
+    entry and evidence but not the delta; a contract_or_test_wrong verdict
+    was handed to the TPM without the spec text it must correct."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    fn = re.search(r"^package_escalation\(\) \{.*?^\}$", source, re.M | re.S)
+    assert fn, "package_escalation not found — extractor drift"
+    fn_body = fn.group(0)
+    branch = re.search(
+        r'if \[ "\$revs" -ge "\$MAX_BRIEF_REVISIONS" \]; then'
+        r".*?"
+        r'package_escalation "caps-exhausted"[^\n]*',
+        source, re.S,
+    )
+    assert branch, "exhausted-allowance branch not found — extractor drift"
+    call_line = re.search(
+        r'package_escalation "caps-exhausted"[^\n]*', branch.group(0)
+    ).group(0)
+
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "plan.json").write_text(json.dumps({
+        "tasks": [{"id": "T1", "file": "src/x.py", "contracts": [], "tests": []}]
+    }))
+    (tmp_path / "scripts" / ".approved").mkdir(parents=True)
+    (tmp_path / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps({"entry_points": [], "routes": [], "schemas": [], "errors": []})
+    )
+    (tmp_path / "scripts" / ".approved" / "ERD.md").write_text(
+        "## Model-selector invariant\n\nstanding-marker-line\n")
+    (tmp_path / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
+        "# ERD-DELTA\n\ndelta-marker-line\n")
+
+    runner = f"""#!/usr/bin/env bash
+set -euo pipefail
+cd {tmp_path}
+STATE_DIR=.pipeline-state
+ESC_DIR=$STATE_DIR/escalations
+FROZEN_V=82
+APPROVED=scripts/.approved
+mkdir -p "$ESC_DIR"
+
+{fn_body}
+
+id=T1
+evidence="two failed coder attempts on src/x.py"
+{call_line}
+"""
+    r = subprocess.run(["bash", "-c", runner], capture_output=True, text=True)
+    assert r.returncode == 0, f"stderr:\n{r.stderr}\nstdout:\n{r.stdout}"
+    text = (tmp_path / ".pipeline-state" / "escalations" / "T1" /
+            "bundle.md").read_text()
+    assert "### Milestone slice — standing summary + ERD-DELTA (D-118)" in text
+    assert "standing-marker-line" in text
+    assert "### ERD-DELTA.md (spec v82) — the authoritative current-change slice" in text
+    assert "delta-marker-line" in text
+    # the delta must come before the frozen artifacts section
+    assert text.index("delta-marker-line") < text.index("### Frozen artifacts involved")
+
+
+def stage_consult_full_fixtures(tmp_path):
+    """plan.json + contracts.json + ERD.md so both the scoped and the full
+    consult context branches have real files to ship (D-116)."""
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "plan.json").write_text(json.dumps({
+        "spec_version": 116,
+        "milestone": "M116",
+        "tasks": [
+            {"id": "T7", "file": "src/x.py",
+             "brief": "consulted-task-brief-marker: change x to y",
+             "contracts": [], "tests": []},
+            {"id": "T8", "file": "src/z.py",
+             "brief": "other-task-brief-marker", "contracts": [], "tests": []},
+        ],
+    }))
+    (tmp_path / "scripts" / ".approved").mkdir(parents=True)
+    (tmp_path / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps({"entry_points": [], "routes": [], "schemas": [],
+                    "errors": [], "test_mapping": {}}))
+    (tmp_path / "scripts" / ".approved" / "ERD.md").write_text(
+        "## Model-selector invariant\n\nkeep me\n")
+    (tmp_path / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
+        "# ERD-DELTA M116\n\nchange x\n")
+
+
+def test_consult_scoped_context_ships_task_entry_not_full_plan(tmp_path):
+    """D-116: a task consult ships that task's plan entry (plus standing
+    summary + delta), never the full plan, standing ERD, or contracts."""
+    stage_consult_full_fixtures(tmp_path)
+    r = run_consult(tmp_path, [VALID_DIAG])
+    assert r.returncode == 0, r.stderr
+    prompt = (tmp_path / "prompts" / "1").read_text()
+    assert "### task-entry (" in prompt
+    assert "consulted-task-brief-marker" in prompt
+    assert "### plan (" not in prompt
+    assert "### contracts" not in prompt
+
+
+def test_consult_drift_keeps_full_plan_and_contracts(tmp_path):
+    """D-116: a DRIFT consult judges the whole decomposition, so it keeps
+    the full plan + contracts + delta context."""
+    stage_consult_full_fixtures(tmp_path)
+    r = run_consult(tmp_path, [VALID_DIAG], task_id="DRIFT", evidence="spec drift")
+    assert r.returncode == 0, r.stderr
+    prompt = (tmp_path / "prompts" / "1").read_text()
+    assert "### plan (" in prompt
+    assert "### contracts" in prompt
+
+
+def test_consult_failing_test_files_attached_to_context(tmp_path):
+    """D-116: evidence-grepped failing test files ship as labeled blocks."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_ui.py").write_text("def test_thing(): pass\n")
+    r = run_consult(
+        tmp_path, [VALID_DIAG],
+        evidence="2 attempts failed; tests/test_ui.py::test_thing red",
+    )
+    assert r.returncode == 0, r.stderr
+    prompt = (tmp_path / "prompts" / "1").read_text()
+    assert "### failing-test (tests/test_ui.py)" in prompt
+    assert "def test_thing" in prompt
+
+
+def test_coder_context_never_ships_contracts():
+    """D-116: the coder's brief is self-contained (Rule 8) — run_coder's
+    context is brief + existing file, never the frozen contracts."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    assert re.search(
+        r'\{ printf \'%s\\n\' "\$instr"; build_context "\$existing"; \} \\',
+        source,
+    ), "run_coder context must be brief + existing file only"
+    assert '"ERD:$APPROVED/ERD.md"' not in source
+    assert '"ERD:$APPROVED/ERD.md"' not in source.replace(
+        '"standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}"', "",
+    ), "a raw standing-ERD label survived the D-116 relabel"
+
+
+def test_em_context_sites_use_standing_summary():
+    """D-116: every EM call site ships the generated standing summary under
+    the `standing:` label; the full standing ERD is never the EM context."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    labels = re.findall(r'"standing:\$\{STANDING_SUMMARY:-\$APPROVED/ERD\.md\}"', source)
+    assert len(labels) == 6, f"expected 6 standing-label sites (4 plan/drift + 2 consult branches), got {len(labels)}"
+    assert "python3 scripts/standing-summary.py" in source
+    assert 'STANDING_SUMMARY="$STATE_DIR/standing-summary.md"' in source
+
+
+def test_standing_summary_keeps_invariants_collapses_architecture(tmp_path):
+    """D-116: the generator keeps standing rules verbatim and collapses the
+    accumulated as-built prose to a per-file map."""
+    erd = tmp_path / "ERD.md"
+    erd.write_text(
+        "## Model-selector invariant\n\n**MUST NEVER** be disabled.\n\n"
+        "## As-built architecture — front end\n\n"
+        "* **`src/static/chrome.js`** — themes, a very long description that "
+        "should be truncated because it repeats the accumulated milestone "
+        "detail the summary exists to drop, and it goes on and on past the "
+        "truncation threshold with no informational value left in it.\n"
+        "* **`src/static/catalog.js`** — dropdown lifecycle.\n\n"
+        "## File inventory\n\n| file | owner |\n|------|-------|\n"
+    )
+    out = subprocess.run(
+        [sys.executable, str(SCRIPTS / "standing-summary.py"), str(erd)],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    assert "**MUST NEVER** be disabled." in out.stdout
+    assert "## As-built architecture — front end (file map)" in out.stdout
+    assert "as-built prose is intentionally not shipped" not in out.stdout
+    assert "- `src/static/catalog.js` — dropdown lifecycle." in out.stdout
+    assert "## File inventory" in out.stdout
+
+
+def test_standing_summary_missing_erd_exits_nonzero(tmp_path):
+    """D-116: a missing ERD must fail the generator so the orchestrator's
+    fallback to the full standing ERD is the loud, explicit path."""
+    out = subprocess.run(
+        [sys.executable, str(SCRIPTS / "standing-summary.py"),
+         str(tmp_path / "nope.md")],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 1
+
+
+def test_plan_mapped_ids_is_the_delta_scope(tmp_path):
+    """D-119: plan_mapped_ids extracts the dedup union of plan-mapped
+    node-ids in task order — the same union the D-112 verdict uses. Carried
+    node-ids never appear in the plan, so the plan's union IS the delta
+    scope for re-plan calls."""
+    src = (SCRIPTS / "orchestrate.sh").read_text()
+    helper = re.search(r"^plan_mapped_ids\(\) \{.*?^\}", src, re.M | re.S)
+    assert helper, "plan_mapped_ids not found — extractor drift"
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "plan.json").write_text(json.dumps({
+        "tasks": [
+            {"id": "T1", "file": "src/a.py", "tests": ["n1", "n2"]},
+            {"id": "T2", "file": "src/b.py", "tests": ["n2", "n3"]},
+        ],
+    }))
+    runner = f"""#!/usr/bin/env bash
+set -euo pipefail
+cd {tmp_path}
+{helper.group(0)}
+plan_mapped_ids"""
+    r = subprocess.run(["bash", "-c", runner], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "n1, n2, n3"
+
+
+def test_replan_contexts_scope_nodeids_not_full_file():
+    """D-119 + D-124: decomp-wrong and drift re-plan calls print the scoped
+    plan-mapped list and no longer ship the full test-nodeids file; the
+    greenfield plan emission ships the delta-scoped set (union of the active
+    deltas' changed_tests), falling back to the full file only when no
+    active delta range exists."""
+    src = (SCRIPTS / "orchestrate.sh").read_text()
+    assert src.count("test-nodeids:${NODEIDS_SCOPE:-$APPROVED/test-nodeids}") == 1, (
+        "greenfield emission must scope test-nodeids with the D-124 delta "
+        "fallback"
+    )
+    assert src.count("test-nodeids:$APPROVED/test-nodeids") == 0, (
+        "no site may ship the full test-nodeids file unconditionally"
+    )
+    assert src.count("$(plan_mapped_ids)") == 2, (
+        "expected the scoped list at decomp-wrong AND drift re-plan"
+    )
+    assert src.count("the shell routes carried coverage itself (D-119)") == 2
+
+
+def test_prompt_files_match_d116_context_rules():
+    """D-116: coder.md no longer promises pasted contracts; em.md names the
+    standing summary + delta as the arriving context."""
+    coder = (SCRIPTS.parent / ".opencode" / "prompts" / "coder.md").read_text()
+    assert "The frozen contracts" not in coder
+    assert "Match interfaces exactly against the contracts pasted" not in coder
+    em = (SCRIPTS.parent / ".opencode" / "prompts" / "em.md").read_text()
+    assert "`standing` block plus `ERD-delta`" in em
+    assert "minimal summary of the standing architecture" in em
+
+
+def run_tpm_pack(tmp_path, with_delta=True, with_summary_generator=True):
+    """D-117 fixture: a fake repo tree with tpm-pack.sh + the two python
+    helpers it calls, so the real script runs against a controlled spec."""
+    repo = tmp_path / "repo"
+    (repo / "scripts" / ".approved").mkdir(parents=True)
+    (repo / "scripts" / "schemas").mkdir(parents=True)
+    (repo / "docs").mkdir(parents=True)
+    for name in ("tpm-pack.sh", "spec_artifacts.py"):
+        shutil.copy(SCRIPTS / name, repo / "scripts" / name)
+    if with_summary_generator:
+        shutil.copy(SCRIPTS / "standing-summary.py",
+                    repo / "scripts" / "standing-summary.py")
+    (repo / "scripts" / ".approved" / "VERSION").write_text("117\n")
+    (repo / "scripts" / ".approved" / "PRD.md").write_text("# PRD\n\nstanding product\n")
+    (repo / "scripts" / ".approved" / "ERD.md").write_text(
+        "## Model-selector invariant\n\nkeep me\n\n"
+        "## As-built architecture — front end\n\n"
+        "* **`src/static/app.js`** — the whole accumulated milestone detail "
+        "that the summary exists to drop, going on and on past the "
+        "truncation threshold with no informational value left in it.\n")
+    if with_delta:
+        (repo / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
+            "# ERD-DELTA M117\n\nchange app.js\n")
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        '{"files": ["src/static/app.js"], "smoke_checks": [], '
+        '"test_mapping": {}}\n')
+    (repo / "docs" / "TPM-ROLE.md").write_text("# TPM role\n")
+    (repo / "scripts" / "schemas" / "contracts.schema.json").write_text("{}\n")
+    return subprocess.run(
+        ["bash", str(repo / "scripts" / "tpm-pack.sh")],
+        capture_output=True, text=True, cwd=str(repo),
+    )
+
+
+def test_tpm_pack_ships_milestone_slice_not_standing_erd(tmp_path):
+    """D-117: with a delta in flight, the TPM bundle carries the generated
+    standing summary + ERD-DELTA — never the accumulated standing ERD."""
+    r = run_tpm_pack(tmp_path, with_delta=True)
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert "=== CONTEXT FILE: scripts/.approved/ERD-DELTA.md ===" in out
+    assert "(file map)" in out
+    assert "=== CONTEXT FILE: scripts/.approved/ERD.md ===" not in out
+    assert "no informational value left in it" not in out
+    assert "=== CONTEXT FILE: scripts/.approved/PRD.md ===" in out
+    assert "=== CONTEXT FILE: scripts/.approved/contracts.json ===" in out
+
+
+def test_tpm_pack_no_delta_ships_full_standing_erd(tmp_path):
+    """D-117: no delta (initial freeze / consolidation) — the standing ERD
+    is the reference and ships in full."""
+    r = run_tpm_pack(tmp_path, with_delta=False)
+    assert r.returncode == 0, r.stderr
+    assert "=== CONTEXT FILE: scripts/.approved/ERD.md ===" in r.stdout
+    assert "no informational value left in it" in r.stdout
+    assert "=== CONTEXT FILE: scripts/.approved/ERD-DELTA.md ===" not in r.stdout
+
+
+def test_tpm_pack_generator_failure_falls_back_to_full_erd(tmp_path):
+    """D-117: summary generation failure falls back to the full standing
+    ERD, and the warning goes to stderr — the bundle is a verbatim relay
+    (D-49), so it must stay clean."""
+    r = run_tpm_pack(tmp_path, with_delta=True, with_summary_generator=False)
+    assert r.returncode == 0, r.stderr
+    assert "=== CONTEXT FILE: scripts/.approved/ERD.md ===" in r.stdout
+    assert "standing summary generation failed" in r.stderr
+    assert "standing summary generation failed" not in r.stdout
 
 
 def test_edit_mode_output_budget_has_no_hardcoded_call_site():
@@ -1297,8 +2056,12 @@ def test_run_exit_trap_records_every_termination_path(tmp_path):
 set -euo pipefail
 STATE_DIR={state}
 LOG_DIR=$STATE_DIR/logs
+MEAS_DIR={tmp_path / ".measurement"}
 RUN_T0=$(date +%s)
 run_elapsed() {{ echo $(( $(date +%s) - RUN_T0 )); }}
+meas() {{ printf '%s\\t%s\\n' "$(date -u +%FT%TZ)" "$1" >> "$MEAS_DIR/counters" 2>/dev/null || true; }}
+plan_revisions_used() {{ echo 0; }}
+FROZEN_V=77
 
 {fn_body}
 
@@ -1315,6 +2078,8 @@ trap 'record_exit' EXIT
     assert rc == 0 and "rc=0" in log and "phase=task-T2" in log
     assert "task=src/api/threads.py" in log
     assert "coder T1 attempt 1 start" in log
+    assert (tmp_path / ".measurement" / "counters").is_file(), \
+        "measurement summary row must be captured on clean exit"
 
     # 2) uncaught error (simulates the M33 crash): rc!=0 recorded, no bundle
     (state / "logs" / "run-exit.log").unlink(missing_ok=True)
@@ -1750,7 +2515,8 @@ def v51_new(files):
         "entry_points": [],
         "routes": V51_OLD["routes"] + [
             {"id": "route:GET /api/v1/models/catalog",
-             "method": "GET", "path": "/api/v1/models/catalog"}],
+             "method": "GET", "path": "/api/v1/models/catalog",
+             "file": "src/api/models.py"}],
     }
 
 
@@ -1945,6 +2711,211 @@ def test_plan_valid_first_emit_needs_no_rung(tmp_path):
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
     assert "CALLS=1 PLAN=ok" in r.stdout, r.stdout
     assert "SPEC DEFECT" not in r.stdout, r.stdout
+
+
+def test_plan_full_emit_scopes_nodeids_to_active_delta(tmp_path):
+    """D-124: the full-emission EM call ships the delta-scoped node-id set
+    (union of changed_tests across the active range, the D-119 map-nodeids
+    scope), not the accumulated suite; with no active delta it falls back to
+    the whole test-nodeids file. Here the suite holds 4 node-ids and the
+    delta names 2: the prompt must carry exactly those 2, the plan maps
+    them, and validation passes."""
+    plan = good_plan()
+    plan["erd_version"] = 2
+    work = plan_workdir(tmp_path, dict(CONTRACTS, erd_version=2),
+                        [json.dumps(plan)])
+    (work / "scripts" / ".approved" / "test-nodeids").write_text(
+        "tests/test_a.py::test_one\n"
+        "tests/test_b.py::test_two\n"
+        "tests/test_a.py::test_extra1\n"
+        "tests/test_b.py::test_extra2\n")
+    (work / "scripts" / ".approved" / "DELTA-v2.json").write_text(json.dumps({
+        "changed_tests": ["tests/test_a.py::test_one",
+                          "tests/test_b.py::test_two"],
+        "changed_files": ["src/a.py", "src/b.py"],
+        "changed_contract_ids": [],
+    }))
+    r = run_drive_plan(work)
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+    assert "CALLS=1 PLAN=ok" in r.stdout, r.stdout
+    prompt = (work / "prompts" / "1").read_text()
+    header, section = prompt.split("### test-nodeids", 1)[1].split("```", 1)
+    assert "nodeids-scope.txt" in header, prompt
+    assert "tests/test_a.py::test_one" in section, prompt
+    assert "tests/test_b.py::test_two" in section, prompt
+    assert "test_extra1" not in section and "test_extra2" not in section, prompt
+    # Contract ids are scoped by owner-file too: the route ids have no owner
+    # file and no frontend, so the flat dump must not ship them (the raw
+    # contracts.json context block may still name them — that file is whole).
+    flat = prompt.split("copy verbatim): ", 1)[1].split(" ERD-DELTA", 1)[0]
+    assert "route-items" not in flat, prompt
+    assert "src.b:handler" in flat, prompt
+    # The scope file itself must exist (the build block ran), while the
+    # no-delta fallback stays covered by test_plan_valid_first_emit_needs_no_rung.
+    assert (work / ".pipeline-state" / "nodeids-scope.txt").is_file(), (
+        r.stdout)
+
+
+def test_nodeids_scope_union_includes_pinned_mapping_entries(tmp_path):
+    """D-124 completeness half: the EM's delta-scoped node-id union must be
+    a superset of every node-id contracts.test_mapping pins to a file ANY
+    active delta staged, even when refreeze_delta's changed_tests omits it
+    (a relabel/drop regression in the D-116 computation). The gate reads
+    full truth and would reject an un-mapped pinned id — but an EM that
+    never sees the id cannot map it correctly, so the shipped scope must
+    repair the union from the frozen mapping, not just echo changed_tests.
+    Here test_b.py::test_two is mapped to src/b.py (in changed_files) yet
+    absent from that delta's changed_tests."""
+    plan = good_plan()
+    plan["erd_version"] = 2
+    contracts = dict(CONTRACTS, erd_version=2)
+    contracts["test_mapping"] = {
+        "tests/test_b.py::test_two": "src/b.py",
+        "tests/test_a.py::test_one": "src/a.py",
+    }
+    work = plan_workdir(tmp_path, contracts, [json.dumps(plan)])
+    (work / "scripts" / ".approved" / "test-nodeids").write_text(
+        "tests/test_a.py::test_one\n"
+        "tests/test_b.py::test_two\n")
+    (work / "scripts" / ".approved" / "DELTA-v2.json").write_text(json.dumps({
+        "changed_tests": ["tests/test_a.py::test_one"],
+        "changed_files": ["src/a.py", "src/b.py"],
+        "changed_contract_ids": [],
+    }))
+    r = run_drive_plan(work)
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+    prompt = (work / "prompts" / "1").read_text()
+    header, section = prompt.split("### test-nodeids", 1)[1].split("```", 1)
+    assert "nodeids-scope.txt" in header, prompt
+    assert "tests/test_b.py::test_two" in section, prompt
+
+
+# --- Phase 3: verbatim contract-id rule (bash prompt text, static guard) ------
+# 5 of 32 archived plan-gate rejections were invented contract ids — dotted
+# path guesses like "src.api.models" for "src/api/models.py", all in subtree
+# re-plans. The never-invent rule existed in prose but was inoperative; the
+# shell now prints the flat verbatim id list (contract_ids) next to the rule
+# at every plan-emission site. These guards keep all four sites and the
+# drive-plan.sh mirror intact — a dropped site is a silent regression, and
+# the same set -u trap that caught EM_TASK_KEYS would fire if the mirror
+# went missing (the drive-plan tests above exercise the rule at runtime).
+
+ORCHESTRATE = SCRIPTS / "orchestrate.sh"
+DRIVE_PLAN_SH = SCRIPTS / "selftest" / "drive-plan.sh"
+
+
+def test_orchestrate_em_context_fallbacks_are_loud(tmp_path):
+    """D-116/120: a generator failure at an EM context site must fall back
+    to the full artifact LOUDLY — a silent fallback would let a broken trim
+    masquerade as the trim working (the untriggered-safeguard trap). Pinned
+    as text because the block lives in orchestrate's main flow, outside the
+    drive-extracted functions: the success echo, the WARNING line, the
+    fallback assignment, and the input guard must all survive together."""
+    src = (SCRIPTS / "orchestrate.sh").read_text()
+    assert "generated summary (${wc -l < \"$STANDING_SUMMARY\" | tr -d ' '} lines" not in src
+    # success echo for standing summary
+    assert ("echo \"  standing context: generated summary" in src), src
+    assert ("STANDING_SUMMARY=\"$APPROVED/ERD.md\"" in src), src
+    assert ("WARNING: standing summary generation failed — EM context "
+            "falls back to the full standing ERD" in src), src
+    # success echo for contracts slice
+    assert ("echo \"  contracts context: generated milestone slice" in src), src
+    assert ("CONTRACTS_DELTA=\"$APPROVED/contracts.json\"" in src), src
+    assert ("WARNING: contracts slice generation failed — EM context falls "
+            "back to the full contracts.json" in src), src
+    # both guards: generation only attempted when the input exists, and the
+    # else branch (fallback) always emits the WARNING + full-file assignment
+    assert src.count("WARNING: standing summary generation failed") == 1
+    assert src.count("WARNING: contracts slice generation failed") == 1
+    gens = src[src.index("STANDING_SUMMARY=\"$STATE_DIR/standing-summary.md\""):
+               src.index("CONTRACTS_DELTA=\"$STATE_DIR/contracts-delta.json\"")]
+    assert 'if [ -f "$APPROVED/ERD.md" ]' in gens
+    assert "else" in gens
+    assert "python3 scripts/standing-summary.py" in gens
+
+
+def test_contract_id_rule_present_at_all_plan_sites():
+    orch = ORCHESTRATE.read_text()
+    assert "EM_CONTRACT_ID_RULE=" in orch, "rule var missing"
+    assert "contract_ids() {" in orch, "id-list helper missing"
+    assert orch.count("$EM_CONTRACT_ID_RULE") == 4, (
+        "rule must appear at all 4 plan-emission sites"
+    )
+    assert orch.count("$(contract_ids)") == 4, (
+        "verbatim id list must be injected at all 4 plan-emission sites"
+    )
+    assert "never convert a file path to dotted form" in orch
+
+
+def test_contracts_delta_wired_at_plan_sites():
+    """The milestone slice (D-120) must reach all four plan-emission sites
+    and only them: the DRIFT/SPEC-DEFECT consult keeps the full file (D-116,
+    it judges the whole decomposition)."""
+    orch = ORCHESTRATE.read_text()
+    assert orch.count(
+        "contracts:${CONTRACTS_DELTA:-$APPROVED/contracts.json}") == 4, (
+        "milestone slice must ship at all 4 plan-emission sites"
+    )
+    assert orch.count('"contracts:$APPROVED/contracts.json"') == 1, (
+        "exactly one site keeps the full file — the DRIFT/SPEC-DEFECT consult"
+    )
+    assert orch.count("scripts/contracts-delta.py") == 1, (
+        "pre-flight generation block missing"
+    )
+    assert "contracts slice generation failed" in orch, (
+        "fallback WARNING missing — failure must never silently drop context"
+    )
+
+
+def test_contract_id_rule_mirrored_in_drive_plan():
+    dp = DRIVE_PLAN_SH.read_text()
+    assert "EM_CONTRACT_ID_RULE=" in dp, "drive-plan mirror missing"
+    assert 'eval "$(extract contract_ids)"' in dp, (
+        "contract_ids helper must be extracted in drive-plan"
+    )
+
+
+def test_repair_contracts_wired_before_gate():
+    orch = ORCHESTRATE.read_text()
+    closure = ("[ -f tasks/plan.json ] && python3 scripts/validate-plan.py "
+               "--repair-closures tasks/plan.json || true")
+    contracts = ("[ -f tasks/plan.json ] && python3 scripts/validate-plan.py "
+                 "--repair-contracts tasks/plan.json || true")
+    assert contracts in orch, "repair-contracts pre-gate call site missing"
+    assert orch.count("--repair-contracts") == 1, (
+        "exactly one repair-contracts call site"
+    )
+    lines = orch.splitlines()
+    for i, ln in enumerate(lines):
+        if closure in ln:
+            assert contracts in lines[i + 1], (
+                "repair-contracts must sit directly after --repair-closures "
+                "inside ensure_plan (drive-plan extracts the whole body — the "
+                "EM_TASK_KEYS regression class)"
+            )
+            break
+    else:
+        raise AssertionError("closure pre-pass line missing")
+
+
+def test_measurement_sink_wired():
+    orch = ORCHESTRATE.read_text()
+    assert 'MEAS_DIR=".measurement"' in orch, (
+        "durable measurement sink (.measurement) must exist in orchestrate"
+    )
+    assert 'meas() { printf' in orch, "meas() helper missing"
+    assert 'meas "exit rc=$rc' in orch, (
+        "record_exit must append the terminal summary row (drift would blind "
+        "the milestone-run after-measurement)"
+    )
+    assert 'meas "identical_retry"' in orch, (
+        "identical-retry counter missing from ensure_plan reject path"
+    )
+    assert 'meas "spec_defect"' in orch, "spec-defect counter missing at D-79"
+    assert "plan-feedback-hash" in orch, "feedback fingerprint state missing"
+    assert '"$MEAS_DIR/timings-$(date -u +%FT%TZ).tsv"' in orch, (
+        "timings copy missing from record_exit"
+    )
 
 
 # --- preflight: TPM scope declaration (D-86) ---------------------------------
@@ -2281,7 +3252,8 @@ def test_plan_gate_brief_overflow_names_erd_mass(tmp_path):
 
 def refreeze_scripts(repo):
     for name in ("validate-plan.py", "check-test-surface.py",
-                 "check-swallowed-errors.py", "check-spec-delta.py"):
+                 "check-swallowed-errors.py", "check-spec-delta.py",
+                 "check-ac-postconditions.py"):
         (repo / "scripts" / name).write_bytes((SCRIPTS / name).read_bytes())
     (repo / "scripts" / ".approved" / "incoming"
      / "ERD-DELTA.md").write_text(VALID_ERD_DELTA)
@@ -3335,6 +4307,104 @@ def test_flake_failing_and_detail_untouched_when_isolation_never_ran(tmp_path):
     assert _kv(r.stdout, "FINAL_FAIL_DETAIL") == "original detail"
 
 
+# --- D-112: verdict scope — milestone done = the delta's mapped tests --------
+# The final verdict re-runs ONLY the union of plan-mapped node-ids (the
+# dependent set); the full frozen suite is an on-demand regression check via
+# --full-suite. Pinned here because this is what makes "a feature is judged
+# by what it can touch" mechanical (CEO ruling 2026-08-06, DECISIONS D-112).
+
+DRIVE_VERDICT = SCRIPTS / "selftest" / "drive-verdict.sh"
+
+VERDICT_PLAN = {
+    "version": 1,
+    "erd_version": 1,
+    "tasks": [
+        {"id": "T1", "file": "src/a.py", "brief": "a", "depends_on": [],
+         "contracts": [],
+         "tests": ["tests/test_delta.py::test_a",
+                   "tests/test_delta.py::test_shared"]},
+        {"id": "T2", "file": "src/b.py", "brief": "b", "depends_on": ["T1"],
+         "contracts": [],
+         "tests": ["tests/test_delta.py::test_shared",
+                   "tests/test_delta.py::test_b"]},
+    ],
+}
+
+
+def run_drive_verdict(tmp_path, *, full_suite=0, rt_outcomes="0", plan=None):
+    (tmp_path / "tasks").mkdir(exist_ok=True)
+    (tmp_path / "tasks" / "plan.json").write_text(
+        json.dumps(plan if plan is not None else VERDICT_PLAN))
+    env = {**os.environ,
+           "FULL_SUITE_CHECK": str(full_suite),
+           "RT_OUTCOMES": rt_outcomes}
+    return subprocess.run(
+        ["bash", str(DRIVE_VERDICT), str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+
+
+def test_verdict_default_runs_only_mapped_union(tmp_path):
+    """Milestone verdict = the delta's dependent set: the plan-mapped union,
+    deduplicated, in task order — never the whole suite."""
+    r = run_drive_verdict(tmp_path)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "RT_CALLS") == "1"
+    assert _kv(r.stdout, "RT_ARGS") == (
+        "tests/test_delta.py::test_a tests/test_delta.py::test_shared "
+        "tests/test_delta.py::test_b")
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
+
+
+def test_verdict_full_suite_check_runs_whole_suite(tmp_path):
+    """--full-suite keeps the pre-D-112 scope as an on-demand regression
+    check: run_tests is invoked with no args (the whole tests/ tree)."""
+    r = run_drive_verdict(tmp_path, full_suite=1)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "RT_CALLS") == "1"
+    assert _kv(r.stdout, "RT_ARGS") == ""
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
+
+
+def test_verdict_no_mapped_tests_runs_nothing_and_greens(tmp_path):
+    """A milestone whose plan maps zero tests (smoke-only tasks) skips the
+    verdict run: per-task acceptance is the verdict — never a vacuous full
+    suite run, never a false red from an unset TESTS_RC."""
+    r = run_drive_verdict(tmp_path, plan={
+        "version": 1, "erd_version": 1,
+        "tasks": [{"id": "T1", "file": "src/a.py", "brief": "a",
+                   "depends_on": [], "contracts": [], "tests": []}]})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "RT_CALLS") == "0"
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
+
+
+def test_verdict_mapped_failure_stays_red_without_flake_triage(tmp_path):
+    """A red verdict in mapped scope is drift by definition (every node was
+    accepted per-task): exactly one run, no D-77 isolation retries, and
+    TESTS_RC stays 1 for the downstream DRIFT path."""
+    r = run_drive_verdict(tmp_path, rt_outcomes="1")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "RT_CALLS") == "1"
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
+
+
+def test_verdict_banners_are_scope_aware():
+    """The success and drift banners must not claim the 'full frozen suite'
+    in mapped scope — the milestone verdict is the mapped set (D-112), and
+    only the on-demand --full-suite mode keeps the old claim."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    banner_start = source.rindex('if [ "$TESTS_RC" -eq 0 ]; then')
+    banner = source[banner_start:source.index('rm -rf "$STATE_DIR"')]
+    assert '"  ALL FROZEN TESTS PASS — feature done"' in banner
+    assert '"  ALL DELTA-MAPPED TESTS PASS — feature done"' in banner
+    assert '"  PER-TASK ACCEPTANCE PASSED — feature done"' in banner
+    drift = source[source.index("# tasks green but the verdict red"):
+                   source.index('consult_em "DRIFT"')]
+    assert "delta-mapped verdict run is red" in drift
+    assert "full-suite regression check is red" in drift
+
+
 # --- check_ci_health: D-85, the external verdict -----------------------------
 # CI is the only check running outside this pipeline's own gates, so it is the
 # only thing that catches what the gates structurally cannot (types, lint,
@@ -3490,11 +4560,17 @@ def freezable_repo(tmp_path):
         "check-test-surface.py",
         "spec_artifacts.py",
         "check-spec-delta.py",
+        "check-ac-postconditions.py",
+        "validate-plan.py",
     ):
         target = tmp_path / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
         if name.endswith(".sh"):
             target.chmod(0o755)
+    schemas = tmp_path / "scripts" / "schemas"
+    schemas.mkdir()
+    (schemas / "contracts.schema.json").write_bytes(
+        (SCRIPTS / "schemas" / "contracts.schema.json").read_bytes())
     sandbox = tmp_path / "scripts" / "sandbox-run.sh"
     sandbox.write_text(
         "#!/usr/bin/env bash\n"
@@ -3535,19 +4611,13 @@ def freezable_repo(tmp_path):
     return tmp_path
 
 
-def _run_refreeze_approve(repo):
-    """--diff to get the hash, then --approve <hash>: the D-42 agent flow,
-    which is the only non-interactive way through the apply path."""
-    d = subprocess.run(
-        ["bash", "scripts/refreeze.sh", "--diff", "scripts/.approved/incoming"],
-        cwd=repo, capture_output=True, text=True,
-    )
-    assert d.returncode == 0, (d.stdout, d.stderr)
-    m = re.search(r"DIFF-SHA: ([0-9a-f]{64})", d.stdout)
-    assert m, d.stdout
+def _run_refreeze_install(repo):
+    """Auto install: every mechanical preflight green → the freeze applies
+    (D-95). D-121 removed the --approve (D-42 hash-bound) and --interactive
+    human-approval paths entirely, so the plain invocation is the only
+    non-interactive way through the apply path."""
     return subprocess.run(
-        ["bash", "scripts/refreeze.sh", "--approve", m.group(1),
-         "scripts/.approved/incoming"],
+        ["bash", "scripts/refreeze.sh", "scripts/.approved/incoming"],
         cwd=repo, capture_output=True, text=True,
     )
 
@@ -3559,7 +4629,7 @@ def test_refreeze_collection_is_sandboxed_and_confined(freezable_repo):
     decoy.mkdir(parents=True)
     (decoy / "test_decoy.py").write_text(
         "def test_must_not_be_collected():\n    assert True\n")
-    r = _run_refreeze_approve(freezable_repo)
+    r = _run_refreeze_install(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "via sandbox" in r.stdout, r.stdout
     frozen = (freezable_repo / "scripts" / ".approved" / "test-nodeids").read_text()
@@ -3570,7 +4640,7 @@ def test_refreeze_collection_is_sandboxed_and_confined(freezable_repo):
 
 def test_refreeze_redcheck_runs_only_in_sandbox(freezable_repo):
     """The red check is conclusive through the sandbox and has no host arm."""
-    r = _run_refreeze_approve(freezable_repo)
+    r = _run_refreeze_install(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "red-check ran via: sandbox" in r.stdout, r.stdout
     assert "INCONCLUSIVE" not in r.stdout, r.stdout
@@ -3578,12 +4648,57 @@ def test_refreeze_redcheck_runs_only_in_sandbox(freezable_repo):
     assert "test_param" in r.stdout, r.stdout
 
 
+def _stage_contracts_smoke(repo, cmd):
+    """Stage a contracts change (v2) adding one smoke check; returns the
+    approve-path result for the staged freeze. src/app.py exists with a
+    pre-existing symbol, mirroring the M35 shape (a file in the inventory
+    whose current content must NOT satisfy the check)."""
+    approved = repo / "scripts" / ".approved"
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "app.py").write_text(
+        "def preexisting():\n    pass\n")
+    contracts = json.loads((approved / "contracts.json").read_text())
+    contracts["erd_version"] = 2
+    contracts["smoke_checks"] = {"src/app.py": cmd}
+    contracts["changed_files"] = []
+    (approved / "incoming" / "contracts.json").write_text(
+        json.dumps(contracts))
+    return _run_refreeze_install(repo)
+
+
+def test_refreeze_smoke_check_must_be_red_on_unchanged_tree(freezable_repo):
+    """M35 correction: a staged smoke check that PASSES on the
+    pre-implementation tree gates nothing — a task could be accepted with
+    zero evidence (the app.js webToggle/pollStatus/queueRender check). The
+    freeze must fail. The staged delta test is genuinely red (assert False)
+    so the D-75 already-implemented exemption cannot mask the defect."""
+    incoming = freezable_repo / "scripts" / ".approved" / "incoming" / "tests"
+    (incoming / "test_delta.py").write_text(
+        "def test_red_probe():\n    assert False\n")
+    r = _stage_contracts_smoke(
+        freezable_repo,
+        "grep -q 'def preexisting' src/app.py")
+    assert r.returncode != 0, r.stdout
+    assert "gates nothing" in r.stderr, r.stderr
+    assert "NOT RED" in r.stdout, r.stdout
+
+
+def test_refreeze_smoke_check_red_on_unchanged_tree_passes(freezable_repo):
+    """A smoke check that fails on the pre-implementation tree (the file it
+    probes does not exist yet) is a real gate — the freeze proceeds."""
+    r = _stage_contracts_smoke(
+        freezable_repo,
+        "grep -q 'def not_implemented_yet' src/app.py")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "red as expected" in r.stdout, r.stdout
+
+
 def test_refreeze_identical_staged_test_does_not_widen_delta(freezable_repo):
     """A byte-identical carried test in a whole-suite return is not changed."""
     incoming = freezable_repo / "scripts" / ".approved" / "incoming" / "tests"
     (incoming / "test_carried.py").write_bytes(
         (freezable_repo / "tests" / "test_carried.py").read_bytes())
-    r = _run_refreeze_approve(freezable_repo)
+    r = _run_refreeze_install(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     delta = json.loads((freezable_repo / "scripts" / ".approved"
                         / "DELTA-v2.json").read_text())
@@ -3608,7 +4723,7 @@ def test_refreeze_ui_change_reaches_delta(freezable_repo):
         "ui": [{"id": "ui:new-badge", "testid": "new-badge",
                 "description": "status badge"}],
     }))
-    r = _run_refreeze_approve(freezable_repo)
+    r = _run_refreeze_install(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     delta = json.loads((freezable_repo / "scripts" / ".approved"
                         / "DELTA-v2.json").read_text())
@@ -3622,7 +4737,10 @@ def test_refreeze_ui_change_reaches_delta(freezable_repo):
 # refreezes (v60–v64). D-95 makes auto the default: on preflight-green
 # the freeze applies, printing an audit line with the DIFF-SHA; on ANY
 # preflight failure the script still `die`s with the specific finding.
-# The interactive path is preserved as an opt-in flag.
+# D-121 (2026-08-06) removes the remaining human paths (--approve,
+# --interactive) entirely — the CEO ruling: the human verdict adds no
+# value on a machine-authored diff whose gates already ran. --diff stays
+# as a read-only preview that applies nothing.
 
 
 def test_refreeze_auto_proceeds_without_terminal(freezable_repo):
@@ -3634,7 +4752,7 @@ def test_refreeze_auto_proceeds_without_terminal(freezable_repo):
         cwd=freezable_repo, capture_output=True, text=True,
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "auto-approved (D-95)" in r.stdout, r.stdout
+    assert "auto-approved (D-121)" in r.stdout, r.stdout
     assert "DIFF-SHA" in r.stdout, r.stdout
     # No y/N prompt reached the user (the string the old interactive path printed).
     assert "Approve this delta" not in r.stdout, r.stdout
@@ -3668,20 +4786,21 @@ def test_refreeze_auto_halts_on_preflight_fail(stageable_repo):
     assert "auto-approved" not in combined, combined
 
 
-def test_refreeze_interactive_flag_requires_terminal(freezable_repo):
-    """--interactive is the opt-in eyeball path — under subprocess (no tty)
-    it must die with a message pointing back to the D-95 auto default and
-    the D-42 explicit flow. Preserves the escape hatch without silently
-    degrading to auto when the user asked for interactive."""
-    r = subprocess.run(
-        ["bash", "scripts/refreeze.sh", "--interactive",
-         "scripts/.approved/incoming"],
-        cwd=freezable_repo, capture_output=True, text=True,
-    )
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    combined = r.stdout + r.stderr
-    assert "--interactive" in combined, combined
-    assert "D-95" in combined, combined
+def test_refreeze_approval_flags_removed(freezable_repo):
+    """D-121: the CEO approval step is gone from the refreeze lane — both
+    --approve (D-42 hash-bound) and --interactive (y/N eyeball) die on use
+    with a pointer to the auto install, so the human gate can never be
+    reintroduced silently; the auto path itself is covered by
+    test_refreeze_auto_proceeds_without_terminal."""
+    for args in (["--approve", "x" * 64], ["--interactive"]):
+        r = subprocess.run(
+            ["bash", "scripts/refreeze.sh", *args, "scripts/.approved/incoming"],
+            cwd=freezable_repo, capture_output=True, text=True,
+        )
+        assert r.returncode != 0, r.stdout
+        combined = r.stdout + r.stderr
+        assert "--approve" in combined or "--interactive" in combined, combined
+        assert "D-121" in combined, combined
 
 
 # --- subtree re-plan: --subtree-scope / --merge-subtree (Fix A) --------------
@@ -4004,8 +5123,8 @@ def test_plan_subtree_replan_one_em_call(tmp_path):
     assert "src/b.py (keep id T2)" in prompt
     assert "src/c.py (new file)" in prompt
     assert "build a" not in prompt        # carried briefs stay out of the call
-    assert "Playwright-importing test file" in prompt
-    assert "MERGED plan (D-64)" in prompt
+    assert "pinned by contracts.json's test_mapping is auto-placed" in prompt
+    assert "add NO depends_on edges for this" in prompt
     assert "empty contracts array" in prompt
     assert "command not found" not in r.stderr
     merged = json.loads((work / "tasks" / "plan.json").read_text())
@@ -4188,7 +5307,7 @@ def test_refreeze_accepts_and_pins_erd_delta(freezable_repo):
     (freezable_repo / "scripts" / ".approved" / "incoming"
      / "ERD-DELTA.md").write_text(
         VALID_ERD_DELTA.replace("None.\n\n## Superseded", "AC-1\n\n## Superseded"))
-    r = _run_refreeze_approve(freezable_repo)
+    r = _run_refreeze_install(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     approved = freezable_repo / "scripts" / ".approved"
     assert (approved / "ERD-DELTA.md").read_text().startswith("# Current milestone"), \
@@ -4253,10 +5372,86 @@ def test_refreeze_docs_only_retires_previous_erd_delta(freezable_repo):
     (approved / "incoming" / "tests" / "test_delta.py").unlink()
     (approved / "incoming" / "ERD-DELTA.md").unlink()
     (approved / "incoming" / "ERD.md").write_text("# Standing ERD wording\n")
-    r = _run_refreeze_approve(freezable_repo)
+    r = _run_refreeze_install(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert not (approved / "ERD-DELTA.md").exists()
     assert "ERD-DELTA.md" not in (approved / "frozen-manifest").read_text()
+
+
+def test_refreeze_byte_identical_test_excluded_from_delta(freezable_repo):
+    """S4: a whole-suite TPM return re-stages a byte-identical test file.
+    The byte-identical filter must exclude it from the delta — M33's subtree
+    invalidation re-executed completed tasks because restaged identical tests
+    widened changed_tests."""
+    approved = freezable_repo / "scripts" / ".approved"
+    existing = (freezable_repo / "tests" / "test_carried.py").read_text()
+    (approved / "incoming" / "tests" / "test_carried.py").write_text(existing)
+    r = _run_refreeze_diff(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "test_carried" not in r.stdout, (
+        "byte-identical restaged test appeared in the diff — "
+        "the M33 subtree-invalidation class is not guarded"
+    )
+
+
+def test_refreeze_rejects_ac_without_postcondition(freezable_repo):
+    """S5: a staged PRD carrying a state-changing AC without a 'such that'
+    post-condition clause must halt the freeze."""
+    approved = freezable_repo / "scripts" / ".approved"
+    (approved / "incoming" / "PRD.md").write_text(
+        "# Product Requirements\n\n"
+        "## Features\n\n"
+        "- AC-50: WHEN the admin clicks unload, the system SHALL terminate "
+        "the process and return {status: unloaded}\n"
+    )
+    (approved / "incoming" / "ERD-DELTA.md").write_text(
+        "# Current milestone\n\n"
+        "## Changed acceptance criteria\n\nAC-50\n\n"
+        "## Superseded acceptance criteria\n\nNone.\n\n"
+        "## Changed files\n\n- src/app.py\n\n"
+        "## Test-to-file mapping\n\nNo new mapping.\n"
+    )
+    r = _run_refreeze_diff(freezable_repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "S5" in combined
+    assert "AC-50" in combined
+
+
+def test_refreeze_accepts_ac_with_postcondition(freezable_repo):
+    """S5: a state-changing AC with a 'such that' clause passes the lint."""
+    approved = freezable_repo / "scripts" / ".approved"
+    (approved / "incoming" / "PRD.md").write_text(
+        "# Product Requirements\n\n"
+        "## Features\n\n"
+        "- AC-50: WHEN the admin clicks unload, the system SHALL terminate "
+        "the process such that the health endpoint returns 503\n"
+    )
+    (approved / "incoming" / "ERD-DELTA.md").write_text(
+        "# Current milestone\n\n"
+        "## Changed acceptance criteria\n\nAC-50\n\n"
+        "## Superseded acceptance criteria\n\nNone.\n\n"
+        "## Changed files\n\n- src/app.py\n\n"
+        "## Test-to-file mapping\n\nNo new mapping.\n"
+    )
+    r = _run_refreeze_diff(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_refreeze_warns_oversized_erd_section(freezable_repo):
+    """S7: an ERD section exceeding 1200 chars produces an advisory warning
+    but does not halt the freeze."""
+    approved = freezable_repo / "scripts" / ".approved"
+    big_section = "x " * 700  # 1400 chars
+    (approved / "incoming" / "ERD.md").write_text(
+        "# ERD\n\n"
+        "## Small section\n\nShort content.\n\n"
+        f"## Oversized section\n\n{big_section}\n"
+    )
+    r = _run_refreeze_diff(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "WARNING (S7)" in r.stdout
+    assert "Oversized section" in r.stdout
 
 
 def test_tpm_shuttle_carries_erd_delta_end_to_end(tmp_path):
@@ -4926,6 +6121,7 @@ def test_repair_satisfied_closure_adds_no_edge(repo):
     assert r.stdout.strip() == ""
     assert (repo / "tasks" / "plan.json").read_text() == original
 
+
 def run_repair_contracts(repo, plan):
     plan_path = repo / "tasks" / "plan.json"
     plan_path.write_text(json.dumps(plan))
@@ -5061,30 +6257,3 @@ def test_contract_repair_malformed_plan_noop(repo):
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == ""
     assert plan_path.read_text() == original
-
-
-ORCHESTRATE = SCRIPTS / "orchestrate.sh"
-DRIVE_PLAN_SH = SCRIPTS / "selftest" / "drive-plan.sh"
-
-
-def test_repair_contracts_wired_before_gate():
-    orch = ORCHESTRATE.read_text()
-    closure = ("[ -f tasks/plan.json ] && python3 scripts/validate-plan.py "
-               "--repair-closures tasks/plan.json || true")
-    contracts = ("[ -f tasks/plan.json ] && python3 scripts/validate-plan.py "
-                 "--repair-contracts tasks/plan.json || true")
-    assert contracts in orch, "repair-contracts pre-gate call site missing"
-    assert orch.count("--repair-contracts") == 1, (
-        "exactly one repair-contracts call site"
-    )
-    lines = orch.splitlines()
-    for i, ln in enumerate(lines):
-        if closure in ln:
-            assert contracts in lines[i + 1], (
-                "repair-contracts must sit directly after --repair-closures "
-                "inside ensure_plan (drive-plan extracts the whole body — the "
-                "EM_TASK_KEYS regression class)"
-            )
-            break
-    else:
-        raise AssertionError("closure pre-pass line missing")

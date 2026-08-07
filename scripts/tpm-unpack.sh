@@ -5,8 +5,9 @@
 # extracts every "=== FILE: <path> ===" ... "=== END FILE ===" block, and
 # writes the files under scripts/.approved/incoming/ for refreeze.sh.
 #
-# This script only STAGES. The trust model is unchanged: nothing is installed
-# until the human reads the diff and answers y at refreeze.sh's prompt.
+# This script only STAGES. The trust model: nothing is installed until
+# refreeze.sh's mechanical preflights pass — apply is then automatic
+# (D-95/D-121; there is no human approval step in the refreeze lane).
 # Paths are validated against the refreeze whitelist, fail-closed — one bad
 # path (traversal, src/, anything unexpected) rejects the whole reply.
 #

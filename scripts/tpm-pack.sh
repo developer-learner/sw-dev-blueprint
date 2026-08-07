@@ -8,6 +8,13 @@
 # contracts schema, and the currently frozen spec (when one exists) so deltas
 # are derived from ground truth, not chat memory.
 #
+# Milestone relevance (D-117): when ERD-DELTA.md exists the milestone slice
+# is the delta — the standing ERD arrives as a generated minimal summary
+# (standing rules + per-file map via scripts/standing-summary.py, the same
+# summary the EM receives, D-116), never the accumulated standing prose.
+# Generation failure falls back to the full standing ERD with a stderr
+# warning — never a silent context loss.
+#
 # It deliberately packs NOTHING from src/ or tests/: oracle independence
 # (INV-1) means the TPM never sees the implementation, and it re-authors
 # tests from spec, never from the previously frozen suite's text.
@@ -34,8 +41,8 @@ case "${1:-}" in
   *) echo "tpm-pack: unknown option ${1} (usage: tpm-pack.sh [--clipboard])" >&2; exit 1 ;;
 esac
 
-emit() {
-  echo "=== CONTEXT FILE: $1 ==="
+emit() {  # emit <path> [label]
+  echo "=== CONTEXT FILE: ${2:-$1} ==="
   cat "$1"
   echo "=== END CONTEXT FILE ==="
   echo
@@ -54,9 +61,26 @@ HDR
   if [ -f "$APPROVED/VERSION" ]; then
     echo "--- CURRENTLY FROZEN SPEC (v$(cat "$APPROVED/VERSION")) — derive any delta from THIS, not from chat memory ---"
     echo
-    for f in $(python3 scripts/spec_artifacts.py documents); do
-      [ -f "$APPROVED/$f" ] && emit "$APPROVED/$f"
-    done
+    emit "$APPROVED/PRD.md"
+    if [ -f "$APPROVED/ERD-DELTA.md" ]; then
+      # D-117: milestone slice only — the standing ERD arrives as the
+      # generated minimal summary; ERD-DELTA.md is the authoritative
+      # current-change slice (D-107). Generation failure falls back to the
+      # full standing ERD loudly (stderr — the bundle stays clean).
+      summary="$(mktemp "${TMPDIR:-/tmp}/standing-summary.XXXXXX")"
+      if [ -f "$APPROVED/ERD.md" ] \
+        && python3 scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null; then
+        emit "$summary" "standing-summary.md (generated from ERD.md — standing rules + per-file map, D-117)"
+      else
+        [ -f "$APPROVED/ERD.md" ] && emit "$APPROVED/ERD.md"
+        echo "tpm-pack: standing summary generation failed — shipped the full standing ERD" >&2
+      fi
+      rm -f "$summary"
+      emit "$APPROVED/ERD-DELTA.md"
+    else
+      [ -f "$APPROVED/ERD.md" ] && emit "$APPROVED/ERD.md"
+    fi
+    emit "$APPROVED/contracts.json"
   else
     echo "--- NO FROZEN SPEC YET — this is the initial freeze (v1): a complete spec is required (PRD.md, ERD.md, contracts.json, and the test suite under tests/) ---"
     echo

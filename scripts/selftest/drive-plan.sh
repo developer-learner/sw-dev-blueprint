@@ -57,6 +57,7 @@ TASK_STATE="$STATE_DIR/tasks"
 BRIEF_DIR="$STATE_DIR/briefs"
 LOG_DIR="$STATE_DIR/logs"
 ESC_DIR="$STATE_DIR/escalations"
+MEAS_DIR=".measurement"
 APPROVED="scripts/.approved"
 AGENT_TIMEOUT=60
 MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"
@@ -68,12 +69,34 @@ FROZEN_V=$(cat "$APPROVED/VERSION")
 # assignment shape changes.
 EM_TASK_KEYS=$(sed -n "s/^EM_TASK_KEYS='\(.*\)'$/\1/p" "$REPO/scripts/orchestrate.sh")
 [ -n "$EM_TASK_KEYS" ] || { echo "drive-plan: could not extract EM_TASK_KEYS from orchestrate.sh" >&2; exit 65; }
+# Phase 3: same anti-drift mirror for the contract-id rule and the id-list
+# helper (both are interpolated into ensure_plan's prompts at runtime).
+EM_CONTRACT_ID_RULE=$(sed -n "s/^EM_CONTRACT_ID_RULE='\(.*\)'$/\1/p" "$REPO/scripts/orchestrate.sh")
+[ -n "$EM_CONTRACT_ID_RULE" ] || { echo "drive-plan: could not extract EM_CONTRACT_ID_RULE from orchestrate.sh" >&2; exit 65; }
+# Phase 5 instrumentation: same anti-drift mirror for meas() (ensure_plan
+# calls it; the body is a one-liner defined in orchestrate's init, so it is
+# not covered by the function extract() above). The shape check fails loudly
+# if meas stops being a one-liner of this form.
+MEAS_BODY=$(sed -n "s/^meas() { \(.*\) }$/\1/p" "$REPO/scripts/orchestrate.sh")
+[ -n "$MEAS_BODY" ] || { echo "drive-plan: could not extract meas() from orchestrate.sh" >&2; exit 65; }
+meas() { eval "$MEAS_BODY"; }
 mkdir -p "$STATE_DIR" "$TASK_STATE" "$BRIEF_DIR" "$LOG_DIR" "$ESC_DIR"
 
 die() { echo "FAIL: $*" >&2; exit 1; }
 read_state()  { [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }
 write_state() { printf '%s\n' "$2" > "$STATE_DIR/$1"; }
 mark() { :; }
+
+# D-124: ensure_plan now scopes the full-emission test-nodeids context to the
+# active delta range (union of changed_tests). Production computes
+# ACTIVE_DELTA_FILES at top level; mirror that block by extraction so drive
+# tests exercise the scope, not just the because-net fallback. Fail loudly on
+# marker/block drift (same anti-drift rule as the function extract()).
+_D113_BLOCK=$(sed -n '/^# BEGIN D-113 active-delta range/,/^# END D-113 active-delta range/p' "$REPO/scripts/orchestrate.sh")
+[ -n "$_D113_BLOCK" ] || { echo "drive-plan: could not extract the D-113 active-delta block from orchestrate.sh" >&2; exit 65; }
+DELTA_BASELINE_V=${DELTA_BASELINE_V:-$(read_state delta_baseline_spec)}
+DELTA_BASELINE_V=${DELTA_BASELINE_V:-$FROZEN_V}
+eval "$_D113_BLOCK"
 
 # Extract the real functions — repo style is `name() {` and closing `}` both
 # at column 0, so the sed range is exact (one-liners like plan_revisions_used
@@ -92,6 +115,7 @@ extract() {
 eval "$(extract build_context)"
 eval "$(extract em_call)"
 eval "$(extract check_budget)"
+eval "$(extract contract_ids)"
 eval "$(extract plan_revisions_used)"
 eval "$(extract plan_subtree_prepare)"
 eval "$(extract ensure_plan)"

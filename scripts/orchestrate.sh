@@ -23,8 +23,13 @@
 # copy-pasteable bundles under .pipeline-state/escalations/ (D-29), and its
 # answers come back as a delta applied by scripts/refreeze.sh (D-31).
 #
-# Exit codes: 0 feature done (full frozen suite green) · 1 hard failure or
+# Exit codes: 0 feature done (delta-mapped tests green) · 1 hard failure or
 # gate violation · 2 halted awaiting TPM (escalation batch written).
+#
+# Verdict scope (D-112): milestone completion is judged by the delta's
+# dependent set — the union of every test node-id the plan mapped — never by
+# the carried-forward suite. The FULL frozen suite is an on-demand regression
+# check: scripts/orchestrate.sh --full-suite.
 set -euo pipefail
 
 MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-2}"      # coder attempts per brief (D-70: 2 arms the escalation ladder — consult/verdicts were dead code for ~23 milestones under 1; D-69's run budget bounds the thrash fail-fast guarded against)
@@ -38,6 +43,71 @@ AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
 # inventing key names (observed 2026-08-02 model-add: top-level "plan" for
 # "tasks", per-task "test_nodes" for "tests").
 EM_TASK_KEYS='SCHEMA — name these keys verbatim; the validator rejects any others. Top-level object: {"erd_version": N, "version": N, "tasks": [ ... ]} — the tasks array is under the key "tasks" (never "plan"). Each task object has EXACTLY these six keys: {"id": "...", "file": "...", "depends_on": [], "brief": "...", "contracts": [], "tests": ["<node-id>", ...]}. The names test_nodes, acceptance, regression, and status are NOT valid task keys and are rejected.'
+# Phase 3: the never-invent-contract-id rule, stated verbatim at every
+# plan-emission site next to EM_TASK_KEYS. The rule alone was inoperative —
+# the EM still emitted dotted-path guesses like "src.api.models" for
+# "src/api/models.py" (5 of 32 archived plan-gate rejections, all subtree
+# re-plans) — so the shell also prints the flat verbatim id list (contract_ids)
+# the validator accepts. Copying beats deriving.
+EM_CONTRACT_ID_RULE='CONTRACT IDS — the task "contracts" array holds ONLY exact strings from the valid-id list the shell prints after this rule (or is empty). Copy ids VERBATIM: a registered id is its exact string — never convert a file path to dotted form (src/api/models.py is a path; "src.api.models" is not a registered id), never add or drop a file extension, never invent a prefix. The validator rejects any contracts entry not on the list.'
+contract_ids() {
+  # D-124: the verbatim id list is scoped to this milestone, not the
+  # accumulated all-milestone dump. Entries whose owner file is in the plan
+  # inventory are kept; unattributable ids (ui/external) are kept only when
+  # the inventory is frontend or ERD-DELTA names them; entry_points are kept
+  # by module match. The validator + contract-repair still reject/drop
+  # anything the scope misses, and an empty contracts array is always legal.
+  python3 - "$APPROVED/contracts.json" "$APPROVED/ERD-DELTA.md" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+try:
+    erd = open(sys.argv[2]).read()
+except OSError:
+    erd = ""
+files = set(c.get("files", []))
+mods = {f[:-3].replace("/", ".") if f.endswith(".py") else f for f in files}
+frontend = any(f.startswith("src/static/") for f in files)
+ids = []
+def add(x):
+    if isinstance(x, str):
+        ids.append(x)
+    elif isinstance(x, dict) and "id" in x:
+        if x.get("file") in files:
+            ids.append(x["id"])
+        elif not x.get("file") and (frontend or x["id"] in erd):
+            ids.append(x["id"])
+for key in ("files", "entry_points", "routes", "schemas", "errors", "externals", "ui", "smoke_checks"):
+    for x in (c.get(key) or []):
+        if isinstance(x, str) and key == "entry_points":
+            base = x.split(":", 1)[0]
+            if any(base == m or base.startswith(m + ":") for m in mods):
+                ids.append(x)
+        else:
+            add(x)
+print(", ".join(dict.fromkeys(ids)))
+PY
+}
+# D-119: the delta-scoped node-id set for re-plan calls. The plan maps only
+# node-ids that exercise delta files (carried coverage is shell-routed), so
+# the plan's own union IS the delta scope — the same extraction as the
+# D-112 verdict union. Re-plan calls print it as a flat list instead of
+# shipping the full 198-id test-nodeids file; the EM keeps its safe-omit
+# rule, and the validator names any node-id it must still map.
+plan_mapped_ids() {
+  python3 -c "
+import json
+try:
+    p = json.load(open('tasks/plan.json'))
+except (OSError, ValueError):
+    print('(none)')
+    raise SystemExit(0)
+ids = []
+for t in p.get('tasks', []):
+    for n in t.get('tests', []):
+        if n not in ids:
+            ids.append(n)
+print(', '.join(ids) if ids else '(none)')"
+}
 # D-69: wall-clock budget for the WHOLE run, in seconds (0 disables). With
 # D-60 atomic tasks and a non-thinking local coder, a healthy run finishes in
 # minutes — a run that blows past this is thrashing (thinking drift, EM loops,
@@ -102,7 +172,30 @@ mkdir -p "$ARCHIVE_DIR"
 [ -f "$ARCHIVE_DIR/.gitignore" ] || printf '*\n' > "$ARCHIVE_DIR/.gitignore"
 LAST_ARCHIVE_ENTRY=""
 
+# Durable run-measurement sink (Phase 5 instrumentation, 2026-08-06): one
+# timestamped row per firing in .measurement/counters. Survives the success
+# teardown's rm -rf .pipeline-state (timings.tsv is wiped with it). Pure
+# capture — nothing reads it during a run, and a write can never fail the run.
+# Same self-ignoring pattern as .em-archive so it never surfaces in the
+# clean-tree pre-flight.
+MEAS_DIR=".measurement"
+mkdir -p "$MEAS_DIR" 2>/dev/null || true
+[ -f "$MEAS_DIR/.gitignore" ] || printf '*\n' > "$MEAS_DIR/.gitignore" 2>/dev/null || true
+meas() { printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$1" >> "$MEAS_DIR/counters" 2>/dev/null || true; }
+
 die() { echo "FAIL: $*" >&2; exit 1; }
+
+# D-112: verdict scope. Default: milestone done = the delta's mapped
+# (dependent) tests green. --full-suite opts the verdict run into the whole
+# frozen suite as an on-demand/periodic regression check, where the D-77
+# flake triage and the DRIFT halt below apply unchanged.
+FULL_SUITE_CHECK=0
+for _arg in "$@"; do
+  case "$_arg" in
+    --full-suite) FULL_SUITE_CHECK=1 ;;
+    *) die "unknown argument: $_arg (supported: --full-suite)" ;;
+  esac
+done
 
 # Single-writer lock on the state dir. Every counter in .pipeline-state/
 # (strikes, plan_revisions, phase, task_target, spec_version) is a plain
@@ -243,6 +336,18 @@ record_exit() {
       "$(date -u +%FT%TZ)" "$rc" "${phase:-<none>}" "${task:-<none>}" \
       "$(run_elapsed)" "${last_ts:-<none>}" \
       >> "$LOG_DIR/run-exit.log"
+  fi
+  # Phase 5 instrumentation (2026-08-06): durable terminal-event capture. The
+  # success teardown wipes .pipeline-state BEFORE this EXIT trap fires, so
+  # copy timings.tsv here and append one summary row (spec version, exit code,
+  # phase, task, revisions used, elapsed) — the run's after-measurement
+  # record. Guarded: measurement can never fail the run or alter its exit
+  # code.
+  mkdir -p "$MEAS_DIR" 2>/dev/null || true
+  if [ -d "$MEAS_DIR" ]; then
+    [ -f "$LOG_DIR/timings.tsv" ] \
+      && cp "$LOG_DIR/timings.tsv" "$MEAS_DIR/timings-$(date -u +%FT%TZ).tsv" 2>/dev/null || true
+    meas "exit rc=$rc phase=${phase:-<none>} task=${task:-<none>} spec=${FROZEN_V:-unknown} revisions=$(plan_revisions_used) elapsed=$(run_elapsed)s"
   fi
   return $rc
 }
@@ -424,6 +529,15 @@ curl -s --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1
 # requirements.txt and src/ it never saw).
 [ -z "$(git status --porcelain)" ] \
   || die "working tree not clean — commit or stash first (uncommitted changes would be misattributed to the first tier the lane gate checks): $(git status --porcelain | head -5 | tr '\n' ' ')"
+# S6 (2026-08-06): fail closed on a staged-but-uninstalled spec delta.
+# M34's EM plan calls ran against the STAGED spec — the [refreeze vN] commit
+# landed after the calls, so plan and spec disagreed by one freeze (~5 h 42 m
+# measured from the wrong basis). incoming/ is gitignored, so the clean-tree
+# check above cannot see it; this check must be explicit. Install the staging
+# dir (refreeze.sh) or clear it before running.
+if [ -d scripts/.approved/incoming ] && [ -n "$(ls -A scripts/.approved/incoming 2>/dev/null || true)" ]; then
+  die "scripts/.approved/incoming is populated — a staged-but-uninstalled delta would misalign this run against the frozen spec (S6, M34 class). Run scripts/refreeze.sh scripts/.approved/incoming to install it, or clear the staging dir, then retry."
+fi
 # Lost task-state reads identically to intentional success cleanup unless the
 # git history is consulted. Fail closed only when the latest task is not
 # covered by a later success; guard_task_state also provides an explicit,
@@ -471,6 +585,33 @@ if ! printf '%s' "$SMOKE_REPLY" | grep -q 'SMOKE_OK'; then
 fi
 echo "OK (frozen spec v$FROZEN_V)"
 mark "pre-flight done (spec v$FROZEN_V)"
+
+# D-116: the EM's standing context is a generated minimal summary (standing
+# rules + per-file map), never the accumulated standing ERD — the milestone
+# slice is ERD-DELTA.md (D-107). A generation failure falls back to the full
+# standing ERD; it never silently shrinks the EM's context.
+STANDING_SUMMARY="$STATE_DIR/standing-summary.md"
+if [ -f "$APPROVED/ERD.md" ] \
+  && python3 scripts/standing-summary.py "$APPROVED/ERD.md" > "$STANDING_SUMMARY" 2>/dev/null; then
+  echo "  standing context: generated summary ($(wc -l < "$STANDING_SUMMARY" | tr -d ' ') lines, vs $(wc -l < "$APPROVED/ERD.md" | tr -d ' ') in ERD.md)"
+else
+  STANDING_SUMMARY="$APPROVED/ERD.md"
+  echo "  WARNING: standing summary generation failed — EM context falls back to the full standing ERD"
+fi
+
+# D-120: the EM's contracts context is the milestone slice — pinned entries
+# (schema "file" field) for files in this milestone's inventory, plus every
+# unpinned entry; DRIFT/SPEC-DEFECT consults keep the full file (D-116). The
+# generator emits the full file while no pins exist (inert activation, the
+# backfill is TPM-seat); a generation failure falls back to the full file.
+CONTRACTS_DELTA="$STATE_DIR/contracts-delta.json"
+if [ -f "$APPROVED/contracts.json" ] \
+  && python3 scripts/contracts-delta.py "$APPROVED/contracts.json" > "$CONTRACTS_DELTA" 2>/dev/null; then
+  echo "  contracts context: generated milestone slice ($(wc -c < "$CONTRACTS_DELTA" | tr -d ' ') bytes, vs $(wc -c < "$APPROVED/contracts.json" | tr -d ' ') in contracts.json)"
+else
+  CONTRACTS_DELTA="$APPROVED/contracts.json"
+  echo "  WARNING: contracts slice generation failed — EM context falls back to the full contracts.json"
+fi
 
 # --- Parse .gate-paths for the build lane ---
 build_dir="src/"
@@ -658,7 +799,10 @@ brief; transcribe it into working code immediately."
   # wall-clock time (testchat M17). Create mode keeps the full default.
   local out_budget=""
   [ -n "$existing" ] && out_budget="$SWBP_CODER_EDIT_MAX_OUTPUT"
-  { printf '%s\n' "$instr"; build_context "contracts:$APPROVED/contracts.json" "$existing"; } \
+  # D-116: context minimalism — the coder's brief is self-contained (Rule 8:
+  # exact path, signatures, inputs/outputs, acceptance), so the frozen
+  # contracts are not pasted per call; the coder gets the brief + the file.
+  { printf '%s\n' "$instr"; build_context "$existing"; } \
     | SWBP_MAX_OUTPUT="$out_budget" timeout "$AGENT_TIMEOUT" scripts/llm-call.sh coder .opencode/prompts/coder.md \
         --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
@@ -905,6 +1049,45 @@ print(f\"{len(s['reemit'])} re-plan + {len(s['new_files'])} new file(s), {len(s[
 ensure_plan() {
   local verrs revs subtree_feedback=""
   plan_subtree_prepare
+  # D-124: the full-emission EM call ships the delta-scoped node-id set, not
+  # the accumulated suite — the union of the active deltas' changed_tests,
+  # the same scope the subtree path prints as map_ids. Greenfield/full runs
+  # with no active delta range fall back to the whole test-nodeids file; the
+  # EM keeps its safe-omit rule either way. Pinned node-ids ride changed_tests
+  # for a pinned freeze, so nothing mapped can be missing from the shipped set.
+  NODEIDS_SCOPE=""
+  if [ "${ACTIVE_DELTA_FILES+set}" = "set" ] && [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
+    NODEIDS_SCOPE="$STATE_DIR/nodeids-scope.txt"
+    # D-124 completeness (audit 2026-08-06): the scope union repairs itself
+    # from the frozen test_mapping — a testid pinned to a file any active
+    # delta staged (changed_files) rides the scope even if refreeze_delta's
+    # changed_tests dropped it (D-116 relabel-class regressions). The gate
+    # reads full truth, but the EM can only map what it sees; an id missing
+    # from the prompt would be mapped blind or rejected late. Unpinned
+    # sorted-unique at the end keeps the file deterministic.
+    python3 - "$NODEIDS_SCOPE" "$APPROVED/contracts.json" "${ACTIVE_DELTA_FILES[@]}" <<'PY'
+import json, sys
+out, contracts_path, ids = sys.argv[1], sys.argv[2], []
+staged_files = set()
+for f in sys.argv[3:]:
+    try:
+        d = json.load(open(f))
+    except OSError:
+        continue
+    staged_files.update(d.get("changed_files", []))
+    for n in d.get("changed_tests", []):
+        if n not in ids:
+            ids.append(n)
+try:
+    mapping = json.load(open(contracts_path)).get("test_mapping", {})
+    for node_id, owner in mapping.items():
+        if owner in staged_files and node_id not in ids:
+            ids.append(node_id)
+except (OSError, json.JSONDecodeError):
+    pass
+open(out, "w").write("\n".join(sorted(ids)) + "\n")
+PY
+  fi
   while :; do
     # Closure auto-repair (D-64/import/route): a best-effort PRE-PASS that adds
     # the depends_on edges the closure checks would otherwise reject on (only
@@ -929,6 +1112,20 @@ ensure_plan() {
       # still the stale prior, whose errors would only mislead the EM
       verrs="$subtree_feedback"
       subtree_feedback=""
+    fi
+    # Phase 4 re-check instrument (2026-08-06): identical plan-gate rejection
+    # across consecutive revisions — hash the feedback string; equal hash =
+    # the EM was handed the same rejection again. Model-free, deterministic;
+    # lands in the durable .measurement counter log, which survives the
+    # success teardown that wipes .pipeline-state. Phase 4 closed as
+    # evidence-ruled-out on archive replay; this is the live post-Phase-5
+    # population for the re-check.
+    local fb_hash prior_hash
+    fb_hash=$(printf '%s' "$verrs" | shasum -a 256 | cut -c1-16)
+    prior_hash=$(read_state plan-feedback-hash)
+    write_state plan-feedback-hash "$fb_hash"
+    if [ -n "$prior_hash" ] && [ "$prior_hash" = "$fb_hash" ]; then
+      meas "identical_retry"
     fi
     if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
       printf 'plan_gate=rejected\nplan_gate_errors=%s\n' \
@@ -955,6 +1152,7 @@ ensure_plan() {
         echo "gate would reject EVERY decomposition. Swapping or escalating the"
         echo "EM cannot fix this; the delta below belongs to the TPM."
         echo "$audit"
+        meas "spec_defect"
         package_escalation "spec-defect" "SPEC-DEFECT" "plan gate rejected $revs consecutive EM plans; last validator output:
 $verrs
 
@@ -1026,8 +1224,8 @@ print('; '.join(parts))")
       map_ids=$(python3 -c "import json;print(', '.join(json.load(open('$STATE_DIR/subtree-scope.json'))['map_nodeids']) or '(none)')")
       echo "=== EM: re-plan delta subtree (revision $((revs + 1))/$MAX_PLAN_REVISIONS, subtree attempt $SUBTREE_ATTEMPTS) ==="
       em_call tasks/plan-subtree.json scripts/schemas/plan.schema.json \
-        "Delta re-plan. The validated plan for the previous spec version is carried forward by the shell; its tasks are immutable and keep their ids (see the carried-plan context: id, file, depends_on only — briefs omitted deliberately). ERD-DELTA is the authoritative current-change slice when present; follow its explicit supersessions over standing ERD prose. The spec has advanced; you re-plan ONLY the delta. $EM_TASK_KEYS Reply with ONLY a plan JSON matching the schema whose tasks array contains EXACTLY one task per file in this list and NO others: $scope_files. A task for a re-planned file MUST reuse the stated keep id; tasks for new files use fresh T-ids not present in the carried plan. depends_on may reference carried task ids. Map ONLY node-ids from this list, each to exactly one of your tasks: $map_ids. If a listed node-id is not exercised by any file you are planning, OMIT it — the shell routes carried coverage itself; do NOT emit a 'regression' key (the validator rejects it), NO status fields. A listed node-id from a Playwright-importing test file may be mapped only to a task whose transitive dependency closure contains every task in the MERGED plan (D-64), normally the final task; add the needed depends_on edges. Every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance; constraints first) — the coder sees only the brief. For a re-planned EXISTING file the brief describes ONLY the change from current behavior (the coder gets the file content and emits anchored edits per D-59 — carried behavior is structurally untouched, so do NOT restate what the file already does); for a NEW file the brief describes the whole file (target under 150 lines). Every contract id must already exist in contracts.json; when no registered id covers a file, use an empty contracts array and never invent one. Do NOT include a smoke_check field. Set erd_version to $FROZEN_V and version to any integer >= 1 — the shell renumbers the merged plan.${verrs:+ The previous attempt failed validation with these errors — fix all of them: $verrs}" \
-        "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "carried-plan:$STATE_DIR/carried-summary.json" "subtree-being-revised:tasks/plan-subtree.json"
+        "Delta re-plan. The validated plan for the previous spec version is carried forward by the shell; its tasks are immutable and keep their ids (see the carried-plan context: id, file, depends_on only — briefs omitted deliberately). ERD-DELTA is the authoritative current-change slice when present; follow its explicit supersessions over standing ERD prose. The spec has advanced; you re-plan ONLY the delta. $EM_TASK_KEYS $EM_CONTRACT_ID_RULE Valid contract ids (copy verbatim): $(contract_ids) Reply with ONLY a plan JSON matching the schema whose tasks array contains EXACTLY one task per file in this list and NO others: $scope_files. A task for a re-planned file MUST reuse the stated keep id; tasks for new files use fresh T-ids not present in the carried plan. depends_on may reference carried task ids. Map ONLY node-ids from this list, each to exactly one of your tasks: $map_ids. If a listed node-id is not exercised by any file you are planning, OMIT it — the shell routes carried coverage itself; do NOT emit a 'regression' key (the validator rejects it), NO status fields. Placement is gate-owned, never yours: a node-id pinned by contracts.json's test_mapping is auto-placed by the gate at the task owning its pinned file; a node-id from a Playwright-importing test file with no mapping entry is auto-placed at the DAG's final task (D-64) — map every node-id where natural and add NO depends_on edges for this. Every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance; constraints first) — the coder sees only the brief. For a re-planned EXISTING file the brief describes ONLY the change from current behavior (the coder gets the file content and emits anchored edits per D-59 — carried behavior is structurally untouched, so do NOT restate what the file already does); for a NEW file the brief describes the whole file (target under 150 lines). Every contract id must already exist in contracts.json; when no registered id covers a file, use an empty contracts array and never invent one. Do NOT include a smoke_check field. Set erd_version to $FROZEN_V and version to any integer >= 1 — the shell renumbers the merged plan.${verrs:+ The previous attempt failed validation with these errors — fix all of them: $verrs}" \
+        "standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:${CONTRACTS_DELTA:-$APPROVED/contracts.json}" "carried-plan:$STATE_DIR/carried-summary.json" "subtree-being-revised:tasks/plan-subtree.json"
       if ! subtree_feedback=$(python3 scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
         echo "$subtree_feedback"
         continue
@@ -1037,8 +1235,8 @@ print('; '.join(parts))")
     else
       echo "=== EM: emit/revise plan (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
       em_call tasks/plan.json scripts/schemas/plan.schema.json \
-        "Decompose the frozen ERD into atomic ONE-FILE tasks and reply with ONLY the plan as JSON matching the schema you were given — no prose, no markdown fence. $EM_TASK_KEYS ERD-DELTA is the authoritative current-change slice when present; follow its explicit supersessions over standing ERD prose. Requirements: exactly one task per file in contracts.json's files array; every test node-id in test-nodeids that exercises a file in contracts.json's files array mapped to exactly one task (the task after which it should pass, given its depends_on) — node-ids testing only carried-forward files are handled by the shell: do NOT map them and do NOT emit a 'regression' key (the validator rejects it); when unsure, omit the node-id — the validator names any you must map. A node-id from a Playwright-importing test file may be mapped only to a task whose transitive dependency closure contains every task in the plan (D-64), normally the final task; add the needed depends_on edges. Every task's contracts list uses ids that exist in contracts.json; when no registered id covers a file, use an empty contracts array and never invent one. Every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance) — the coder sees only the brief. For an EXISTING file (D-59 edit mode: the coder gets the file content and emits anchored SEARCH/REPLACE blocks; carried behavior is structurally untouched) the brief describes ONLY the change from current behavior — do NOT restate what the file already does; for a NEW file the brief describes the whole file (target under 150 lines). Do NOT include a smoke_check field — smoke checks are TPM-authored and live in contracts.json. Set erd_version to $FROZEN_V. Set the top-level version key to an integer >= 1 (1 for a fresh plan; bump it on every re-emit). NO status fields.${verrs:+ The previous plan failed validation with these errors — fix all of them: $verrs}" \
-        "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
+        "Decompose the frozen ERD into atomic ONE-FILE tasks and reply with ONLY the plan as JSON matching the schema you were given — no prose, no markdown fence. $EM_TASK_KEYS $EM_CONTRACT_ID_RULE Valid contract ids (copy verbatim): $(contract_ids) ERD-DELTA is the authoritative current-change slice when present; follow its explicit supersessions over standing ERD prose. Requirements: exactly one task per file in contracts.json's files array; every test node-id in test-nodeids that exercises a file in contracts.json's files array mapped to exactly one task (the task after which it should pass, given its depends_on) — node-ids testing only carried-forward files are handled by the shell: do NOT map them and do NOT emit a 'regression' key (the validator rejects it); when unsure, omit the node-id — the validator names any you must map. Placement is gate-owned, never yours: a node-id pinned by contracts.json's test_mapping is auto-placed by the gate at the task owning its pinned file; a node-id from a Playwright-importing test file with no mapping entry is auto-placed at the DAG's final task (D-64) — map every node-id where natural and add NO depends_on edges for this. Every task's contracts list uses ids that exist in contracts.json; when no registered id covers a file, use an empty contracts array and never invent one. Every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance) — the coder sees only the brief. For an EXISTING file (D-59 edit mode: the coder gets the file content and emits anchored SEARCH/REPLACE blocks; carried behavior is structurally untouched) the brief describes ONLY the change from current behavior — do NOT restate what the file already does; for a NEW file the brief describes the whole file (target under 150 lines). Do NOT include a smoke_check field — smoke checks are TPM-authored and live in contracts.json. Set erd_version to $FROZEN_V. Set the top-level version key to an integer >= 1 (1 for a fresh plan; bump it on every re-emit). NO status fields.${verrs:+ The previous plan failed validation with these errors — fix all of them: $verrs}" \
+        "standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:${CONTRACTS_DELTA:-$APPROVED/contracts.json}" "test-nodeids:${NODEIDS_SCOPE:-$APPROVED/test-nodeids}" "plan-being-revised:tasks/plan.json"
     fi
   done
 }
@@ -1055,9 +1253,51 @@ print('; '.join(parts))")
 consult_em() {
   local id="$1" evidence="$2"
   rm -f tasks/diagnosis.json
-  local ctx=("plan:tasks/plan.json" "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json")
+  # D-116: context minimalism. A task consult is about ONE task: ship its
+  # plan entry (and the failing test sources appended below), never the full
+  # plan + standing ERD + contracts. DRIFT/SPEC-DEFECT consults judge the
+  # whole decomposition, so they keep the full plan + contracts + delta.
+  local task_entry=""
+  if [ "$id" != "DRIFT" ] && [ "$id" != "SPEC-DEFECT" ]; then
+    task_entry="$STATE_DIR/consult-task-$id.json"
+    if ! python3 -c "
+import json, sys
+plan = json.load(open('tasks/plan.json'))
+entry = next((t for t in plan.get('tasks', []) if t.get('id') == sys.argv[1]), None)
+if entry is None:
+    sys.exit(1)
+json.dump(entry, open(sys.argv[2], 'w'), indent=2)
+" "$id" "$task_entry" 2>/dev/null; then
+      task_entry=""
+    fi
+  fi
+  local ctx=()
+  if [ -n "$task_entry" ]; then
+    ctx=("task-entry:$task_entry" "standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}" "ERD-delta:$APPROVED/ERD-DELTA.md")
+  else
+    ctx=("plan:tasks/plan.json" "standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json")
+  fi
+  # D-116: a failing test contributes only the source of the functions the
+  # evidence actually names, not the whole file (test_ui.py alone is 1133
+  # lines). extract-test-functions.py pulls the named node-ids' functions plus
+  # any module-level helpers they call; any failure (no node-ids in the
+  # evidence, extraction error, empty output) falls back to the full file, so
+  # the excerpt only ever shrinks context, never drops it.
   local f
   for f in $(printf '%s' "$evidence" | grep -oE 'tests/[A-Za-z0-9_/]+\.py' | sort -u || true); do
+    local nids=() _nid
+    while IFS= read -r _nid; do
+      [ -n "$_nid" ] && nids+=("$_nid")
+    done < <(printf '%s' "$evidence" \
+      | grep -oE "${f}::[A-Za-z0-9_]+(\[[^]]*\])?" | sort -u || true)
+    if [ "${#nids[@]}" -gt 0 ]; then
+      local excerpt="$STATE_DIR/consult-excerpt-${id}-${f##*/}"
+      if python3 scripts/extract-test-functions.py "$f" "${nids[@]}" \
+           > "$excerpt" 2>/dev/null && [ -s "$excerpt" ]; then
+        ctx+=("failing-test-excerpt:$excerpt")
+        continue
+      fi
+    fi
     ctx+=("failing-test:$f")
   done
   local instr="Task consult. Task '$id' — $evidence. Decide ONE verdict: brief_wrong (the task brief mis-specified the work — include a full revised_brief, Rule 8 discipline), decomposition_wrong (the task split/dependencies are wrong), or contract_or_test_wrong (the frozen contract or test itself is wrong — your reason becomes the evidence a human carries to the TPM, so be specific: name the contract id or test node-id and what about it is wrong). Reply with ONLY the diagnosis JSON matching the schema you were given, shaped exactly like this example: {\"verdict\": \"decomposition_wrong\", \"reason\": \"T2 imports the parser T4 creates but does not depend on T4\"}. Do NOT include a task_id field — the orchestrator records it itself."
@@ -1134,6 +1374,25 @@ print(json.dumps(t, indent=2))"
       cat "$diag"
       echo '```'
     fi
+    echo
+    echo "### Milestone slice — standing summary + ERD-DELTA (D-118)"
+    echo
+    echo '```markdown'
+    if [ -f "${STANDING_SUMMARY:-$APPROVED/ERD.md}" ]; then
+      cat "${STANDING_SUMMARY:-$APPROVED/ERD.md}"
+    else
+      echo "(standing summary unavailable)"
+    fi
+    echo '```'
+    echo
+    echo "### ERD-DELTA.md (spec v$FROZEN_V) — the authoritative current-change slice"
+    echo '```markdown'
+    if [ -f "$APPROVED/ERD-DELTA.md" ]; then
+      cat "$APPROVED/ERD-DELTA.md"
+    else
+      echo "(no ERD-DELTA.md — consolidation freeze; the standing ERD is the current reference)"
+    fi
+    echo '```'
     echo
     echo "### Frozen artifacts involved"
     python3 - "$id" "$evidence" <<'PYEOF'
@@ -1229,7 +1488,7 @@ reset_active_delta_tasks() {
     for id in $ACTIVE_AFFECTED; do
       echo "  reset: $id"
       set_tstat "$id" pending
-      rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" 2>/dev/null || true
+      rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true
     done
   fi
   # escalated/blocked tasks get a fresh chance under the revised spec/plan
@@ -1300,7 +1559,7 @@ while :; do
       if [ "$fp_now" != "$fp_then" ]; then
         echo "task $id changed in plan — resetting"
         set_tstat "$id" pending
-        rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" 2>/dev/null || true
+        rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true
       fi
     fi
   done
@@ -1333,7 +1592,21 @@ while :; do
     [ -n "$line" ] && mapped+=("$line")
   done <<< "$mapped_out"
   smoke=$(python3 -c "import json,sys; cs=json.load(open('scripts/.approved/contracts.json')).get('smoke_checks',{}); print(cs.get(sys.argv[1],''))" "$file")
-  brief=$(cat "$BRIEF_DIR/$id" 2>/dev/null || python3 scripts/validate-plan.py --task "$id" --field brief)
+  # S3 (2026-08-06): a brief revision outlives the spec version that shaped
+  # it if a re-freeze lands between consult and re-attempt (M33: a stale v74
+  # brief chased the v77 oracle — ~25 min + 4 coder calls for done work).
+  # Briefs are stamped with the FROZEN_V at write time; a missing or stale
+  # stamp means UNKNOWN, so the override is ignored and the brief is
+  # re-derived from the current (plan-gated) spec instead.
+  brief=$(cat "$BRIEF_DIR/$id" 2>/dev/null || true)
+  if [ -n "$brief" ]; then
+    bv=$(cat "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true)
+    if [ "$bv" != "$FROZEN_V" ]; then
+      echo "brief for $id is stale (spec v${bv:-<unknown>} vs frozen v$FROZEN_V) — re-deriving from the current plan"
+      brief=""
+    fi
+  fi
+  [ -n "$brief" ] || brief=$(python3 scripts/validate-plan.py --task "$id" --field brief)
   strikes=$(counter "$id" strikes)
   echo "--- Task $id -> $file (strike $((strikes + 1))/$MAX_TASK_STRIKES) ---"
 
@@ -1471,6 +1744,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
 import json, sys
 d = json.load(open('$DIAG_FILE'))
 sys.stdout.write(d['revised_brief'])" > "$BRIEF_DIR/$id"
+      write_state "briefs/$id.spec_version" "$FROZEN_V"
       set_counter "$id" strikes 0
       rm -f "$TASK_STATE/$id.lastfail"
       echo "brief revised for $id (revision $((revs + 1))/$MAX_BRIEF_REVISIONS)"
@@ -1485,8 +1759,8 @@ sys.stdout.write(d['revised_brief'])" > "$BRIEF_DIR/$id"
         write_state plan_revisions $((revs + 1))
         echo "=== EM: revise decomposition (revision $((revs + 1))/$MAX_PLAN_REVISIONS) ==="
         em_call tasks/plan.json scripts/schemas/plan.schema.json \
-          "The decomposition is wrong around task $id: $(python3 -c "import json;print(json.load(open('$DIAG_FILE'))['reason'])"). Rewrite the plan fixing it and reply with ONLY the JSON (same requirements as before: one file per task, every inventory-exercising test node-id mapped exactly once, no 'regression' key, erd_version $FROZEN_V, bump plan version, NO status fields). $EM_TASK_KEYS Keep entries for unrelated tasks byte-identical — completed work is preserved only where entries are unchanged." \
-          "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
+          "The decomposition is wrong around task $id: $(python3 -c "import json;print(json.load(open('$DIAG_FILE'))['reason'])"). Rewrite the plan fixing it and reply with ONLY the JSON (same requirements as before: one file per task, every inventory-exercising test node-id mapped exactly once, no 'regression' key, erd_version $FROZEN_V, bump plan version, NO status fields). Map ONLY node-ids from this list, each to exactly one of your tasks: $(plan_mapped_ids). If a listed node-id is not exercised by any file you are planning, OMIT it — the shell routes carried coverage itself (D-119). $EM_TASK_KEYS $EM_CONTRACT_ID_RULE Valid contract ids (copy verbatim): $(contract_ids) Keep entries for unrelated tasks byte-identical — completed work is preserved only where entries are unchanged." \
+          "standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:${CONTRACTS_DELTA:-$APPROVED/contracts.json}" "plan-being-revised:tasks/plan.json"
         ensure_plan
         compute_active_delta_scope
         reset_active_delta_tasks
@@ -1504,10 +1778,46 @@ done
 # --- batch halt if anything escalated (batching goal: one operator round-trip) ---
 finalize_batch
 
-# --- all tasks done -> feature verdict is the FULL frozen suite (D-28) -------
-check_budget "full frozen suite"
-echo "=== Full frozen suite ==="
-run_tests
+# --- all tasks done -> feature verdict is the DELTA's mapped set (D-112) ---
+# A feature is judged by what it can touch: the verdict run re-executes the
+# union of every node-id the plan mapped (the per-task projections, re-run
+# together once as the final signal). Carried-forward tests are NOT part of
+# milestone completion (CEO ruling 2026-08-06; see DECISIONS.md D-112); the
+# full frozen suite is an on-demand regression check via --full-suite, where
+# the D-77 triage and the DRIFT halt below apply unchanged. A failure here in
+# mapped scope is real drift by definition — every node was accepted
+# per-task, so a red verdict is an inter-task coupling break.
+#
+# The block between the BEGIN/END markers below is extracted verbatim by
+# scripts/selftest/drive-verdict.sh — keep the markers on their own lines.
+# BEGIN D-112 verdict scope (drive-verdict.sh extracts this block)
+check_budget "feature verdict"
+VERDICT_IDS=()
+if [ "$FULL_SUITE_CHECK" = "1" ]; then
+  echo "=== Full frozen suite (on-demand regression check, D-112) ==="
+  run_tests
+else
+  VERDICT_IDS=()
+  while IFS= read -r _vid; do
+    [ -n "$_vid" ] && VERDICT_IDS+=("$_vid")
+  done < <(python3 -c "
+import json, sys
+p = json.load(open('tasks/plan.json'))
+ids = []
+for t in p.get('tasks', []):
+    for n in t.get('tests', []):
+        if n not in ids:
+            ids.append(n)
+print('\n'.join(ids))")
+  if [ "${#VERDICT_IDS[@]}" -gt 0 ]; then
+    echo "=== Verdict: ${#VERDICT_IDS[@]} delta-mapped test(s) (D-112) ==="
+    run_tests "${VERDICT_IDS[@]}"
+  else
+    echo "=== Verdict: no mapped tests — per-task acceptance is the verdict (D-112) ==="
+    TESTS_RC=0
+  fi
+fi
+# END D-112 verdict scope
 
 # --- D-77: flake triage before declaring drift -------------------------------
 # A failing node that is unmapped in the plan is carried-forward (D-57), but
@@ -1515,9 +1825,11 @@ run_tests
 # behavior. Every failing carried node is therefore re-run twice in isolation.
 # Auto-green requires at least one isolated pass PER node. A node that
 # reproduces 0/2, or whose isolation runs cannot execute within budget, keeps
-# the original full-suite failure red. Any mapped node or collection error also
+# the original verdict failure red. Any mapped node or collection error also
 # keeps the DRIFT path exactly as before. Accepted occurrences persist by spec;
 # the recurring threshold closes the bypass and routes a TPM bundle (D-111).
+# In mapped verdict scope (D-112) every failing node is mapped, so this block
+# is inert: all_carried drops to 0 on the first id and the DRIFT path stands.
 #
 # The block between the BEGIN/END markers below is extracted verbatim by
 # scripts/selftest/drive-drift.sh — keep the markers on their own lines.
@@ -1601,7 +1913,13 @@ fi
 if [ "$TESTS_RC" -eq 0 ]; then
   echo ""
   echo "=========================================="
-  echo "  ALL FROZEN TESTS PASS — feature done"
+  if [ "$FULL_SUITE_CHECK" = "1" ]; then
+    echo "  ALL FROZEN TESTS PASS — feature done"
+  elif [ "${#VERDICT_IDS[@]}" -gt 0 ]; then
+    echo "  ALL DELTA-MAPPED TESTS PASS — feature done"
+  else
+    echo "  PER-TASK ACCEPTANCE PASSED — feature done"
+  fi
   echo "  total run time: $(run_elapsed)s (timings were in $LOG_DIR/timings.tsv)"
   echo "=========================================="
   if [ -n "$FLAKE_RECORDS" ]; then
@@ -1619,11 +1937,18 @@ if [ "$TESTS_RC" -eq 0 ]; then
     --ledger "$COMPLETION_LEDGER" \
     --task-state "$TASK_STATE" \
     || die "full suite passed, but durable completion history could not be recorded"
+  if [ "$FULL_SUITE_CHECK" = "1" ]; then
+    _verdict_note="Full frozen TPM suite green against spec v$FROZEN_V (on-demand regression check, D-112)"
+  elif [ "${#VERDICT_IDS[@]}" -gt 0 ]; then
+    _verdict_note="Delta-mapped frozen tests green against spec v$FROZEN_V — feature done (verdict scope: mapped tests only, D-112)"
+  else
+    _verdict_note="Per-task acceptance green against spec v$FROZEN_V — feature done (no mapped tests; verdict scope, D-112)"
+  fi
   cat >> tasks/CURRENT.md <<EOF
 
 ## Results
 
-  Full frozen TPM suite green against spec v$FROZEN_V. Feature built and validated.${FLAKE_NOTE}
+  $_verdict_note. Feature built and validated.${FLAKE_NOTE}
 EOF
   rm -rf "$STATE_DIR"
   git add tasks/CURRENT.md "$COMPLETION_LEDGER"
@@ -1633,9 +1958,14 @@ EOF
   exit 0
 fi
 
-# tasks green but suite red = SPEC DRIFT: routes EM -> TPM, never coder retries (D-28)
-echo "=== SPEC DRIFT: every task passed its projection but the full suite is red ==="
-drift_evidence="all tasks done and individually green; full suite failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
+# tasks green but the verdict red = SPEC DRIFT: routes EM -> TPM, never coder retries (D-28/D-112)
+if [ "$FULL_SUITE_CHECK" = "1" ]; then
+  echo "=== SPEC DRIFT: every task passed its projection but the full-suite regression check is red ==="
+  drift_evidence="all tasks done and individually green; full-suite regression check failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
+else
+  echo "=== SPEC DRIFT: every task passed its projection but the delta-mapped verdict run is red ==="
+  drift_evidence="all tasks done and individually green; delta-mapped verdict run failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
+fi
 
 # D-111: a carried node that has repeatedly produced isolated-pass flake
 # evidence is now a known frozen-test defect, not an implementation puzzle.
@@ -1649,7 +1979,7 @@ fi
 if [ "$MAX_TASK_STRIKES" -le 1 ]; then
   echo ""
   echo "=========================================="
-  echo "  HALT: spec drift — full suite red"
+  echo "  HALT: spec drift — verdict run red"
   echo "=========================================="
   echo "  $drift_evidence"
   die "spec drift detected — review failing tests, fix the plan or spec, and re-run"
@@ -1659,8 +1989,8 @@ consult_em "DRIFT" "$drift_evidence"
 if [ "$DIAG_VERDICT" = "decomposition_wrong" ] && [ "$(plan_revisions_used)" -lt "$MAX_PLAN_REVISIONS" ]; then
   write_state plan_revisions $(( $(plan_revisions_used) + 1 ))
   em_call tasks/plan.json scripts/schemas/plan.schema.json \
-    "Spec drift: $(python3 -c "import json;print(json.load(open('$DIAG_FILE'))['reason'])"). Rewrite the plan to fix the decomposition and reply with ONLY the JSON (same requirements as before; keep unrelated entries byte-identical). $EM_TASK_KEYS" \
-    "ERD:$APPROVED/ERD.md" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:$APPROVED/contracts.json" "test-nodeids:$APPROVED/test-nodeids" "plan-being-revised:tasks/plan.json"
+    "Spec drift: $(python3 -c "import json;print(json.load(open('$DIAG_FILE'))['reason'])"). Rewrite the plan to fix the decomposition and reply with ONLY the JSON (same requirements as before; keep unrelated entries byte-identical). Map ONLY node-ids from this list, each to exactly one of your tasks: $(plan_mapped_ids). If a listed node-id is not exercised by any file you are planning, OMIT it — the shell routes carried coverage itself (D-119). $EM_TASK_KEYS $EM_CONTRACT_ID_RULE Valid contract ids (copy verbatim): $(contract_ids)" \
+    "standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}" "ERD-delta:$APPROVED/ERD-DELTA.md" "contracts:${CONTRACTS_DELTA:-$APPROVED/contracts.json}" "plan-being-revised:tasks/plan.json"
   ensure_plan
   compute_active_delta_scope
   reset_active_delta_tasks

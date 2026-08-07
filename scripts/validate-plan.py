@@ -128,6 +128,11 @@ ROUTE_REGISTRARS = {"route", "add_api_route", "add_url_rule", "websocket"}
 # Informational — the final full-suite run covers them regardless.
 AUTO_REGRESSION: list = []
 
+# Browser node-ids the gate auto-placed at the DAG's final task (D-64).
+# Filled by validate(); the default main() branch writes the corrected
+# plan back to disk so every downstream reader sees the gate-owned mapping.
+AUTO_PLACED: list = []
+
 
 def fail(msgs):
     for m in msgs:
@@ -586,14 +591,59 @@ def validate():
                         f"{t['id']}'s depends_on."
                     )
 
+    # Placement from frozen data (M35 correction): a node-id pinned by
+    # contracts.test_mapping is accepted at the task owning its pinned
+    # file — the TPM's declared behavioral ownership is the authority,
+    # not any heuristic. The EM maps node-ids "where natural"; the gate
+    # moves each pinned node-id to its declared owner, so a mis-placement
+    # can never mis-gate. Unpinned node-ids fall through to the D-64
+    # browser rule below.
+    mapping = contracts.get("test_mapping", {}) or {}
+    if not isinstance(mapping, dict):
+        fail(["contracts.test_mapping must be an object mapping node-ids "
+              "to the file that behaviorally owns them"])
+    AUTO_PLACED.clear()
+    by_file = {t["file"]: t for t in tasks}
+    if mapping:
+        for t in tasks:
+            moved = []
+            for n in t["tests"]:
+                owner_file = mapping.get(n)
+                if not owner_file or owner_file == t["file"]:
+                    continue
+                owner = by_file.get(owner_file)
+                if owner is None:
+                    errs.append(
+                        f"task {t['id']}: test {n} is pinned by "
+                        f"contracts.test_mapping to {owner_file}, which no "
+                        f"task in this plan owns"
+                    )
+                    continue
+                moved.append(n)
+            if not moved:
+                continue
+            t["tests"] = [n for n in t["tests"] if n not in moved]
+            owner["tests"] = sorted(owner["tests"] + moved)
+            AUTO_PLACED.append(
+                f"{t['id']} -> {owner['id']} (pinned by test_mapping): "
+                f"{', '.join(moved)}"
+            )
+
     # D-64: browser tests observe the app through the DOM, not imports, so
     # the closure analysis above cannot see their dependencies — a Playwright
     # test can exercise ANY inventory file (markup, styling, and scripts all
     # shape what the browser renders). Its only safe acceptance point is a
     # task whose dependency closure contains the ENTIRE inventory, i.e. the
     # DAG's final task. testchat M15: the EM mapped a new browser test to the
-    # markup task twice despite explicit ERD prose; the test structurally
-    # could not pass before the styling task ran — a false task failure.
+    # markup task twice despite explicit ERD prose; M35: the EM repeated the
+    # same mis-placement twice identically, and the closure repair could not
+    # fix it (adding the edge would have closed a cycle). The placement is a
+    # deterministic rule, so it is gate-owned: any browser node-id mapped to
+    # a task with an incomplete closure is MOVED to the final task, not
+    # rejected. The EM prompt no longer states the rule (M35 correction).
+    # M35b: a node-id pinned by contracts.test_mapping is exempt — pinned
+    # behavioral ownership is the authority, and this rule is only the
+    # fallback for UNPINNED browser node-ids.
     def is_browser_test_file(path):
         if path not in ast_cache:
             try:
@@ -613,6 +663,9 @@ def validate():
         return False
 
     all_task_ids = {t["id"] for t in tasks}
+    finals = [t for t in tasks
+              if ({t["id"]} | ancestors(t["id"])) == all_task_ids]
+    final_task = finals[0] if len(finals) == 1 else None
     for t in tasks:
         closure = {t["id"]} | ancestors(t["id"])
         if closure == all_task_ids:
@@ -621,16 +674,38 @@ def validate():
             tf for tf in {n.split("::")[0] for n in t["tests"]}
             if is_browser_test_file(tf)
         )
-        if browser_files:
-            missing = sorted(all_task_ids - closure)
+        if not browser_files:
+            continue
+        if final_task is None:
             errs.append(
                 f"task {t['id']}: browser test file(s) {browser_files} are "
-                f"mapped here, but task(s) {missing} are not in {t['id']}'s "
-                f"dependency closure — a browser test observes the rendered "
-                f"page, which any inventory file can shape, so it can only "
-                f"be accepted at a task downstream of the whole inventory. "
-                f"Map these tests to the DAG's final task."
+                f"mapped here, but the DAG has no single final task — "
+                f"auto-placement impossible (D-64); make the DAG converge or "
+                f"map these tests to a task whose dependency closure "
+                f"contains the entire inventory."
             )
+            continue
+        # A node-id pinned by contracts.test_mapping is exempt: its pinned
+        # owner IS its acceptance point (the M35 authority), so the fallback
+        # must never sweep it off that owner — otherwise the persisted plan
+        # empties a task the acceptance gate then rejects on re-validation
+        # (M35b: the v84 run committed exactly that emptied plan as "plan ok").
+        moved = [n for n in t["tests"]
+                 if n.split("::")[0] in browser_files and mapping.get(n) is None]
+        if not moved:
+            continue
+        t["tests"] = [n for n in t["tests"] if n not in moved]
+        final_task["tests"] = sorted(final_task["tests"] + moved)
+        AUTO_PLACED.append(
+            f"{t['id']} -> {final_task['id']}: {', '.join(browser_files)}"
+        )
+
+    # Non-vacuous acceptance (M35 correction): a task with no mapped test
+    # and no smoke check is rejected — enforced at plan-gate level (see
+    # the "needs an acceptance signal" check above). The complementary
+    # half lives at freeze time: every smoke check must be RED on the
+    # unchanged file (refreeze.sh), so a vacuous check can never satisfy
+    # the invariant.
 
     # oracle projection, part 2 (D-57) — the carried-forward split, computed
     # from the same ownership signals the reachability gates already extract:
@@ -1721,13 +1796,21 @@ def cmd_repair_contracts(plan_path=None):
 
 def main(argv):
     if not argv:
-        validate()
+        plan, _ = validate()
         print("plan ok")
         if AUTO_REGRESSION:
             print(
                 f"validate-plan: {len(AUTO_REGRESSION)} carried-forward "
                 f"node-id(s) auto-assigned to regression (final full-suite "
                 f"acceptance, D-57)", file=sys.stderr,
+            )
+        if AUTO_PLACED:
+            PLAN.write_text(json.dumps(plan, indent=2) + "\n")
+            print(
+                "validate-plan: gate-owned placement (test_mapping/D-64) — "
+                f"node-ids moved to their acceptance task: "
+                f"{'; '.join(AUTO_PLACED)}",
+                file=sys.stderr,
             )
         return
     if argv[0] == "--topo":
