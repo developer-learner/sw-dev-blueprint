@@ -70,7 +70,8 @@ can troubleshoot, and troubleshooting never requires writing anything.
 - Coder failing its task? That is not your cue to write the code. Report
   the strike; the escalation ladder exists for exactly this.
 - Broken or wrong test file? Not your cue to edit it. Tests change only
-  via `scripts/refreeze.sh` with TPM-authored content and CEO approval.
+  via `scripts/refreeze.sh` — TPM-authored content, gate-verification-only
+  with no approval step (D-121).
   Package the evidence and stop.
 - Missing tool (podman, model, git hook)? Not your cue to bypass it.
   Every hard-halt in this repo is a designed halt. Report what is missing
