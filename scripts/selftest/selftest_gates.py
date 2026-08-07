@@ -5739,6 +5739,73 @@ def test_update_template_applies_removal_only_update(template_pull_pair):
     assert subject.startswith("[template-update "), subject
 
 
+def test_update_template_manifest_only_drift(template_pull_pair):
+    """A template-side manifest change with NO content changes must not be
+    swallowed by the 'ref advance only' shortcut: the manifest IS the file-
+    list contract (D-34), so a re-pinned/edited .manifest-template must be
+    installed verbatim and committed as '(manifest verbatim)'. Before the
+    fix, MANIFEST_DRIFT was invisible — the update reported 'already
+    matches' and the child kept the stale file list forever."""
+    child, clone = template_pull_pair
+    template_hello = (clone / "scripts" / "hello.sh").read_bytes()
+    (child / "scripts" / "hello.sh").write_bytes(template_hello)
+    stale_hash = subprocess.run(
+        ["sha256sum", "scripts/hello.sh"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.split()[0]
+    (child / "scripts" / ".manifest-template").write_text(
+        f"0" * 64 + "  scripts/hello.sh\n")
+    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "fixture: content matches, manifest stale"],
+        cwd=child, check=True,
+    )
+
+    r = _run_ut(
+        ["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert repr(r.stdout).find("(manifest verbatim)") != -1, r.stdout
+    template_manifest = (clone / "scripts" / ".manifest-template").read_text()
+    assert (child / "scripts" / ".manifest-template").read_text() == \
+        template_manifest
+    subject = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert subject.endswith("(manifest verbatim)"), subject
+    # hello.sh content untouched by a manifest-only pull.
+    assert (child / "scripts" / "hello.sh").read_bytes() == template_hello
+
+
+def test_update_template_dry_run_reports_manifest_drift(template_pull_pair):
+    """--dry-run must surface manifest-only drift and print a DIFF-SHA for
+    the --approve path — an invisible manifest change is an unapprovable
+    one."""
+    child, clone = template_pull_pair
+    template_hello = (clone / "scripts" / "hello.sh").read_bytes()
+    (child / "scripts" / "hello.sh").write_bytes(template_hello)
+    (child / "scripts" / ".manifest-template").write_text(
+        "0" * 64 + "  scripts/hello.sh\n")
+    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "fixture: content matches, manifest stale"],
+        cwd=child, check=True,
+    )
+    r = _run_ut(
+        ["bash", "scripts/update-template.sh", "--from", str(clone),
+         "--dry-run"],
+        child,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "scripts/.manifest-template" in r.stdout, r.stdout
+    assert "DIFF-SHA" in r.stdout, r.stdout
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=child,
+        capture_output=True, text=True, check=True,
+    )
+    assert not log.stdout.strip().startswith("[template-update "), log.stdout
+
+
 # --- sandbox image build context --------------------------------------------
 
 

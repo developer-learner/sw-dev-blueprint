@@ -146,6 +146,28 @@ for f in $TFILES; do
   } >> "$DIFF_TMP"
 done
 
+# The manifest itself is template-owned and must reach the child verbatim
+# (the file list IS the sync contract). Include it in the diff so a
+# template-side manifest change (new entries, re-pinned hashes) is treated
+# like any other content change instead of being swallowed by the
+# "ref advance only" shortcut.
+MANIFEST_DRIFT=""
+new_m=$(git -C "$CLONE" show "$TARGET:scripts/.manifest-template" | sha256sum | cut -d' ' -f1)
+cur_m=$([ -f scripts/.manifest-template ] && sha256sum scripts/.manifest-template | cut -d' ' -f1 || echo MISSING)
+if [ "$new_m" != "$cur_m" ]; then
+  MANIFEST_DRIFT=1
+  {
+    echo ""
+    echo "--- scripts/.manifest-template ---"
+    if [ -f scripts/.manifest-template ]; then
+      git -C "$CLONE" show "$TARGET:scripts/.manifest-template" | diff -u -L "scripts/.manifest-template (child)" -L "scripts/.manifest-template (template@${TARGET:0:12})" scripts/.manifest-template - || true
+    else
+      echo "(new manifest from template)"
+      git -C "$CLONE" show "$TARGET:scripts/.manifest-template" | head -40
+    fi
+  } >> "$DIFF_TMP"
+fi
+
 # files the child tracks as template-owned that the template no longer lists
 REMOVED=$(comm -23 \
   <(awk '{print $2}' scripts/.manifest-template | sort) \
@@ -176,7 +198,7 @@ DIFF_SHA=$(sha256sum "$DIFF_TMP" | cut -d' ' -f1)
 
 # --- Review-bundle mode: everything a second model needs, nothing written ---
 if [ "$REVIEW" = "1" ]; then
-  if [ -z "$CHANGED$REMOVED" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi
+  if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi
   echo "=== REVIEW BUNDLE: template update -> $SLUG @ ${TARGET:0:12} ==="
   echo ""
   echo "You are a cold adversarial reviewer. Below are (1) CLAIMS — what the"
@@ -200,7 +222,7 @@ if [ "$REVIEW" = "1" ]; then
 fi
 
 cat "$DIFF_TMP"
-if [ -z "$CHANGED$REMOVED" ]; then
+if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then
   echo "control plane already matches template@${TARGET:0:12}"
 else
   echo ""
@@ -208,6 +230,7 @@ else
   echo "  Template update -> $SLUG @ ${TARGET:0:12}"
   [ -n "$CHANGED" ] && echo "  Changed files:$CHANGED"
   [ -n "$REMOVED" ] && { echo "  Removed upstream (applied with this update):"; echo "$REMOVED" | sed 's/^/    /'; }
+  [ -n "$MANIFEST_DRIFT" ] && echo "  Manifest updated: new file list from template (verbatim)"
   echo ""
   echo "  Claims (the template's own commit messages for this update range):"
   echo "$CLAIMS"
@@ -222,7 +245,7 @@ else
 fi
 
 if [ "$DRY" = "1" ]; then
-  if [ -n "$CHANGED$REMOVED" ]; then
+  if [ -n "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then
     echo ""
     echo "DIFF-SHA: $DIFF_SHA"
     echo "(dry run — nothing written; to apply without a terminal, the CEO approves:"
@@ -232,13 +255,26 @@ if [ "$DRY" = "1" ]; then
   fi
   exit 0
 fi
-[ -n "$CHANGED$REMOVED" ] || { # no content changes or removals; advance ref only
+if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then
+  # no content changes, removals, or manifest drift — advance the ref only
   sed_inplace "s/^ref=.*/ref=$TARGET/" .template-version
   bash scripts/regen-manifest.sh scripts/.manifest-project
   git add .template-version scripts/.manifest-project
   git commit -m "[template-update ${TARGET:0:12}] (ref advance only)" 2>/dev/null || echo "(ref already current)"
   exit 0
-}
+fi
+if [ -n "$MANIFEST_DRIFT" ] && [ -z "$CHANGED$REMOVED" ]; then
+  # no content changes, but the template's manifest itself changed (new
+  # entries / re-pinned hashes) — install it verbatim so the file list flows
+  sed_inplace "s/^ref=.*/ref=$TARGET/" .template-version
+  bash scripts/regen-manifest.sh scripts/.manifest-project
+  git -C "$CLONE" show "$TARGET:scripts/.manifest-template" > scripts/.manifest-template
+  bash scripts/phase-gate.sh manifest HEAD || die "post-apply integrity check failed — do not commit; inspect"
+  git add .template-version scripts/.manifest-project scripts/.manifest-template
+  git commit -m "[template-update ${TARGET:0:12}] (manifest verbatim)" 2>/dev/null || echo "(ref already current)"
+  exit 0
+fi
+[ -n "$CHANGED$REMOVED" ] || { echo "update-template: internal error — content changed yet no apply branch taken" >&2; exit 1; }
 
 if [ -n "$APPROVE" ]; then
   # D-61: the hash IS the approval — it binds this apply to the exact diff
