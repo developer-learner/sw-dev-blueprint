@@ -11,6 +11,10 @@
 set -e
 cd "$(git rev-parse --show-toplevel)"
 
+# doc-consistency (2026-08-07): warning-only scan for retired-decision prose.
+# Non-blocking — exits 0 regardless; do not let it fail the commit.
+bash scripts/doc-consistency.sh || true
+
 phase=$(cat .pipeline-state/phase 2>/dev/null || true)
 target=$(cat .pipeline-state/task_target 2>/dev/null || true)
 

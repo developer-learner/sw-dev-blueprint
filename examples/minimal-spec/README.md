@@ -3,7 +3,7 @@
 This is a **real, working example** of the four artifacts the TPM (your
 frontier chat) authors before the pipeline builds anything. This exact spec
 was frozen and built end-to-end by the pipeline on 2026-07-16: two tasks,
-two source files, 21 frozen tests, full suite green on the second run, and
+two source files, 21 frozen tests, verdict green on the second run, and
 the result was a working personal bookmarks API.
 
 Read it to answer the question the docs alone can't: *what do the TPM's

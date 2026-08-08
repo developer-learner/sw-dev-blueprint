@@ -36,8 +36,13 @@
 - 2026-08-07: milestone-trim arc CLOSED in testchat (close-out verdict in
   `testchat/tasks/CURRENT.md`): 291 selftests green, both repos in sync,
   D-121/D-112 doc classes swept to zero. Next trigger = next real milestone
-  freeze (the trim's lineage test). Guard decision (doc-consistency check)
-  is the CEO's; see the testchat close-out.
+  freeze (the trim's lineage test).
+- 2026-08-07: CEO decided **guard-as-warning** — `scripts/doc-consistency.sh`
+  (enumerated retired-token scan over enumerated state-describing docs) is
+  wired into the pre-commit hook, non-blocking by design (D-115: prose has no
+  runtime blast radius). First run caught testchat `README.md:61` (D-121
+  class — README.md was on no sweep list) and `examples/minimal-spec/README.md:6`
+  (D-112 class). Recorded in CLAUDE.md correction log 2026-08-07.
 
 
 ---

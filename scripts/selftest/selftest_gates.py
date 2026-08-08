@@ -6324,3 +6324,49 @@ def test_contract_repair_malformed_plan_noop(repo):
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == ""
     assert plan_path.read_text() == original
+
+
+def test_doc_consistency_warns_on_stale_token(tmp_path):
+    """doc-consistency.sh warns (exit 0) on a stale retired-decision token."""
+    (tmp_path / "BLUEPRINT.md").write_text(
+        "feature is done when the FULL frozen suite is green\n"
+    )
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "doc-consistency.sh"), "--root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert "DOC-CONSISTENCY WARNING" in r.stdout
+    assert "BLUEPRINT.md" in r.stdout
+
+
+def test_doc_consistency_silent_when_clean(tmp_path):
+    """doc-consistency.sh stays silent (and exits 0) on current doctrine."""
+    (tmp_path / "CLAUDE.md").write_text(
+        "delta-mapped verdict green = done (D-112; the full frozen suite is\n"
+        "an on-demand `--full-suite` regression check). No human approval\n"
+        "step (D-121).\n"
+    )
+    (tmp_path / "README.md").write_text(
+        "TPM runs the refreeze — auto-applies when preflights are green.\n"
+    )
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "doc-consistency.sh"), "--root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert r.stdout.strip() == ""
+
+
+def test_doc_consistency_skips_historical_correction_rows(tmp_path):
+    """CLAUDE.md correction-log rows (verbatim records) never warn."""
+    (tmp_path / "CLAUDE.md").write_text(
+        "| 2026-08-07 | sweep for removed tokens (`--approve`, `CEO approval`, "
+        "`through your y/N`) | stayed verbatim |\n"
+    )
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "doc-consistency.sh"), "--root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert r.stdout.strip() == ""
