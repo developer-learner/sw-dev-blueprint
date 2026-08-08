@@ -6518,6 +6518,65 @@ def test_doc_consistency_skips_historical_correction_rows(tmp_path):
     assert r.stdout.strip() == ""
 
 
+def _drift_repo(tmp_path):
+    """A git repo with a control-plane manifest whose hash matches HEAD."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "CONVENTIONS.md").write_text("canonical content\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"],
+        cwd=tmp_path, check=True,
+    )
+    h = subprocess.check_output(
+        ["sha256sum", "CONVENTIONS.md"], cwd=tmp_path, text=True,
+    ).split()[0]
+    (tmp_path / "scripts" / ".manifest-project").write_text(
+        f"{h}  CONVENTIONS.md\n"
+    )
+    return tmp_path
+
+
+def test_manifest_drift_guard_warns_on_staged_control_plane(tmp_path):
+    """Staging a control-plane change without a matching manifest update
+    must warn (exit 0) and print the regen command — the advisories the
+    fail-closed gate can only give after the red commit."""
+    repo = _drift_repo(tmp_path)
+    (repo / "CONVENTIONS.md").write_text("canonical content\n# edited\n")
+    subprocess.run(["git", "add", "CONVENTIONS.md"], cwd=repo, check=True)
+    r = subprocess.run(
+        ["bash", "scripts/manifest-drift-guard.sh", "--root", str(repo)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert "STAGED change to CONVENTIONS.md" in r.stderr
+    assert "scripts/regen-manifest.sh scripts/.manifest-project" in r.stderr
+
+
+def test_manifest_drift_guard_silent_without_staged_change(tmp_path):
+    """A manifest-clean, unstaged tree stays silent (warning-only: no noise
+    on the happy path)."""
+    repo = _drift_repo(tmp_path)
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "manifest-drift-guard.sh"), "--root", str(repo)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert r.stdout.strip() == ""
+    assert r.stderr.strip() == ""
+
+
+def test_manifest_drift_guard_missing_manifest_is_silent(tmp_path):
+    """No manifest → no comparison possible; exit 0, not a halt (the
+    fail-closed manifest gate owns existence, this scan only de-risks it)."""
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "manifest-drift-guard.sh"), "--root", str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert r.stdout.strip() == ""
+    assert r.stderr.strip() == ""
+
+
 METRICS_REPORT = SCRIPTS / "metrics-report.py"
 
 

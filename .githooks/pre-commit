@@ -15,6 +15,12 @@ cd "$(git rev-parse --show-toplevel)"
 # Non-blocking — exits 0 regardless; do not let it fail the commit.
 bash scripts/doc-consistency.sh || true
 
+# manifest-drift-guard (2026-08-08): advisory warning when a STAGED
+# control-plane file changes without a matching manifest update, printing
+# the exact regen-manifest.sh command. Warning-only, exit 0 — the manifest
+# gate below stays the enforcement point.
+bash scripts/manifest-drift-guard.sh || true
+
 phase=$(cat .pipeline-state/phase 2>/dev/null || true)
 target=$(cat .pipeline-state/task_target 2>/dev/null || true)
 
