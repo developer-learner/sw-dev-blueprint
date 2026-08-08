@@ -71,7 +71,7 @@ LM Studio — no specific model required, D-41) and `scripts/bootstrap.sh`.
    app and give you the URL (or command output). Use it the way a real
    user would; check it does what you meant, not what the spec said. This
    is YOUR test suite — outcomes, not code. A milestone closes only when
-   both are true: frozen suite green AND you've accepted the prototype.
+   both are true: the delta's mapped verdict green (D-112) AND you've accepted the prototype.
    If it passes tests but isn't what you meant, that's not a bug — the
    spec is wrong: back to the TPM (step 2) for the next delta.
    - **Record the hand-fix ledger at close-out (D-82).** Have the

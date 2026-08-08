@@ -41,7 +41,7 @@
 
 Mechanical checks:
 
-- Full frozen suite green (`scripts/orchestrate.sh` exit 0)
+- Delta-mapped verdict green (`scripts/orchestrate.sh` exit 0; the full frozen suite is an on-demand `--full-suite` regression check, D-112)
 - `docs/ARCHITECTURE.md` updated if structure changed
 - `docs/DECISIONS.md` updated if a non-obvious choice was made
 - No linter errors (`ruff check src/`)

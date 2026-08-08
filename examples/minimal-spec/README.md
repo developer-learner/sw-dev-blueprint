@@ -16,7 +16,7 @@ artifacts actually look like?*
 | `PRD.md` | Product intent in plain language — the problem, the scope, what's deliberately out | The human + the TPM (for later milestones) |
 | `ERD.md` | The engineering design: file inventory in DAG order, exact signatures, table DDL, route behaviors | The EM derives task briefs from this — precision here is what makes a local model succeed |
 | `contracts.json` | The machine-readable locked surface: file inventory, importable entry points, HTTP routes, error shapes (schema: `scripts/schemas/contracts.schema.json`) | `validate-plan.py` gates the EM's plan against it; `check-test-surface.py` gates the tests (INV-4) |
-| `tests/*_tests.py` | The frozen suite — written **before the implementation exists**, by a tier that never sees it (INV-1) | The shell runs it in the sandbox; green = done |
+| `tests/*_tests.py` | The frozen suite — written **before the implementation exists**, by a tier that never sees it (INV-1) | The shell runs it in the sandbox; the delta-mapped verdict green = done (D-112) |
 
 > The example test files are named `storage_tests.py` / `api_tests.py`
 > (not `test_*.py`) so a bare `pytest` run in a child never collects them —

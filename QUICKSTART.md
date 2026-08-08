@@ -110,7 +110,8 @@ scripts/orchestrate.sh
 What you'll watch: pre-flight (including an LLM round-trip smoke test) → the
 EM decomposes the ERD into a validated 2-task plan → the coder writes
 `src/storage.py` and its mapped tests run sandboxed → same for `src/api.py` →
-full frozen suite → `21 passed` → a `[success]` commit. Most of the elapsed
+delta-mapped verdict → `21 passed` → a `[success]` commit (D-112; the full
+frozen suite is an on-demand `--full-suite` regression check). Most of the elapsed
 time is model inference.
 
 The green suite is the proof, but the app is real: serve it with
@@ -134,7 +135,8 @@ doc — that discipline (Rule 2) is the system, not a suggestion.
 
 You ran the entire trust chain: a human-approved frozen spec, a shell that
 owns all procedure, model seats with no filesystem access, and a sandboxed
-frozen suite as the only definition of done.
+frozen suite as the oracle — the delta-mapped verdict is the definition of
+done (D-112; the full suite is an on-demand `--full-suite` check).
 
 Go deeper strictly on demand:
 
