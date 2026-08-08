@@ -189,7 +189,7 @@ the suite red and creates a TPM bundle instead of granting another bypass
 (D-111; threshold override: `SWBP_FLAKE_ESCALATION_THRESHOLD`).
 
 The sandbox image is built from a cold cache on packaging changes and weekly,
-then inspected for an absent project tree (D-112). This complements the static
+then inspected for an absent project tree (D-123). This complements the static
 Dockerfile/context tests; it does not replace them.
 
 Completion-ledger coverage includes the success-cleanup boundary (D-113): with

@@ -134,7 +134,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-50**: Stack drift killed mechanically — content-hashed sandbox image, podman preflight
 - **D-62**: LM Studio drift probe in orchestrate.sh pre-flight
 - **D-102**: Sandbox image copies only dependency manifests; project state and secrets never enter image layers
-- **D-112**: Clean image builds run on packaging changes and weekly, then verify no project tree is present
+- **D-123**: Clean image builds run on packaging changes and weekly, then verify no project tree is present
 
 ### Frozen spec & TPM shuttle
 
