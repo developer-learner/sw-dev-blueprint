@@ -33,6 +33,28 @@
 > needed. Also temporary context for this session that isn't worth a
 > DECISIONS.md entry.
 
+- **2026-08-08 (handoff)**: S6 reverse-direction lint shipped + amended —
+  `scripts/check-test-direction.py` (+ D-128, D-128 amend): check 1 rejects
+  whole-world URL mocks (bare Mock / fake that ignores its URL param),
+  scoped to delta-touched tests only (testchat's live frozen suite carries 9
+  legacy whole-mock sites — a whole-suite halt would brick every refreeze;
+  caught by the parallel session's live probe, then resurrected as the
+  D-128 amend); check 2 rejects carried tests citing ACs the delta ADDS.
+  Wired as S6 in refreeze.sh after INV-4 (merged preview). 304 selftests,
+  4 of them S6; both repos in sync (drift @ `0598ab6`). Live-suite status:
+  grandfathered (testchat 9) — intended; their eloquence re-cut requires a
+  TPM refreeze. Parallel session: em.md verbatim node-ids (`9a623c6` →
+  testchat `05418dc`) shipped; mypy-into-sandbox parked in that lane;
+  one-writer per control-plane file until both sessions clear.
+- 2026-08-08: current node of the handoff — see `testchat/tasks/CURRENT.md`
+  2026-08-08 section for the CEO-visible handoff (open P1: AC-42 TPM
+  bundle; CEO-demoted MTPLX; two directional decisions waiting on the CEO:
+  manifest-drift hard-gate vs warning, statuses coverage tooling).
+- 2026-08-08: **correction-log row for this column** (both CLAUDE.md):
+  fixture-only gate validation is insufficient — a new refreeze gate must
+  be exercised against the LIVE frozen suite before wiring (Rule 6 on
+  gates; D-128 amend). Also collation guard: grep the shipped preflight
+  list before listing a gate as "to build".
 - 2026-08-07: milestone-trim arc CLOSED in testchat (close-out verdict in
   `testchat/tasks/CURRENT.md`): 291 selftests green, both repos in sync,
   D-121/D-112 doc classes swept to zero. Next trigger = next real milestone
