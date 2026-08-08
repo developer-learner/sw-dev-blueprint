@@ -333,7 +333,7 @@ decision — is retired rather than kept to demonstrate diligence: a verdict
 nobody consumes is not a gate (D-85), and a note nobody reads every freeze
 trains readers to skip the audit line. Retiring a check is doc-level (the
 originating D-entry is amended, D-115), never silent. The hard gates that
-change what a violation does are stop-and-ask to remove (Rule 3); the
+change what a violation does are stop-and-ask to remove (Operating Rule 3); the
 admission rule governs only the advisory/never-blocking layer.
 
 ---

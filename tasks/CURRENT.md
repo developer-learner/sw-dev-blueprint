@@ -9,10 +9,16 @@
 
 ## Active Feature
 
-**Feature:** [FEATURE_NAME]
-**Frozen spec version:** [see `scripts/.approved/VERSION`]
-**Orchestrator state:** [not started | running | exit 0 (done) | exit 1 (failed, see below) | exit 2 (TPM batch pending)]
-**Branch:** `[feature/name]`
+The blueprint is a template repository — it ships no product features of its
+own. "Active work" here means changes to the template itself, tracked in the
+notes below and in `docs/DECISIONS.md`. The per-project instance of this file
+(in a derived repo like testchat) tracks that project's milestone instead,
+using the fields below:
+
+**Feature:** templates/tools — external review remediation pack (INTRO,
+REVIEW, CURRENT, manifest ownership) + child sync queue
+**Frozen spec version:** n/a — the template's own files mutate via its normal
+commits, not `refreeze.sh` (children's specs still freeze there)
 
 ---
 

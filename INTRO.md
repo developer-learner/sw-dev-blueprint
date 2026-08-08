@@ -24,8 +24,10 @@ template holds that line at every step.
 
 Get these five in your head and everything else falls out of them.
 
-**You (the CEO).** You describe intent. You approve freezes. You open the
-finished app and try it. You don't run scripts by hand and you don't read code.
+**You (the CEO).** You describe intent. You open the finished app and try it.
+You don't run scripts by hand and you don't read code. You approve nothing
+mechanically: the freeze auto-applies on green preflights (D-121) and the
+full-suite is an on-demand regression check (D-112).
 
 **A frontier chat (the TPM seat).** Claude.ai, ChatGPT — any of them. You
 paste your app description here and it writes back four documents: a product
@@ -99,8 +101,10 @@ contract, and the test suite. Nothing is checked yet — it's a proposal.
 You paste those four back into your conductor. Running `refreeze.sh` scans
 them (ruff lints the tests, gates check the tests only touch declared APIs
 and are internally consistent), then hashes every file and locks the spec.
-From this moment nothing — no AI, no script — can change what "done" means
-without your explicit re-approval.
+When every mechanical preflight is green the freeze applies automatically —
+there is no human approval step (D-121). From this moment nothing — no AI,
+no script — can change what "done" means; the diff preview is read-only
+until you request it, and a green preflight is what releases the lock.
 
 **Stage 4 — Pre-flight.**
 Running `orchestrate.sh` first checks the world is sane: is LM Studio
@@ -121,9 +125,11 @@ then pytest runs the mapped tests inside a Podman container. Fail once,
 retry. Fail twice, the EM gets called to diagnose. Diagnosis routes to a
 revised brief, a new plan, or a bundle back to you for the TPM.
 
-**Stage 7 — Full test suite.**
-When every task passes its mapped tests, the entire frozen test suite runs
-together. All green → the pipeline creates a `[success]` commit.
+**Stage 7 — Delta-mapped verdict.**
+When every task passes its mapped tests, the run checks the acceptance
+criteria the delta touched (D-112) — the full frozen suite is an on-demand
+regression check (`--full-suite`), not the milestone gate. Green → the
+pipeline creates a `[success]` commit.
 
 **Stage 8 — You open the app.**
 Green tests are necessary, never sufficient. You open the running app in a

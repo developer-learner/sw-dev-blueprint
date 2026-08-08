@@ -34,6 +34,7 @@ fi
 # State-describing docs only. Historical records stay verbatim and excluded:
 # DECISIONS.md, project-trail/, correction-log tables, HANDOFF files.
 DOCS=(
+  "INTRO.md"
   "BLUEPRINT.md"
   "CLAUDE.md"
   "README.md"
