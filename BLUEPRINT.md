@@ -340,8 +340,6 @@ admission rule governs only the advisory/never-blocking layer.
 
 ## Step 0 — Pre-Flight Check (run BEFORE anything else)
 
-## Step 0 — Pre-Flight Check (run BEFORE anything else)
-
 > Do not write code or instantiate until all checks pass. Fail LOUDLY if any
 > check fails — a silent wrong-model is the most common and most expensive failure.
 
