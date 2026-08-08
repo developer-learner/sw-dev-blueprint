@@ -33,6 +33,13 @@
 > needed. Also temporary context for this session that isn't worth a
 > DECISIONS.md entry.
 
+- **2026-08-08 (session end — 2)**: post-handoff hygiene batch closed in
+  testchat (`d0ac352`): AC-48 audit DONE (text recovered from refreeze v20,
+  §5.1 lint fails — re-cut drafted into the next TPM bundle; see testchat
+  BACKLOG.md); `.opencode/node_modules` removed. CEO decision memos
+  (manifest-drift hard-gate vs warning; statuses coverage tooling) were
+  deliberately NOT drafted — they were due to the CEO conversation, and the
+  session stopped there. Both repos clean, in sync at `1f7d1c4`.
 - **2026-08-08 (handoff)**: S6 reverse-direction lint shipped + amended —
   `scripts/check-test-direction.py` (+ D-128, D-128 amend): check 1 rejects
   whole-world URL mocks (bare Mock / fake that ignores its URL param),
