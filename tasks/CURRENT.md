@@ -53,6 +53,13 @@
   per-milestone rows in `.pipeline-state/logs/metrics.tsv` (+ `--evidence`
   block for D-115 retirement entries). Report only, never a gate. Testchat
   carries the mirrored D-126; 299 selftests green.
+- 2026-08-07 (later): durability defect in the metrics layer — `.pipeline-state`
+  is wiped by the success teardown, so the original sink could never
+  accumulate. Fixed same day: sources are now only post-teardown-durable
+  artifacts (`.measurement/counters`, timings copies, `.em-archive`,
+  flake ledger), output moved to `.measurement/metrics.tsv`, and the success
+  path records the row automatically (`|| true`). Correction row logged;
+  D-126 amended in place; 300 selftests green.
 
 
 ---

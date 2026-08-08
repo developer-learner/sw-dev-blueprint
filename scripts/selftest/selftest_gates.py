@@ -6376,30 +6376,39 @@ METRICS_REPORT = SCRIPTS / "metrics-report.py"
 
 
 def _metrics_root(tmp_path, with_git=False):
-    """Build a tmp project root with a milestone run's data substrate."""
-    state = tmp_path / ".pipeline-state" / "logs"
-    state.mkdir(parents=True)
-    (state / "timings.tsv").write_text(
+    """Build a tmp project root with ONLY post-teardown-durable sources.
+
+    Deliberately no .pipeline-state/ at all: the success teardown wipes it
+    (orchestrate.sh), so the metrics row must be recomputable from what
+    outlives the milestone — .measurement/, .em-archive/, the committed
+    flake ledger, and git history (D-108's lesson, applied).
+    """
+    meas = tmp_path / ".measurement"
+    meas.mkdir(parents=True)
+    (meas / "counters").write_text(
+        "2026-08-06T10:00:05Z\texit rc=9 phase=plan task=<none> "
+        "spec=7 revisions=2 elapsed=101s\n"
+        "2026-08-06T10:01:30Z\texit rc=0 phase=<none> task=<none> "
+        "spec=7 revisions=1 elapsed=160s\n"
+        "2026-08-06T10:02:00Z\texit rc=1 phase=<none> task=src/x.py "
+        "spec=8 revisions=1 elapsed=30s\n"
+    )
+    (meas / "timings-2026-08-06T10:01:30Z.tsv").write_text(
         "10:00:00\t0s\trun start (budget 1200s)\n"
         "10:00:05\t5s\tpre-flight\n"
         "10:01:00\t60s\tpytest tests\n"
         "10:01:30\t90s\tem-call plan\n"
         "10:02:30\t150s\tpytest selftest\n"
     )
-    (state / "run-exit.log").write_text(
-        "2026-08-06T10:02:40+00:00\texit=9 elapsed=160s rerun\n"
-        "2026-08-06T10:05:00+00:00\texit=0 elapsed=300s run start\n"
-    )
-    archive = tmp_path / ".em-archive" / "2026-08-06_100100_plan"
-    archive.mkdir(parents=True)
-    (archive / "meta.txt").write_text(
-        "spec_version=7\nverdict=accepted\n"
-    )
-    bad = tmp_path / ".em-archive" / "2026-08-06_100130_diagnosis"
-    bad.mkdir(parents=True)
-    (bad / "meta.txt").write_text(
-        "spec_version=7\noutcome=schema_invalid\n"
-    )
+    for name, meta in (
+        ("2026-08-06_100100_plan", "spec_version=7\nverdict=accepted\n"),
+        ("2026-08-06_100130_diagnosis",
+         "spec_version=7\noutcome=schema_invalid\n"),
+        ("2026-08-06_100200_plan", "spec_version=8\nverdict=accepted\n"),
+    ):
+        d = tmp_path / ".em-archive" / name
+        d.mkdir(parents=True)
+        (d / "meta.txt").write_text(meta)
     (tmp_path / ".pipeline-flakes.json").write_text(
         json.dumps({
             "schema_version": 1,
@@ -6409,6 +6418,7 @@ def _metrics_root(tmp_path, with_git=False):
             },
         })
     )
+    assert not (tmp_path / ".pipeline-state").exists()
     if with_git:
         subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
         subprocess.run(
@@ -6429,7 +6439,7 @@ def test_metrics_report_evidence_on_empty_substrate(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "gate_hours=0.00" in r.stdout
     assert "em_calls=0" in r.stdout
-    assert not (tmp_path / ".pipeline-state" / "logs" / "metrics.tsv").exists()
+    assert not (tmp_path / ".measurement" / "metrics.tsv").exists()
 
 
 def test_metrics_report_records_row_and_is_idempotent(tmp_path):
@@ -6441,7 +6451,7 @@ def test_metrics_report_records_row_and_is_idempotent(tmp_path):
             capture_output=True, text=True,
         )
         assert r.returncode == 0, r.stderr
-    out = root / ".pipeline-state" / "logs" / "metrics.tsv"
+    out = root / ".measurement" / "metrics.tsv"
     lines = out.read_text().splitlines()
     assert lines[0] == "\t".join([
         "milestone", "date", "feature", "gate_hours", "selftest_count",
@@ -6451,12 +6461,26 @@ def test_metrics_report_records_row_and_is_idempotent(tmp_path):
     assert len(lines) == 2
     row = lines[1].split("\t")
     assert row[2] == "v7"                       # feature from [success] subject
-    assert row[3] == "0.04"                     # 150s run
+    assert row[3] == "0.07"                     # (101s + 160s) of spec-7 runs
     assert row[4] == "2" and row[5] == "115"    # two test phases, 55s + 60s
-    assert row[6] == "2" and row[7] == "1"      # calls, schema_invalid waste
+    assert row[6] == "2" and row[7] == "1"      # spec-7 calls, invalid waste
     assert row[8] == "1"                        # flake at spec v7
-    assert row[9] == "1" and row[10] == "1"     # exit=0 vs exit=9 rows
+    assert row[9] == "1" and row[10] == "1"     # rc=0 vs rc=9, spec 7 only
     assert "already recorded" in r.stdout
+
+
+def test_metrics_report_spec_scoping_ignores_other_specs(tmp_path):
+    """Rows for other spec versions (counters/em/flakes) are excluded."""
+    root = _metrics_root(tmp_path, with_git=True)
+    r = subprocess.run(
+        [sys.executable, str(METRICS_REPORT), "--root", str(root),
+         "--evidence"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "em_calls=2" in r.stdout            # the spec-8 entry is excluded
+    assert "success_runs=1  retry_runs=1" in r.stdout
+    assert "feature v7" in r.stdout
 
 
 def test_metrics_report_evidence_matches_recorded_row(tmp_path):
@@ -6470,4 +6494,4 @@ def test_metrics_report_evidence_matches_recorded_row(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "feature v7" in r.stdout
     assert "success_runs=1  retry_runs=1" in r.stdout
-    assert not (root / ".pipeline-state" / "logs" / "metrics.tsv").exists()
+    assert not (root / ".measurement" / "metrics.tsv").exists()

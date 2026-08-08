@@ -154,6 +154,7 @@ COMPLETION_LEDGER=".pipeline-completions.json"
 COMPLETION_LEDGER_TOOL="scripts/completion-ledger.py"
 FLAKE_LEDGER=".pipeline-flakes.json"
 FLAKE_LEDGER_TOOL="scripts/flake-ledger.py"
+METRICS_REPORT_TOOL="scripts/metrics-report.py"
 FLAKE_ESCALATION_THRESHOLD="${SWBP_FLAKE_ESCALATION_THRESHOLD:-3}"
 APPROVED="scripts/.approved"
 mkdir -p "$STATE_DIR" "$TASK_STATE" "$BRIEF_DIR" "$LOG_DIR" "$ESC_DIR"
@@ -1955,6 +1956,11 @@ EOF
   [ ! -f "$FLAKE_LEDGER" ] || git add "$FLAKE_LEDGER"
   git diff --cached --quiet \
     || git commit -m "[success] spec v$FROZEN_V" 2>/dev/null || true
+  # Metrics row (D-126): computed from DURABLE sources that survive the
+  # rm -rf above (..measurement/, .em-archive/, the committed flake ledger).
+  # A report — a failure here must never fail the run.
+  python3 "$METRICS_REPORT_TOOL" --milestone HEAD --feature "v$FROZEN_V" \
+    2>/dev/null || true
   exit 0
 fi
 

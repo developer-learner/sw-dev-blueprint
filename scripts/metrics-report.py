@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
 """
 metrics-report — the metrics layer (D-126): per-milestone aggregate over the
-data the pipeline already writes.
+data the pipeline already writes — read ONLY from artifacts that survive the
+success teardown's `rm -rf .pipeline-state` (orchestrate.sh:1953). D-108's
+lesson, applied: the row must be recomputable after the milestone, from what
+outlives it.
 
-Reads:
-  - .pipeline-state/logs/timings.tsv      per-phase wall clock
-  - .pipeline-state/logs/run-exit.log     run outcomes (exit 0 = success)
-  - .em-archive/*/meta.txt                EM call outcome + gate result
-  - .pipeline-flakes.json                 idempotent per-spec flake history (D-111)
+Durable sources (all survive teardown):
+  - .measurement/counters            per-run exit rows: rc, phase, task,
+                                     spec, elapsed (Phase 5 instrumentation)
+  - .measurement/timings-<TS>.tsv    per-run timings copies
+  - .em-archive/*/meta.txt           EM call outcome + gate result (spec-tagged)
+  - .pipeline-flakes.json            committed per-spec flake history (D-111)
+  - git history                      milestone ref, date, feature version
 
-Appends one TSV row per milestone to .pipeline-state/logs/metrics.tsv
-(idempotent: a milestone+feature already recorded is skipped). With
---evidence it prints the same numbers WITHOUT writing anything — the
-measured-evidence block a D-115 retirement entry must cite.
-
-A report, never a gate: nothing in the completion path reads this file.
-State dirs are gitignored, so the metrics file has no manifest impact.
-Invoke from the project root (or pass --root).
-
-The milestone boundary mirrors feature-summary's: the last `[refreeze vN]`
-commit at-or-before the milestone ref. On an empty substrate everything
-counts zero and the row still records — a milestone with no data is itself
-measured.
+Appends one TSV row per milestone to .measurement/metrics.tsv (idempotent: a
+milestone+feature already recorded is skipped). With --evidence it prints the
+same numbers WITHOUT writing anything — the measured-evidence block a D-115
+retirement entry must cite. A report, never a gate: nothing in the completion
+path reads the output, and a write can never fail a run (wired with `|| true`
+in orchestrate.sh). Invoke from the project root (or pass --root).
 """
 from __future__ import annotations
 
@@ -38,9 +36,11 @@ COLS = [
     "selftest_s", "em_calls", "em_waste", "flakes", "success_runs",
     "retry_runs",
 ]
-METRICS_REL = Path(".pipeline-state") / "logs" / "metrics.tsv"
-RE_REFREEZE_EPOCH = re.compile(r"^\[refreeze v(\d+)\]")
+METRICS_REL = Path(".measurement") / "metrics.tsv"
 RE_FEATURE = re.compile(r"\[(?:success\] spec|refreeze) v(\d+)")
+RE_RC = re.compile(r"rc=(\d+)")
+RE_SPEC = re.compile(r"spec=(\d+)")
+RE_ELAPSED = re.compile(r"elapsed=(\d+)s")
 
 
 def sh(root: Path, *a: str) -> str:
@@ -49,22 +49,43 @@ def sh(root: Path, *a: str) -> str:
     ).stdout.strip()
 
 
-def refreeze_epoch(root: Path, milestone: str) -> int:
-    """Unix epoch of the last [refreeze vN] commit at-or-before milestone."""
-    out = sh(
-        root, "git", "log", milestone, "--grep=^\\[refreeze v", "-1",
-        "--format=%at",
-    )
-    return int(out) if out else 0
-
-
-def resolve_milestone(root: Path, milestone: str) -> tuple[str, str, str]:
+def resolve_milestone(
+    root: Path, milestone: str, feature_override: str
+) -> tuple[str, str, str]:
     """Return (short-ref, commit-date-iso, feature-version)."""
     short = sh(root, "git", "rev-parse", "--short", milestone)
     date = sh(root, "git", "log", "-1", "--format=%ad", "--date=short", milestone)
     subject = sh(root, "git", "log", "-1", "--format=%s", milestone)
     m = RE_FEATURE.search(subject)
-    return short, date or "", m.group(1) if m else ""
+    feature = feature_override or (m.group(1) if m else "")
+    return short, date or "", feature
+
+
+def counter_runs(path: Path, spec: int | None) -> list[dict[str, str]]:
+    """Exit rows in .measurement/counters, filtered to one spec."""
+    if not path.is_file():
+        return []
+    runs = []
+    for line in path.read_text().splitlines():
+        if "exit rc=" not in line:
+            continue
+        rc = RE_RC.search(line)
+        elapsed = RE_ELAPSED.search(line)
+        if not rc or not elapsed:
+            continue
+        m_spec = RE_SPEC.search(line)
+        if spec is not None and (not m_spec or int(m_spec.group(1)) != spec):
+            continue
+        runs.append({"rc": rc.group(1), "elapsed": elapsed.group(1)})
+    return runs
+
+
+def newest_timings_copy(meas_dir: Path) -> Path | None:
+    """The most recent .measurement/timings-<TS>.tsv, by timestamp sort."""
+    if not meas_dir.is_dir():
+        return None
+    copies = sorted(meas_dir.glob("timings-*.tsv"))
+    return copies[-1] if copies else None
 
 
 def read_timings(path: Path) -> list[tuple[int, str]]:
@@ -86,39 +107,54 @@ def read_timings(path: Path) -> list[tuple[int, str]]:
     return rows
 
 
-def em_outcomes(archive: Path, since_epoch: int) -> tuple[int, int]:
-    """(em_calls, em_waste) — archived EM calls at-or-after the boundary."""
+def selftest_stats(path: Path | None) -> tuple[int, int]:
+    """(selftest_count, selftest_s) from the newest timings copy."""
+    if path is None:
+        return 0, 0
+    count = 0
+    seconds = 0
+    prev = 0
+    for elapsed, label in read_timings(path):
+        dt = max(0, elapsed - prev)
+        prev = elapsed
+        if "tests" in label or "pytest" in label:
+            count += 1
+            seconds += dt
+    return count, seconds
+
+
+def em_outcomes(archive: Path, spec: int | None) -> tuple[int, int]:
+    """(em_calls, em_waste) — EM calls whose meta tags this spec version."""
     if not archive.is_dir():
         return 0, 0
     calls = waste = 0
     for d in sorted(archive.iterdir()):
-        if not d.is_dir() or d.stat().st_mtime < since_epoch:
+        if not d.is_dir():
             continue
         meta = d / "meta.txt"
         if not meta.is_file():
             continue
-        calls += 1
+        entry_spec = None
         outcome = "ok"
         for line in meta.read_text().splitlines():
-            if line.startswith("plan_gate="):
+            if line.startswith("spec_version="):
+                entry_spec = line.split("=", 1)[1].strip()
+            elif line.startswith("plan_gate="):
                 outcome = line.split("=", 1)[1]
             elif line.startswith("verdict="):
                 outcome = line.split("=", 1)[1]
             elif line.startswith("outcome=") and outcome == "ok":
                 outcome = line.split("=", 1)[1]
+        if spec is not None and entry_spec != str(spec):
+            continue
+        calls += 1
         if outcome not in ("ok", "accepted", "valid"):
             waste += 1
     return calls, waste
 
 
 def flake_count(path: Path, feature: str) -> int:
-    """Events with spec_version == feature across all nodes (D-111 ledger).
-
-    This is a milestone-wide query the per-nodeid ledger CLI does not offer,
-    so the file is read directly with the same schema expectations. A
-    malformed or absent ledger counts zero; an unparseable feature counts
-    zero (the evidence block says so).
-    """
+    """Events with spec_version == feature across all nodes (D-111 ledger)."""
     if not feature or not path.is_file():
         return 0
     try:
@@ -140,51 +176,19 @@ def flake_count(path: Path, feature: str) -> int:
     return count
 
 
-def run_outcomes(path: Path, since_epoch: int) -> tuple[int, int]:
-    """(success_runs, retry_runs) from run-exit.log rows at-or-after boundary."""
-    if not path.is_file():
-        return 0, 0
-    success = retries = 0
-    for line in path.read_text().splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("\t", 1)
-        try:
-            ts = datetime.fromisoformat(parts[0].replace("Z", "+00:00")).timestamp()
-        except (ValueError, IndexError):
-            continue
-        if ts < since_epoch:
-            continue
-        m = re.search(r"exit=(\d+)", line)
-        if m and int(m.group(1)) == 0:
-            success += 1
-        elif m:
-            retries += 1
-    return success, retries
-
-
-def compute(root: Path, milestone: str) -> dict[str, str]:
-    state = root / ".pipeline-state"
+def compute(root: Path, milestone: str, feature_override: str) -> dict[str, str]:
+    meas_dir = root / ".measurement"
     archive = root / ".em-archive"
-    since = refreeze_epoch(root, milestone)
-    short, date, feature = resolve_milestone(root, milestone)
+    short, date, feature = resolve_milestone(root, milestone, feature_override)
+    spec = int(feature) if feature else None
 
-    timings = read_timings(state / "logs" / "timings.tsv")
-    gate_hours = 0.0
-    selftest_count = 0
-    selftest_s = 0
-    prev = 0
-    for elapsed, label in timings:
-        dt = max(0, elapsed - prev)
-        prev = elapsed
-        gate_hours = elapsed / 3600.0
-        if "tests" in label or "pytest" in label:
-            selftest_count += 1
-            selftest_s += dt
-    em_calls, em_waste = em_outcomes(archive, since)
-    success, retries = run_outcomes(
-        state / "logs" / "run-exit.log", since
-    )
+    runs = counter_runs(meas_dir / "counters", spec)
+    gate_hours = sum(int(r["elapsed"]) for r in runs) / 3600.0
+    success = sum(1 for r in runs if r["rc"] == "0")
+    retries = len(runs) - success
+
+    selftest_count, selftest_s = selftest_stats(newest_timings_copy(meas_dir))
+    em_calls, em_waste = em_outcomes(archive, spec)
 
     return {
         "milestone": short,
@@ -241,12 +245,16 @@ def main(argv: list[str] | None = None) -> int:
         help="git ref of the milestone to measure (default HEAD)",
     )
     parser.add_argument(
+        "--feature", default="",
+        help="explicit spec version (e.g. v84); overrides subject parsing",
+    )
+    parser.add_argument(
         "--evidence", action="store_true",
         help="print the measured-evidence block without writing metrics.tsv",
     )
     args = parser.parse_args(argv)
 
-    row = compute(args.root, args.milestone)
+    row = compute(args.root, args.milestone, args.feature)
     if args.evidence:
         print(evidence_block(row))
         return 0
