@@ -149,8 +149,9 @@ only in the CEO-facing conductor seat, which never touches trusted state.
 TPM spec frozen (`refreeze.sh` — applies automatically when every
 mechanical preflight is green, D-95/D-121; `--diff` shows a read-only
 preview) → `scripts/orchestrate.sh` → EM emits plan → validated → coder executes
-one task at a time → mapped frozen tests + gate after each → full frozen suite
-green = done. Failures climb the escalation ladder (`docs/ESCALATION.md`);
+one task at a time → mapped frozen tests + gate after each →
+delta-mapped verdict green = done (D-112; the full frozen suite is an
+on-demand `--full-suite` regression check). Failures climb the escalation ladder (`docs/ESCALATION.md`);
 spec problems come back as a batched bundle for the TPM web chat and
 re-enter via `refreeze.sh`.
 

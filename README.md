@@ -115,7 +115,7 @@ CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside the conduc
                 Coder (one HTTP completion, no tools, D-53) replies with the
                 file ──► shell writes it ──► phase-gate task ──► mapped frozen tests
                           │
-              all tasks done ──► FULL frozen suite green = done
+              all tasks done ──► delta-mapped verdict green = done (D-112)
                 fail → escalation ladder (retry → EM consult → bounded revisions
                         → batched TPM bundle → refreeze → affected subtree resumes)
 ```
@@ -188,7 +188,9 @@ see BLUEPRINT.md Rule 9.
    filesystem access — the shell writes the reply to disk), mapped frozen
    tests then run **inside** a read-only-repo sandbox (`--network none`,
    `.cache/` writable), lane gates re-check after every phase, and the
-   feature is done only when the FULL frozen suite is green. Exit 2 means an
+   feature is done when the delta's mapped verdict is green (D-112; the
+   full frozen suite is an on-demand `--full-suite` regression check).
+   Exit 2 means an
    escalation batch is waiting in `.pipeline-state/escalations/BATCH.md` —
    paste it into the TPM chat, stage the returned delta, refreeze, re-run.
 

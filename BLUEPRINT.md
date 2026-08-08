@@ -412,7 +412,7 @@ CEO business intent ──► TPM (frontier LLM — web chat D-38 or scoped repo
                 file, sentinel-wrapped ──► shell writes it ──► phase-gate task
                 ──► mapped frozen tests
                           │
-              all tasks done ──► FULL frozen suite green = done
+              all tasks done ──► delta-mapped verdict green = done (D-112)
                           │        exact task/output hashes recorded in
                           │        .pipeline-completions.json before cleanup;
                           │        later runs recover prior spec continuity,
