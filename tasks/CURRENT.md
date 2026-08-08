@@ -48,6 +48,11 @@
   D-112/D-116..D-120/D-122 back-ported from testchat verbatim. Both ledgers
   now agree number-for-number. Guard rule (correction log): code back-ports
   carry their DECISIONS entries in the same operation.
+- 2026-08-07: metrics layer landed (D-126, CEO: shipping-pipeline verdict) —
+  `scripts/metrics-report.py` aggregates the existing substrate into
+  per-milestone rows in `.pipeline-state/logs/metrics.tsv` (+ `--evidence`
+  block for D-115 retirement entries). Report only, never a gate. Testchat
+  carries the mirrored D-126; 299 selftests green.
 
 
 ---

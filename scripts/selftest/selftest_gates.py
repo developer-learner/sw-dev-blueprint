@@ -6370,3 +6370,104 @@ def test_doc_consistency_skips_historical_correction_rows(tmp_path):
     )
     assert r.returncode == 0
     assert r.stdout.strip() == ""
+
+
+METRICS_REPORT = SCRIPTS / "metrics-report.py"
+
+
+def _metrics_root(tmp_path, with_git=False):
+    """Build a tmp project root with a milestone run's data substrate."""
+    state = tmp_path / ".pipeline-state" / "logs"
+    state.mkdir(parents=True)
+    (state / "timings.tsv").write_text(
+        "10:00:00\t0s\trun start (budget 1200s)\n"
+        "10:00:05\t5s\tpre-flight\n"
+        "10:01:00\t60s\tpytest tests\n"
+        "10:01:30\t90s\tem-call plan\n"
+        "10:02:30\t150s\tpytest selftest\n"
+    )
+    (state / "run-exit.log").write_text(
+        "2026-08-06T10:02:40+00:00\texit=9 elapsed=160s rerun\n"
+        "2026-08-06T10:05:00+00:00\texit=0 elapsed=300s run start\n"
+    )
+    archive = tmp_path / ".em-archive" / "2026-08-06_100100_plan"
+    archive.mkdir(parents=True)
+    (archive / "meta.txt").write_text(
+        "spec_version=7\nverdict=accepted\n"
+    )
+    bad = tmp_path / ".em-archive" / "2026-08-06_100130_diagnosis"
+    bad.mkdir(parents=True)
+    (bad / "meta.txt").write_text(
+        "spec_version=7\noutcome=schema_invalid\n"
+    )
+    (tmp_path / ".pipeline-flakes.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "nodes": {
+                "T1": [{"spec_version": 6, "isolation_passes": 1}],
+                "T2": [{"spec_version": 7, "isolation_passes": 2}],
+            },
+        })
+    )
+    if with_git:
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t",
+             "commit", "-q",              "--allow-empty", "-m", "[success] spec v7"],
+            cwd=tmp_path, check=True,
+        )
+    return tmp_path
+
+
+def test_metrics_report_evidence_on_empty_substrate(tmp_path):
+    """--evidence on an empty substrate prints zeros and writes nothing."""
+    r = subprocess.run(
+        [sys.executable, str(METRICS_REPORT), "--root", str(tmp_path),
+         "--evidence"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "gate_hours=0.00" in r.stdout
+    assert "em_calls=0" in r.stdout
+    assert not (tmp_path / ".pipeline-state" / "logs" / "metrics.tsv").exists()
+
+
+def test_metrics_report_records_row_and_is_idempotent(tmp_path):
+    """Append mode records one row per milestone+feature, never duplicates."""
+    root = _metrics_root(tmp_path, with_git=True)
+    for _ in range(2):
+        r = subprocess.run(
+            [sys.executable, str(METRICS_REPORT), "--root", str(root)],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0, r.stderr
+    out = root / ".pipeline-state" / "logs" / "metrics.tsv"
+    lines = out.read_text().splitlines()
+    assert lines[0] == "\t".join([
+        "milestone", "date", "feature", "gate_hours", "selftest_count",
+        "selftest_s", "em_calls", "em_waste", "flakes", "success_runs",
+        "retry_runs",
+    ])
+    assert len(lines) == 2
+    row = lines[1].split("\t")
+    assert row[2] == "v7"                       # feature from [success] subject
+    assert row[3] == "0.04"                     # 150s run
+    assert row[4] == "2" and row[5] == "115"    # two test phases, 55s + 60s
+    assert row[6] == "2" and row[7] == "1"      # calls, schema_invalid waste
+    assert row[8] == "1"                        # flake at spec v7
+    assert row[9] == "1" and row[10] == "1"     # exit=0 vs exit=9 rows
+    assert "already recorded" in r.stdout
+
+
+def test_metrics_report_evidence_matches_recorded_row(tmp_path):
+    """--evidence prints the same numbers the recorded row carries."""
+    root = _metrics_root(tmp_path, with_git=True)
+    r = subprocess.run(
+        [sys.executable, str(METRICS_REPORT), "--root", str(root),
+         "--evidence"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "feature v7" in r.stdout
+    assert "success_runs=1  retry_runs=1" in r.stdout
+    assert not (root / ".pipeline-state" / "logs" / "metrics.tsv").exists()
