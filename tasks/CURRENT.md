@@ -80,3 +80,8 @@ The one judgment check (D-44 — the CEO's gate, never skipped or delegated):
   Record the acceptance here with a date.
 
 Then: branch merged to main; entry moved to `BACKLOG.md` completed table
+- 2026-08-08: sandbox privilege property verified + pinned (D-127): the container
+  has run as agent/1000 since the template bootstrap (verified live in the
+  dev-vm); the M29 backlog premise ("container ran as root") was stale —
+  that incident was macOS-vs-Linux psutil semantics. The constraint-2
+  verifier now asserts non-root uid (check 6).

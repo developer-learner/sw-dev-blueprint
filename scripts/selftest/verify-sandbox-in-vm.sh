@@ -108,6 +108,23 @@ rm -f tests/test_sandbox_trivial.py .cache/test-report.json .cache/sandbox-test
 rmdir tests 2>/dev/null || true
 echo ""
 
+# 6. Sandbox runs unprivileged
+# D-127: the frozen suite must never run as root — a root user can pass
+# capability-gated code that production (a normal user) cannot. Containerfile
+# ends with `USER agent` and sandbox-run.sh runs --cap-drop=ALL etc.; this
+# check pins the property against a regressed image (USER root, dropped
+# cap-drop) failing selftests outright.
+echo "[6] Sandbox process is non-root..."
+SANDBOX_UID=$(scripts/sandbox-run.sh -- sh -c 'id -u' 2>/dev/null || true)
+if [ -n "$SANDBOX_UID" ] && [ "$SANDBOX_UID" != "0" ]; then
+  echo "  PASS: sandbox uid is $SANDBOX_UID (non-root)"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: sandbox uid is '${SANDBOX_UID:-unset}' (root or unknown)"
+  fail=$((fail + 1))
+fi
+echo ""
+
 # Summary
 echo "=== Results: $pass passed, $fail failed ==="
 if [ "$fail" -gt 0 ]; then
