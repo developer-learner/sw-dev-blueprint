@@ -33,6 +33,15 @@ Modes:
   validate-plan.py --affected DELTA.json [DELTA.json ...]
                                             print ids invalidated across re-freezes
                                             delta, including transitive dependents
+  validate-plan.py --milestone-scope DELTA.json [DELTA.json ...]
+                                            print the authoritative milestone
+                                            node-id scope (sorted-unique, one per
+                                            line): the SAME producer the subtree
+                                            scope uses for map_nodeids, consumed
+                                            by orchestrate's full-emission EM
+                                            prompt (D-130). Raw changed_tests are
+                                            file-granular; the frozen test_mapping
+                                            pins which tests the milestone owns.
   validate-plan.py --diagnosis FILE         validate an EM diagnosis; print its verdict
   validate-plan.py --spec-preflight OLD NEW
                                                     D-78 freeze-time satisfiability: every
@@ -1265,11 +1274,53 @@ def spec_preflight(old_path, new_path):
           f"implementable by the inventory")
 
 
-def _hit_task_ids(tasks, delta):
+def _id_family(node_id):
+    """The stable family of a test node-id: module-prefix + bare test name,
+    with any parametrization suffix stripped. Node-ids legitimately flip
+    between `module::name[chromium]` and `module::name` (D-116/D-124); the
+    family is the form the slice matches on, so the milestone intersection
+    cannot be falsified by a presentation shape in either direction."""
+    module, sep, name = node_id.rpartition("::")
+    return (module + "::" + name.split("[", 1)[0]) if sep else node_id
+
+
+def milestone_scope_ids(mapping, changed_files, changed_tests):
+    """The authoritative milestone node-id set for ONE delta: which of its
+    raw changed_tests the milestone actually owns, per the frozen
+    test_mapping. Raw deltas carry changed_tests at FILE granularity —
+    orchestrate-testchat v87: a 2-comment-line diff in tests/test_ui.py
+    staged 58 node-ids, of which only the 6 the TPM pinned were the
+    milestone's; the other 52 were relabeled leftovers (D-116 class) that
+    leaked into the EM scope and the invalidation set (audit 2026-08-08).
+
+    Rule: a changed test belongs to the milestone iff its family is among
+    the pinned mapping keys (family-matched, so the slice survives either
+    id shape), plus any pinned id whose owner FILE the delta staged — the
+    D-124 completeness repair, preserved. When the mapping carries no
+    pins, the slice is inert and the raw set rides (nothing to slice
+    against yet).
+    """
+    if not mapping:
+        return list(changed_tests)
+    pinned = {_id_family(k) for k in mapping}
+    scope = {n for n in changed_tests if _id_family(n) in pinned}
+    scope |= {n for n, owner in mapping.items()
+              if owner in set(changed_files)}
+    return sorted(scope)
+
+
+def _hit_task_ids(tasks, delta, test_slice=None):
     """Task ids a delta invalidates: direct hits (a mapped test changed, a
     referenced contract changed, or the task's file is in the declared
-    changed_files) plus transitive dependents."""
-    changed_tests = set(delta.get("changed_tests", []))
+    changed_files) plus transitive dependents.
+
+    `test_slice`, when given, is the run's authoritative
+    milestone_scope_ids for this delta — callers pass it when consuming
+    the raw changed_tests directly would invalidate tasks the milestone
+    never touched (the v87 58-id leak)."""
+    changed_tests = set(test_slice
+                        if test_slice is not None
+                        else delta.get("changed_tests", []))
     changed_contracts = set(delta.get("changed_contract_ids", []))
     changed_files = set(delta.get("changed_files", []))
     by_id = {t["id"]: t for t in tasks}
@@ -1293,12 +1344,37 @@ def _hit_task_ids(tasks, delta):
 
 def cmd_affected(delta_paths):
     plan, _ = validate()
+    contracts = load_json(CONTRACTS, "frozen contracts")
+    mapping = contracts.get("test_mapping") or {}
     hit = set()
     for delta_path in delta_paths:
         delta = load_json(Path(delta_path), "delta")
-        hit.update(_hit_task_ids(plan["tasks"], delta))
+        # D-130: same authoritative milestone slice as the subtree scope —
+        # relabeled leftover ids (D-116) must not reset tasks the milestone
+        # did not touch, or a completed M33-class task re-runs on churn.
+        slice_ids = milestone_scope_ids(
+            mapping, delta.get("changed_files", []),
+            delta.get("changed_tests", []))
+        hit.update(_hit_task_ids(plan["tasks"], delta, slice_ids))
     for tid in sorted(hit):
         print(tid)
+
+
+def cmd_milestone_scope(delta_paths):
+    """Print the authoritative milestone node-id scope (one per line,
+    sorted-unique) for a set of active deltas: the SAME producer the
+    subtree scope uses for map_nodeids, so the full-emission EM prompt
+    and the subtree re-plan can never disagree on what the milestone
+    is (D-130). Raw deltas' changed_tests are file-granular; this is the
+    tiny-diff/big-file trim (58 -> 6 for orchestrate-testchat v87)."""
+    contracts = load_json(CONTRACTS, "frozen contracts")
+    mapping = contracts.get("test_mapping") or {}
+    ids = []
+    for p in delta_paths:
+        d = load_json(Path(p), f"delta {p}")
+        ids += milestone_scope_ids(mapping, d.get("changed_files", []),
+                                   d.get("changed_tests", []))
+    print("\n".join(sorted(set(ids))))
 
 
 def _load_plan_lenient(path, what="prior plan"):
@@ -1355,12 +1431,23 @@ def cmd_subtree_scope(prior_path, delta_paths):
               f"— carried briefs and dependencies may assume them; re-plan "
               f"in full"])
     deltas = [load_json(Path(p), f"delta {p}") for p in delta_paths]
+    mapping = contracts.get("test_mapping") or {}
     hit = set()
     changed_tests = set()
     contract_changed = False
     for d in deltas:
-        hit |= _hit_task_ids(tasks, d)
-        changed_tests |= set(d.get("changed_tests", []))
+        # D-130: the delta's authoritative milestone slice (mapping ∩
+        # changed tests, family-matched) drives BOTH what invalidates and
+        # what the EM maps. Raw changed_tests are file-granular: a tiny
+        # diff in a big test file stages every node-id it contains, but
+        # only the pinned test-level set is this milestone's work — the
+        # rest (relabeled leftovers, D-116) must neither re-plan carried
+        # tasks nor enter map_ids (audit 2026-08-08: v87 staged 6 real +
+        # 52 relabeled; the run re-emitted and re-mapped all 58).
+        slice_ids = milestone_scope_ids(
+            mapping, d.get("changed_files", []), d.get("changed_tests", []))
+        hit |= _hit_task_ids(tasks, d, slice_ids)
+        changed_tests |= set(slice_ids)
         if d.get("changed_contract_ids"):
             contract_changed = True
     reemit = [{"file": t["file"], "keep_id": t["id"]}
@@ -1837,6 +1924,9 @@ def main(argv):
         return
     if argv[0] == "--affected" and len(argv) >= 2:
         cmd_affected(argv[1:])
+        return
+    if argv[0] == "--milestone-scope" and len(argv) >= 2:
+        cmd_milestone_scope(argv[1:])
         return
     if argv[0] == "--subtree-scope" and len(argv) >= 3:
         cmd_subtree_scope(argv[1], argv[2:])

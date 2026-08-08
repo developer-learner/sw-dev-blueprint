@@ -5058,6 +5058,163 @@ def test_subtree_scope_docs_only_em_not_needed(subtree_repo):
     assert s["em_needed"] is False
 
 
+def _vp_module():
+    """The validate-plan.py module under test (guarded __main__: safe)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "validate_plan_under_test", VALIDATE_PLAN)
+    vp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vp)
+    return vp
+
+
+# The orchestrate-testchat v87 leak, distilled: M35's real milestone is 6
+# pinned tests; its DELTA-v87.json carried 58 changed_tests — the 6 real
+# node-ids plus 52 relabeled leftovers from old ids of the same test file
+# (D-116 class: parametrized shape vs bare name, both families present).
+MILESTONE_MAPPING = {
+    "tests/test_ui.py::test_more": "src/static/app.js",
+    "tests/test_ui.py::test_vspeed": "src/static/app.js",
+    "tests/test_ui.py::test_layout[chromium]": "src/static/app.js",
+    "tests/test_ui.py::test_save": "src/static/app.js",
+    "tests/test_ui.py::test_load": "src/static/app.js",
+    "tests/test_ui.py::test_del": "src/static/app.js",
+}
+MILESTONE_RAW = [  # the 6 real (two spellings of the pinned families) ...
+    "tests/test_ui.py::test_more", "tests/test_ui.py::test_vspeed",
+    "tests/test_ui.py::test_layout", "tests/test_ui.py::test_save",
+    "tests/test_ui.py::test_load", "tests/test_ui.py::test_del",
+] + [
+    # ... plus 52 relabeled leftovers whose families are pinned NOWHERE
+    f"tests/test_ui.py::test_unpinned_{i}[chromium]" for i in range(52)
+]
+MILESTONE_FAMILIES = {  # pinned families, in bare-name form
+    "tests/test_ui.py::test_more", "tests/test_ui.py::test_vspeed",
+    "tests/test_ui.py::test_layout", "tests/test_ui.py::test_save",
+    "tests/test_ui.py::test_load", "tests/test_ui.py::test_del",
+}
+
+
+def test_milestone_scope_slices_relabel_to_pins():
+    """D-130: 58 raw changed_tests -> the 6 pinned milestone tests; a
+    family match, not an exact-id match, so either id shape rides."""
+    vp = _vp_module()
+    got = vp.milestone_scope_ids(MILESTONE_MAPPING, [], MILESTONE_RAW)
+    assert len(got) == 6
+    assert {vp._id_family(n) for n in got} == MILESTONE_FAMILIES
+
+
+def test_milestone_scope_inert_without_pins():
+    """A freeze with no test_mapping yet slices nothing — raw rides until a
+    pin table exists; the trim must not bite before the TPM authored pins."""
+    vp = _vp_module()
+    got = vp.milestone_scope_ids({}, [], ["tests/test_ui.py::test_a"])
+    assert got == ["tests/test_ui.py::test_a"]
+
+
+def test_milestone_scope_keeps_pinned_of_staged_file():
+    """D-124 completeness repair preserved inside the producer: a pinned
+    id whose owner FILE the delta staged rides the scope even when the
+    relabel-class producer dropped it from changed_tests entirely."""
+    vp = _vp_module()
+    mapping = {"tests/test_ui.py::test_more": "src/static/app.js"}
+    got = vp.milestone_scope_ids(mapping, ["src/static/app.js"], [])
+    assert got == ["tests/test_ui.py::test_more"]
+
+
+def run_milestone_scope(repo, *deltas):
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--milestone-scope", *deltas],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_subtree_scope_uses_milestone_slice(subtree_repo):
+    """The re-plan scope sees the slice, not the raw file-granular delta:
+    v87's 58-stage -> 6 pinned; an unpinned relabel id mapped to a prior
+    task neither re-plans it nor joins map_nodeids."""
+    c = dict(SUB_CONTRACTS, files=["src/a.py", "src/b.py", "src/c.py"])
+    c["test_mapping"] = {
+        "tests/test_b.py::test_two": "src/b.py",
+        "tests/test_b.py::test_three": "src/b.py",
+    }
+    (subtree_repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(c))
+    dirty = ["tests/test_b.py::test_two",
+             "tests/test_b.py::test_three"] + \
+        [f"tests/test_b.py::test_stale_{i}[chromium]" for i in range(40)]
+    (subtree_repo / "d.json").write_text(json.dumps(
+        {"changed_contract_ids": [], "changed_tests": dirty,
+         "changed_files": []}))
+    s = json.loads(run_scope(subtree_repo, "d.json").stdout)
+    assert {e["keep_id"] for e in s["reemit"]} == {"T2"}
+    assert set(s["map_nodeids"]) == {
+        "tests/test_b.py::test_two", "tests/test_b.py::test_three"}
+    ms = run_milestone_scope(subtree_repo, "d.json")
+    assert ms.returncode == 0, ms.stderr
+    assert ms.stdout.split() == s["map_nodeids"]
+
+
+def test_milestone_scope_matches_tree_end_to_end(subtree_repo):
+    """--milestone-scope and --subtree-scope's map_nodeids share the same
+    producer — parity is the review's structural requirement (D-132)."""
+    c = dict(SUB_CONTRACTS, test_mapping={
+        "tests/test_b.py::test_two": "src/b.py",
+        "tests/test_b.py::test_three": "src/b.py",
+    })
+    (subtree_repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(c))
+    (subtree_repo / "d.json").write_text(json.dumps(
+        {"changed_contract_ids": [], "changed_tests": [
+            "tests/test_b.py::test_two", "tests/test_b.py::test_three"],
+         "changed_files": []}))
+    r = run_scope(subtree_repo, "d.json")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    tree = json.loads(r.stdout)
+    ms = run_milestone_scope(subtree_repo, "d.json")
+    assert ms.returncode == 0, ms.stderr
+    assert ms.stdout.split() == tree["map_nodeids"]
+
+
+def test_affected_uses_milestone_slice(subtree_repo):
+    """--affected (the task-state reset scope) must NOT reset a task the
+    milestone did not touch: a relabel-only hit stays carried, the pinned
+    ones re-plan exactly. Fixture written to tasks/plan.json because
+    --affected validates the CURRENT plan first."""
+    c = dict(SUB_CONTRACTS, files=["src/a.py", "src/b.py", "src/c.py"],
+             test_mapping={
+                 "tests/test_b.py::test_two": "src/b.py",
+                 "tests/test_b.py::test_three": "src/b.py",
+             })
+    (subtree_repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(c))
+    (subtree_repo / "tasks" / "plan.json").write_text(json.dumps({
+        "version": 4,
+        "erd_version": 2,
+        "tasks": [
+            {"id": "T1", "file": "src/a.py", "depends_on": [],
+             "brief": "build a", "contracts": [],
+             "tests": ["tests/test_a.py::test_one"]},
+            {"id": "T2", "file": "src/b.py", "depends_on": ["T1"],
+             "brief": "build b", "contracts": [],
+             "tests": ["tests/test_b.py::test_two",
+                       "tests/test_b.py::test_three"]},
+            {"id": "T3", "file": "src/c.py", "depends_on": ["T2"],
+             "brief": "build c", "contracts": [],
+             "tests": ["tests/test_c.py::test_four"]},
+        ],
+    }))
+    (subtree_repo / "d.json").write_text(json.dumps(
+        {"changed_contract_ids": [], "changed_tests": [
+            "tests/test_b.py::test_two"] + [
+            f"tests/test_b.py::test_stale_{i}[chromium]" for i in range(40)],
+         "changed_files": []}))
+    r = run_affected(subtree_repo, "d.json")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert set(r.stdout.split()) == {"T2", "T3"}
+    assert "T1" not in r.stdout.split()
+
+
 def test_merge_subtree_produces_fully_valid_plan(subtree_repo):
     """THE Fix A property: carried tasks verbatim + EM subtree, and the
     merged artifact passes the FULL validate() gate unchanged — bijection,

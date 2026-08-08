@@ -1072,44 +1072,23 @@ print(f\"{len(s['reemit'])} re-plan + {len(s['new_files'])} new file(s), {len(s[
 ensure_plan() {
   local verrs revs subtree_feedback=""
   plan_subtree_prepare
-  # D-124: the full-emission EM call ships the delta-scoped node-id set, not
-  # the accumulated suite — the union of the active deltas' changed_tests,
-  # the same scope the subtree path prints as map_ids. Greenfield/full runs
-  # with no active delta range fall back to the whole test-nodeids file; the
-  # EM keeps its safe-omit rule either way. Pinned node-ids ride changed_tests
-  # for a pinned freeze, so nothing mapped can be missing from the shipped set.
+  # D-130: the full-emission EM call ships the milestone-sliced node-id
+  # set, not the raw file-granular changed_tests union. The slice is
+  # produced once by validate-plan.py (--milestone-scope) — the exact
+  # same producer the subtree path uses for map_ids — so the milestone's
+  # scope cannot diverge between the two surfaces (audit 2026-08-08 v87:
+  # a 2-line diff staged 58 ids, only 6 pinned; the EM saw 58). Greenfield
+  # runs with no active delta range fall back to the whole test-nodeids
+  # file; the EM keeps its safe-omit rule either way. Pinned node-ids ride
+  # the slice for a pinned freeze, so nothing mapped can be missing from
+  # the shipped set — and the D-124 completeness repair (a testid pinned
+  # to any file the delta staged rides even if refreeze_delta's
+  # changed_tests dropped it) lives inside the producer.
   NODEIDS_SCOPE=""
   if [ "${ACTIVE_DELTA_FILES+set}" = "set" ] && [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
     NODEIDS_SCOPE="$STATE_DIR/nodeids-scope.txt"
-    # D-124 completeness (audit 2026-08-06): the scope union repairs itself
-    # from the frozen test_mapping — a testid pinned to a file any active
-    # delta staged (changed_files) rides the scope even if refreeze_delta's
-    # changed_tests dropped it (D-116 relabel-class regressions). The gate
-    # reads full truth, but the EM can only map what it sees; an id missing
-    # from the prompt would be mapped blind or rejected late. Unpinned
-    # sorted-unique at the end keeps the file deterministic.
-    python3 - "$NODEIDS_SCOPE" "$APPROVED/contracts.json" "${ACTIVE_DELTA_FILES[@]}" <<'PY'
-import json, sys
-out, contracts_path, ids = sys.argv[1], sys.argv[2], []
-staged_files = set()
-for f in sys.argv[3:]:
-    try:
-        d = json.load(open(f))
-    except OSError:
-        continue
-    staged_files.update(d.get("changed_files", []))
-    for n in d.get("changed_tests", []):
-        if n not in ids:
-            ids.append(n)
-try:
-    mapping = json.load(open(contracts_path)).get("test_mapping", {})
-    for node_id, owner in mapping.items():
-        if owner in staged_files and node_id not in ids:
-            ids.append(node_id)
-except (OSError, json.JSONDecodeError):
-    pass
-open(out, "w").write("\n".join(sorted(ids)) + "\n")
-PY
+    python3 scripts/validate-plan.py --milestone-scope "${ACTIVE_DELTA_FILES[@]}" \
+      > "$NODEIDS_SCOPE"
   fi
   while :; do
     # Closure auto-repair (D-64/import/route): a best-effort PRE-PASS that adds
