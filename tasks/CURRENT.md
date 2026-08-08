@@ -43,6 +43,11 @@
   runtime blast radius). First run caught testchat `README.md:61` (D-121
   class — README.md was on no sweep list) and `examples/minimal-spec/README.md:6`
   (D-112 class). Recorded in CLAUDE.md correction log 2026-08-07.
+- 2026-08-07: DECISIONS.md ledgers realigned with the testchat lineage
+  (`71d7404`): container/relabel/size renumbered to D-123/124/125;
+  D-112/D-116..D-120/D-122 back-ported from testchat verbatim. Both ledgers
+  now agree number-for-number. Guard rule (correction log): code back-ports
+  carry their DECISIONS entries in the same operation.
 
 
 ---
