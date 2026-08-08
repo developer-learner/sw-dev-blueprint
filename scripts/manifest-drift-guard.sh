@@ -30,26 +30,34 @@ else
 fi
 [ -d "$ROOT" ] || { echo "manifest-drift-guard: not a dir: $ROOT" >&2; exit 2; }
 
-MANIFEST="$ROOT/scripts/.manifest-project"
-[ -f "$MANIFEST" ] || exit 0  # no manifest → nothing to compare (gate owns existence checks)
+check_manifest() {
+  local manifest="$1"
+  local label="$2"
+  [ -f "$manifest" ] || return 0  # absent → nothing to compare (gate owns existence checks)
+  while read -r _hash path; do
+    [ -n "$path" ] || continue
+    full="$ROOT/$path"
+    # Symlink entries (AGENTS.md -> CLAUDE.md) resolve to the target's hash in
+    # the manifest; the target's own regular-file entry already covers drift.
+    [ -L "$full" ] && continue
+    git -C "$ROOT" diff --cached --quiet -- "$path" 2>/dev/null && continue
+    staged_hash="$(git -C "$ROOT" show :"$path" 2>/dev/null | sha256sum | awk '{print $1}')"
+    if [ -n "$staged_hash" ] && [ "$staged_hash" != "$_hash" ]; then
+      WARNED=1
+      echo "manifest-drift-guard ($label): STAGED change to $path without a matching manifest update." >&2
+      echo "  The next commit/phase-gate manifest check will go RED until you re-pin." >&2
+      echo "  Fix: $ cd \"$ROOT\" && scripts/regen-manifest.sh $label" >&2
+      echo "  (If this is a deliberate control-plane edit, run the regen in the SAME commit.)" >&2
+    fi
+  done < "$manifest"
+}
 
 WARNED=0
-while read -r _hash path; do
-  [ -n "$path" ] || continue
-  full="$ROOT/$path"
-  # Symlink entries (AGENTS.md -> CLAUDE.md) resolve to the target's hash in
-  # the manifest; the target's own regular-file entry already covers drift.
-  [ -L "$full" ] && continue
-  git -C "$ROOT" diff --cached --quiet -- "$path" 2>/dev/null && continue
-  staged_hash="$(git -C "$ROOT" show :"$path" 2>/dev/null | sha256sum | awk '{print $1}')"
-  if [ -n "$staged_hash" ] && [ "$staged_hash" != "$_hash" ]; then
-    WARNED=1
-    echo "manifest-drift-guard: STAGED change to $path without a matching manifest update." >&2
-    echo "  The next commit/phase-gate manifest check will go RED until you re-pin." >&2
-    echo "  Fix: $ cd \"$ROOT\" && scripts/regen-manifest.sh scripts/.manifest-project" >&2
-    echo "  (If this is a deliberate control-plane edit, run the regen in the SAME commit.)" >&2
-  fi
-done < "$MANIFEST"
+# Both ownership classes: template-owned (shared logic, drift-checked) and
+# project-owned adaptations (Rule 3). The phase-gate checks both fail-closed;
+# this advisory should warn on the same set.
+check_manifest "$ROOT/scripts/.manifest-project" "scripts/.manifest-project"
+check_manifest "$ROOT/scripts/.manifest-template" "scripts/.manifest-template"
 
 if [ "$WARNED" -eq 1 ]; then
   echo "manifest-drift-guard: advisory warning only (exit 0)." >&2

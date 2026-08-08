@@ -6519,7 +6519,7 @@ def test_doc_consistency_skips_historical_correction_rows(tmp_path):
 
 
 def _drift_repo(tmp_path):
-    """A git repo with a control-plane manifest whose hash matches HEAD."""
+    """A git repo with both control-plane manifests whose hashes match HEAD."""
     (tmp_path / "scripts").mkdir()
     (tmp_path / "CONVENTIONS.md").write_text("canonical content\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
@@ -6533,13 +6533,16 @@ def _drift_repo(tmp_path):
     (tmp_path / "scripts" / ".manifest-project").write_text(
         f"{h}  CONVENTIONS.md\n"
     )
+    (tmp_path / "scripts" / ".manifest-template").write_text(
+        f"{h}  CONVENTIONS.md\n"
+    )
     return tmp_path
 
 
 def test_manifest_drift_guard_warns_on_staged_control_plane(tmp_path):
     """Staging a control-plane change without a matching manifest update
     must warn (exit 0) and print the regen command — the advisories the
-    fail-closed gate can only give after the red commit."""
+    fail-closed gate can only give AFTER the red commit, if then."""
     repo = _drift_repo(tmp_path)
     (repo / "CONVENTIONS.md").write_text("canonical content\n# edited\n")
     subprocess.run(["git", "add", "CONVENTIONS.md"], cwd=repo, check=True)
@@ -6550,6 +6553,10 @@ def test_manifest_drift_guard_warns_on_staged_control_plane(tmp_path):
     assert r.returncode == 0
     assert "STAGED change to CONVENTIONS.md" in r.stderr
     assert "scripts/regen-manifest.sh scripts/.manifest-project" in r.stderr
+    # template-owned class is checked too — this drift is covered once, one
+    # manifest is enough for the alert; both labels may appear depending on
+    # which manifest names the file (the guard checks both).
+    assert "manifest-drift-guard (" in r.stderr
 
 
 def test_manifest_drift_guard_silent_without_staged_change(tmp_path):
