@@ -21,6 +21,15 @@
 
 ## Decisions
 
+## D-128 — 2026-08-08 — Reverse-direction spec lint (S6): carried-forward tests vs NEW ACs
+
+**Decision:** A refreeze preflight (`scripts/check-test-direction.py`, "S6") rejects (1) any suite mock — carried or staged — that answers every URL (a URL-verb fake whose callable ignores its URL parameter, or a bare `Mock()`), and (2) any carried-forward test that cites an AC id the staged delta adds.
+**Alternatives considered:** (a) extend `check-test-surface.py` (INV-4) with the direction check; (b) a warning (doc-consistency style) instead of a gate; (c) scan only staged tests, leaving carried ones out.
+**Reason:** The v58 incident (correction log 2026-07-25) shipped a contradiction the forward lints cannot see: forward lints compare STAGED tests against LIVE ACs, but the defect was a carried-forward test that monkeypatched `httpx.get` to answer 200 for every URL — the new AC-104's spawn-refusal never ran and an unsatisfiable assertion shipped, costing an escalation cycle and the v59 refreeze. The whole-world mock encodes "everything else is ready" and silently couples subsystems, so it is structurally a test that cannot fail (the S5 defect class, in mock form). It lives in scripts/ (harness) and halts at freeze with the specific findings (D-121 has no human approval step; preflights are the whole enforcement surface). Check 2 is cheap bookkeeping: a test whose assumptions predate an AC this delta adds must be restaged with the delta or the "new" claim retired — it is attributable either way, so rejecting is a decision-forcing mechanism, not a workaround. Built as a standalone script (same shape as S5's `check-ac-postconditions.py`) so the freeze stays one lane; both halves run on the merged preview suite (current frozen + upcoming overlay) so nothing escapes through either side.
+**Do not suggest:** Demoting either half to advisory without a measured false-positive (D-115): mock-blindness is the incident class checked in; carry-citation is freeze-lane attribution. Do not move the whole-world scan to CI or a later stage — a preview-only check races the same erased-state class as the D-126 metrics sink. Adding URL-arg introspection beyond "reads its first positional parameter" is pre-hardening speculation (D-32). 
+
+---
+
 ## D-127 — 2026-08-08 — The sandbox runs the frozen suite as an unprivileged user, and the constraint-2 verifier now proves it mechanically
 
 **Decision:** The sandbox executes pytest/smoke runs as the image's non-root `agent` user (UID 1000 — `USER agent` in the Containerfile, `--userns=keep-id --cap-drop=ALL --security-opt no-new-privileges` at run time), and `scripts/selftest/verify-sandbox-in-vm.sh` gains check [6]: the sandbox must report a non-root uid. A regressed image (USER root added, cap-drop dropped) now fails the constraint-2 verifier outright.

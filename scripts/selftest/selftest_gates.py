@@ -3253,7 +3253,7 @@ def test_plan_gate_brief_overflow_names_erd_mass(tmp_path):
 def refreeze_scripts(repo):
     for name in ("validate-plan.py", "check-test-surface.py",
                  "check-swallowed-errors.py", "check-spec-delta.py",
-                 "check-ac-postconditions.py"):
+                 "check-ac-postconditions.py", "check-test-direction.py"):
         (repo / "scripts" / name).write_bytes((SCRIPTS / name).read_bytes())
     (repo / "scripts" / ".approved" / "incoming"
      / "ERD-DELTA.md").write_text(VALID_ERD_DELTA)
@@ -4561,6 +4561,7 @@ def freezable_repo(tmp_path):
         "spec_artifacts.py",
         "check-spec-delta.py",
         "check-ac-postconditions.py",
+        "check-test-direction.py",
         "validate-plan.py",
     ):
         target = tmp_path / "scripts" / name
@@ -5436,6 +5437,77 @@ def test_refreeze_accepts_ac_with_postcondition(freezable_repo):
     )
     r = _run_refreeze_diff(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_refreeze_rejects_whole_world_mock(freezable_repo):
+    """S6 check 1: a carried-forward test mocking every URL (the v58 class)
+    must halt the freeze."""
+    (freezable_repo / "tests" / "test_carried.py").write_text(
+        "import httpx\n"
+        "from unittest.mock import MagicMock\n"
+        "\n"
+        "def test_carried():\n"
+        "    httpx.get = MagicMock(return_value=MagicMock(status_code=200))\n"
+        "    assert True\n"
+    )
+    r = _run_refreeze_diff(freezable_repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "S6" in combined
+    assert "answers every URL" in combined
+
+
+def test_refreeze_rejects_carried_citing_new_ac(freezable_repo):
+    """S6 check 2: a carried test citing an AC this delta adds must halt."""
+    approved = freezable_repo / "scripts" / ".approved"
+    (freezable_repo / "tests" / "test_carried.py").write_text(
+        '"""AC-100: the carried assumption this test pins predates the AC."""\n'
+        "\n"
+        "def test_carried():\n"
+        "    assert True\n"
+    )
+    (approved / "incoming" / "PRD.md").write_text(
+        "# Product Requirements\n\n"
+        "## Features\n\n"
+        "- AC-100: spawn a second model only when the slot is free such that "
+        "a readiness probe on its port answers 200\n"
+    )
+    (approved / "incoming" / "ERD-DELTA.md").write_text(
+        "# Current milestone\n\n"
+        "## Changed acceptance criteria\n\nAC-100\n\n"
+        "## Superseded acceptance criteria\n\nNone.\n\n"
+        "## Changed files\n\n- src/app.py\n\n"
+        "## Test-to-file mapping\n\nNo new mapping.\n"
+    )
+    r = _run_refreeze_diff(freezable_repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "S6" in combined
+    assert "AC-100" in combined
+    assert "carried-forward" in combined
+
+
+def test_refreeze_accepts_url_aware_httpx_mock(freezable_repo):
+    """S6 check 1 acceptance: a URL-scoped httpx.get fake passes the lint
+    (the post-v59 shape — the fake discriminates on the requested URL)."""
+    (freezable_repo / "tests" / "test_carried.py").write_text(
+        "import httpx\n"
+        "from unittest.mock import MagicMock\n"
+        "\n"
+        "def fake_get(url, *args, **kwargs):\n"
+        "    if url.endswith('/ready'):\n"
+        "        response = MagicMock()\n"
+        "        response.status_code = 200\n"
+        "        return response\n"
+        "    return httpx.get(url, *args, **kwargs)\n"
+        "\n"
+        "def test_carried(monkeypatch):\n"
+        "    monkeypatch.setattr(httpx, 'get', fake_get)\n"
+        "    assert True\n"
+    )
+    r = _run_refreeze_diff(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "S6" not in r.stdout + r.stderr
 
 
 def test_refreeze_warns_oversized_erd_section(freezable_repo):

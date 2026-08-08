@@ -320,6 +320,17 @@ INV4_CONTRACTS="$APPROVED/contracts.json"
 python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
   || die "INV-4 rejected the delta — fix the tests or lock the surface in contracts.json, then restage"
 
+# --- S6: reverse-direction test lint (live tests vs NEW ACs) ------------
+# The v58 defect class (correction log 2026-07-25): the forward lints check
+# STAGED tests against live ACs, but a carried-forward test that mocked every
+# URL silently coupled with a new AC the other way — the AC's guard never ran
+# and an unsatisfiable assertion shipped. Runs on the merged preview (current
+# frozen suite + incoming overlay): any whole-world mock, and any
+# carried-forward test citing an AC this delta adds, is rejected at freeze.
+python3 scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
+  --staging "$IN" --approved "$APPROVED" --repo-tests tests \
+  || die "S6 rejected the delta (reverse-direction lint) — see findings above; restage a URL-scoped test or re-attribute the AC"
+
 # --- D-78: freeze-time satisfiability preflight ---
 # The plan gate's exact plan↔inventory bijection means a new route or
 # entry_point whose implementing file is outside contracts.files is
