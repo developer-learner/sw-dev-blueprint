@@ -5895,12 +5895,12 @@ def test_update_template_manifest_only_drift(template_pull_pair):
     child, clone = template_pull_pair
     template_hello = (clone / "scripts" / "hello.sh").read_bytes()
     (child / "scripts" / "hello.sh").write_bytes(template_hello)
-    stale_hash = subprocess.run(
+    subprocess.run(
         ["sha256sum", "scripts/hello.sh"], cwd=child,
         capture_output=True, text=True, check=True,
-    ).stdout.split()[0]
+    )
     (child / "scripts" / ".manifest-template").write_text(
-        f"0" * 64 + "  scripts/hello.sh\n")
+        "0" * 64 + "  scripts/hello.sh\n")
     subprocess.run(["git", "add", "-A"], cwd=child, check=True)
     subprocess.run(
         ["git", "commit", "-qm", "fixture: content matches, manifest stale"],
