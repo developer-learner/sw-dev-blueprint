@@ -916,6 +916,28 @@ run_tests() {
   # prior invocation's report first so that failure cannot replay a stale green
   # verdict; a missing new report is classified NO_REPORT below.
   rm -f .cache/test-report.json
+  # Type gate (D-129): mypy was CI-only (post-M29 "a gate that lives only in
+  # CI does not exist until a remote does" — testchat shipped 40 spec versions
+  # with its type gate dark and went red on first push). Every acceptance now
+  # type-checks src/ first; a type error fails the verdict with its own
+  # classification, never NO_REPORT. --cache-dir=/tmp: the repo mount is
+  # read-only and mypy insists on writing its cache. Fail-closed: a missing
+  # mypy in the sandbox stack is a hard halt (the next line's `|| true` must
+  # not swallow a non-mypy exit — mypy failure rc≠0 short-circuits below).
+  MYPY_OUT=""
+  MYPY_RC=0
+  MYPY_OUT=$(scripts/sandbox-run.sh -- mypy --explicit-package-bases \
+    --cache-dir=/tmp/mypy-cache src/ 2>&1) || MYPY_RC=$?
+  if [ "$MYPY_RC" -ne 0 ]; then
+    mark "mypy gate FAILED (rc=$MYPY_RC)"
+    FAILING="mypy:src"
+    FAIL_DETAIL="$(printf '%s' "$MYPY_OUT" | grep -E '^(src|tests)/.*error|^error' | head -c 900 | tr '\n' ' ')" \
+      || true
+    [ -n "$FAIL_DETAIL" ] || FAIL_DETAIL="mypy exited $MYPY_RC — see run output"
+    TESTS_RC=1
+    rm -f .cache/test-report.json
+    return 0
+  fi
   scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
     --json-report-file=.cache/test-report.json "${test_args[@]}" >/dev/null 2>&1 || true
   local out

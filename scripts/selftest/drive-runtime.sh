@@ -30,7 +30,14 @@ case "$MODE" in
     mkdir -p scripts .cache
     cat > scripts/sandbox-run.sh <<'STUB'
 #!/usr/bin/env bash
+# D-129: the sandbox stub must distinguish the mypy invocation from the
+# pytest invocation — run_tests now type-checks src/ first. A mypy call
+# answers SANDBOX_MYPY_RC (default: green); the pytest call answers
+# SANDBOX_STUB_RC as before.
 [ -z "${SANDBOX_ARG_LOG:-}" ] || printf '%s\n' "$@" > "$SANDBOX_ARG_LOG"
+case " $* " in
+  *" -- mypy "*) exit "${SANDBOX_MYPY_RC:-0}" ;;
+esac
 [ -z "${SANDBOX_REPORT_SOURCE:-}" ] \
   || cp "$SANDBOX_REPORT_SOURCE" .cache/test-report.json
 exit "${SANDBOX_STUB_RC:-125}"

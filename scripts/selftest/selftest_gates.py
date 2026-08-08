@@ -3479,6 +3479,58 @@ def test_run_tests_rejects_stale_green_report_when_sandbox_fails(tmp_path):
     assert "FINAL_FAILING=NO_REPORT" in r.stdout
 
 
+def test_run_tests_mypy_gate_fails_closed(tmp_path):
+    """D-129: a type error in src/ fails the acceptance with its own
+    classification (FAILING=mypy:src, rc=1) — never NO_REPORT, and pytest
+    is not launched when the type gate already red."""
+    cache = tmp_path / ".cache"
+    cache.mkdir(exist_ok=True)
+    (cache / "test-report.json").write_text(json.dumps({
+        "summary": {"total": 1, "passed": 1},
+        "tests": [{"nodeid": "tests/test_old.py::test_old",
+                   "outcome": "passed"}],
+        "collectors": [],
+    }))
+    arg_log = tmp_path / "args.log"
+    env = {**os.environ, "SANDBOX_MYPY_RC": "1",
+           "SANDBOX_ARG_LOG": str(arg_log), "SANDBOX_STUB_RC": "0"}
+    r = subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "tests", str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "FINAL_TESTS_RC=1" in r.stdout, r.stdout
+    assert "FINAL_FAILING=mypy:src" in r.stdout, r.stdout
+    # pytest must NOT have been launched once the type gate failed
+    args = arg_log.read_text().splitlines()
+    assert args == ["--", "mypy", "--explicit-package-bases",
+                    "--cache-dir=/tmp/mypy-cache", "src/"], args
+
+
+def test_run_tests_mypy_gate_green_runs_pytest(tmp_path):
+    """D-129: with the mypy gate green, the acceptance proceeds to pytest
+    exactly as before (the mypy invocation precedes it; the report decides)."""
+    source = tmp_path / "fresh-report.json"
+    source.write_text(json.dumps({
+        "summary": {"total": 1, "passed": 1},
+        "tests": [{"nodeid": "tests/test_new.py::test_new",
+                   "outcome": "passed"}],
+        "collectors": [],
+    }))
+    arg_log = tmp_path / "args.log"
+    env = {**os.environ, "SANDBOX_REPORT_SOURCE": str(source),
+           "SANDBOX_ARG_LOG": str(arg_log), "SANDBOX_STUB_RC": "0",
+           "SANDBOX_MYPY_RC": "0"}
+    r = subprocess.run(
+        ["bash", str(DRIVE_RUNTIME), "tests", str(tmp_path)],
+        capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "FINAL_TESTS_RC=0" in r.stdout, r.stdout
+    args = arg_log.read_text().splitlines()
+    assert args[0] == "--rw" and "pytest" in args, args
+
+
 def _run_with_json_report(tmp_path, report):
     source = tmp_path / "fresh-report.json"
     source.write_text(json.dumps(report))
