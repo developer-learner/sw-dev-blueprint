@@ -21,7 +21,14 @@
 
 ## Decisions
 
-## D-128 — 2026-08-08 — Reverse-direction spec lint (S6): carried-forward tests vs NEW ACs
+## D-129 — 2026-08-08 — mypy is an acceptance gate in the sandbox, not a CI-only survivor
+
+**Decision:** `run_tests()` in `orchestrate.sh` runs `mypy --explicit-package-bases --cache-dir=/tmp/mypy-cache src/` in the sandbox before pytest; on a type error the acceptance fails rc=1 with `FAILING=mypy:src` and pytest never launches; on green it proceeds exactly as before. The mypy step stays in CI as well.
+**Alternatives considered:** (a) leave mypy CI-only (rejected — the post-M29 meta-rule: a gate that lives only in CI does not exist until a remote does; testchat shipped 40 spec versions with its type gate dark and went red on first push (correction log 2026-07-14); a local coder can emit a type error the suite never sees and CI catches only post-merge); (b) a standalone pre-commit check on the host (rejected — the host lacks the pinned mypy/stack and the sandbox already owns the acceptance path); (c) run mypy only at the verdict (rejected — the acceptance path is the sandbox; folding it into `run_tests()` is the single funnel, and it must fail BEFORE the coder's mapped tests, not after the fact).
+**Reason:** M29's `psutil` addition passed 153/153 in the sandbox and broke `mypy sr/` in CI only. The divergence class is "CI-only gate": a child without a remote never sees it. The sandbox is the acceptance cannon; mypy is cheap (11 files, seconds) and the stack already ships it and `types-psutil` (D-50 image-hash keying keeps them in sync). `--cache-dir=/tmp` is required: the repo mounts read-only and mypy writes `.mypy_cache` beside its targets. Fail-closed: a sandbox stack missing mypy halts the run, it does not skip.
+**Do not suggest:** Moving the check out of `run_tests()` into a later stage (per-D-77/erasure class: verdict-time only catches what the per-task run already green-lit); removing the CI step (belt-and-suspenders; CI's install set is the template's own gate); whitelisting mypy failures at freeze time to preserve the user's ability to iterate on non-type errors.
+
+---
 
 > **Amended 2026-08-08 (same day):** check 1 (whole-world mock) is scoped to
 > the tests THIS DELTA TOUCHES (staged changed/removed, D-116's changed-test
