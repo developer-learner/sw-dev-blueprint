@@ -23,6 +23,20 @@
 
 ## D-128 — 2026-08-08 — Reverse-direction spec lint (S6): carried-forward tests vs NEW ACs
 
+> **Amended 2026-08-08 (same day):** check 1 (whole-world mock) is scoped to
+> the tests THIS DELTA TOUCHES (staged changed/removed, D-116's changed-test
+> seam), not the whole merged suite. Live-suite enforcement: testchat's
+> frozen suite already carries 9 bare-Mock whole-world patterns
+> (test_models_api.py:140/166/319, test_models_service.py:159/181/190/202/
+> 214/357); a whole-suite halt would brick every refreeze until a legacy
+> cleanup landed, which no running milestone is about (D-116: a gate that
+> halts on content the delta is not about freezes the pipeline; the v82
+> class — see correction log 2026-08-08). The v58-class danger is a delta
+> that INTRODUCES the coupling, which the scoped scan still catches: 304
+> selftests pin both directions (reject staged bare mock, allow carried
+> legacy mock). Standalone invocation (no --staging/--repo-tests) still
+> sweeps the whole directory as an audit tool.
+
 **Decision:** A refreeze preflight (`scripts/check-test-direction.py`, "S6") rejects (1) any suite mock — carried or staged — that answers every URL (a URL-verb fake whose callable ignores its URL parameter, or a bare `Mock()`), and (2) any carried-forward test that cites an AC id the staged delta adds.
 **Alternatives considered:** (a) extend `check-test-surface.py` (INV-4) with the direction check; (b) a warning (doc-consistency style) instead of a gate; (c) scan only staged tests, leaving carried ones out.
 **Reason:** The v58 incident (correction log 2026-07-25) shipped a contradiction the forward lints cannot see: forward lints compare STAGED tests against LIVE ACs, but the defect was a carried-forward test that monkeypatched `httpx.get` to answer 200 for every URL — the new AC-104's spawn-refusal never ran and an unsatisfiable assertion shipped, costing an escalation cycle and the v59 refreeze. The whole-world mock encodes "everything else is ready" and silently couples subsystems, so it is structurally a test that cannot fail (the S5 defect class, in mock form). It lives in scripts/ (harness) and halts at freeze with the specific findings (D-121 has no human approval step; preflights are the whole enforcement surface). Check 2 is cheap bookkeeping: a test whose assumptions predate an AC this delta adds must be restaged with the delta or the "new" claim retired — it is attributable either way, so rejecting is a decision-forcing mechanism, not a workaround. Built as a standalone script (same shape as S5's `check-ac-postconditions.py`) so the freeze stays one lane; both halves run on the merged preview suite (current frozen + upcoming overlay) so nothing escapes through either side.

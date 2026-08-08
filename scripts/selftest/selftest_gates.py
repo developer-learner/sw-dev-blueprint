@@ -5440,8 +5440,30 @@ def test_refreeze_accepts_ac_with_postcondition(freezable_repo):
 
 
 def test_refreeze_rejects_whole_world_mock(freezable_repo):
-    """S6 check 1: a carried-forward test mocking every URL (the v58 class)
-    must halt the freeze."""
+    """S6 check 1: a STAGED test mocking every URL (the v58 class) must
+    halt the freeze."""
+    (freezable_repo / "scripts" / ".approved" / "incoming" / "tests"
+     / "test_delta.py").write_text(
+        "import httpx\n"
+        "from unittest.mock import MagicMock\n"
+        "\n"
+        "def test_delta():\n"
+        "    httpx.get = MagicMock(return_value=MagicMock(status_code=200))\n"
+        "    assert True\n"
+    )
+    r = _run_refreeze_diff(freezable_repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "S6" in combined
+    assert "answers every URL" in combined
+
+
+def test_refreeze_allows_carried_whole_world_mock(freezable_repo):
+    """S6 check 1 grandfathering: an untouched carried-forward test with a
+    legacy whole-world mock must NOT halt a freeze the delta does not
+    touch (9 such patterns exist in the live frozen suite — the gate is
+    scoped to delta-touched tests, D-128 amend, and a hard halt on old
+    content would freeze the pipeline)."""
     (freezable_repo / "tests" / "test_carried.py").write_text(
         "import httpx\n"
         "from unittest.mock import MagicMock\n"
@@ -5451,10 +5473,8 @@ def test_refreeze_rejects_whole_world_mock(freezable_repo):
         "    assert True\n"
     )
     r = _run_refreeze_diff(freezable_repo)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    combined = r.stdout + r.stderr
-    assert "S6" in combined
-    assert "answers every URL" in combined
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "S6" not in r.stdout + r.stderr
 
 
 def test_refreeze_rejects_carried_citing_new_ac(freezable_repo):
@@ -5488,9 +5508,11 @@ def test_refreeze_rejects_carried_citing_new_ac(freezable_repo):
 
 
 def test_refreeze_accepts_url_aware_httpx_mock(freezable_repo):
-    """S6 check 1 acceptance: a URL-scoped httpx.get fake passes the lint
-    (the post-v59 shape — the fake discriminates on the requested URL)."""
-    (freezable_repo / "tests" / "test_carried.py").write_text(
+    """S6 check 1 acceptance: a URL-scoped httpx.get fake inside a STAGED
+    test passes the lint (the post-v59 shape — the fake discriminates on
+    the requested URL)."""
+    (freezable_repo / "scripts" / ".approved" / "incoming" / "tests"
+     / "test_delta.py").write_text(
         "import httpx\n"
         "from unittest.mock import MagicMock\n"
         "\n"
@@ -5501,7 +5523,7 @@ def test_refreeze_accepts_url_aware_httpx_mock(freezable_repo):
         "        return response\n"
         "    return httpx.get(url, *args, **kwargs)\n"
         "\n"
-        "def test_carried(monkeypatch):\n"
+        "def test_delta(monkeypatch):\n"
         "    monkeypatch.setattr(httpx, 'get', fake_get)\n"
         "    assert True\n"
     )

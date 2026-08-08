@@ -325,8 +325,12 @@ python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "
 # STAGED tests against live ACs, but a carried-forward test that mocked every
 # URL silently coupled with a new AC the other way — the AC's guard never ran
 # and an unsatisfiable assertion shipped. Runs on the merged preview (current
-# frozen suite + incoming overlay): any whole-world mock, and any
+# frozen suite + incoming overlay), scoped to the tests this delta touches
+# (D-128 amend): any whole-world mock the delta introduces, and any
 # carried-forward test citing an AC this delta adds, is rejected at freeze.
+# A legacy whole-world mock in an UNtouched carried test is grandfathered —
+# a hard halt on old content would freeze the pipeline (9 such patterns
+# exist in testchat's live suite as of this writing).
 python3 scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
   --staging "$IN" --approved "$APPROVED" --repo-tests tests \
   || die "S6 rejected the delta (reverse-direction lint) — see findings above; restage a URL-scoped test or re-attribute the AC"

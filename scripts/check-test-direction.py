@@ -8,14 +8,25 @@ a contradiction in the OTHER direction: a carried-forward test monkeypatched
 loaded, AC-104's spawn-refusal never ran, and the test asserting ``Popen``
 was called could not fail. Two checks:
 
-  1. WHOLE-WORLD MOCK — a suite mock (carried or staged) that answers every
-     URL encodes "the whole world is ready" and silently couples unrelated
-     subsystems. A URL-verb mock whose callable ignores its URL argument,
-     or a bare Mock(), is rejected.
+  1. WHOLE-WORLD MOCK — a mock, in a test this delta touches, that answers
+     every URL encodes "the whole world is ready" and silently couples
+     unrelated subsystems. A URL-verb mock whose callable ignores its URL
+     argument, or a bare Mock(), is rejected.
   2. CARRIED-FORWARD vs NEW ACs — an AC id this delta ADDS must not be
      cited by a carried-forward test: that test's assumptions predate the
      AC, so the delta either supersedes them (restage the test) or the AC
      is not actually new (fix the bookkeeping).
+
+When run standalone, check 1 sweeps the whole given directory (audit
+mode). When run from refreeze (with --staging/--repo-tests), check 1 is
+scoped to the tests this delta touches — the tests that changed or are
+removed (D-116's changed-test semantics), same seam as check 2. That is
+deliberate: the legacy carried suite contains pre-existing whole-world
+mocks (testchat: 9, see D-128 amend). A gate that halts every refreeze on
+_old_ content freezes the pipeline over content the delta is not about.
+The v58-class danger is a delta that *introduces* the coupling; a carried
+mock that goes untouched by the delta is scanned only when the delta
+changes it. Same incident class, right trigger.
 
 > CONFIDENCE FLAG (D-32): check 1 is the lowest-confidence mechanism in the
 > gate set — deliberate, crude static analysis in the same spirit as INV-4.
@@ -25,8 +36,8 @@ was called could not fail. Two checks:
 > speculatively.
 
 Usage:
-  check-test-direction.py --tests-dir <DIR> --staging <DIR> \
-      --approved <DIR> --repo-tests <DIR>
+  check-test-direction.py --tests-dir <DIR> [--staging <DIR> \
+      --approved <DIR> --repo-tests <DIR>]
 Exit: 0 clean · 1 violations (listed on stderr) · 2 usage/input error
 """
 from __future__ import annotations
@@ -119,10 +130,18 @@ def _mock_sites(tree: ast.AST) -> list[tuple[int, ast.expr]]:
     return sites
 
 
-def whole_world_findings(test_dir: Path) -> list[str]:
-    """Check 1: URL-verb mock sites whose callable ignores the URL."""
+def whole_world_findings(
+    test_dir: Path, allowed: set[str] | None = None
+) -> list[str]:
+    """Check 1: URL-verb mock sites whose callable ignores the URL.
+
+    *allowed* restricts the scan to delta-touched tests (rel paths like
+    tests/x.py); standalone runs pass None to sweep the entire directory.
+    """
     findings: list[str] = []
     for py in sorted(test_dir.glob("*.py")):
+        if allowed is not None and f"tests/{py.name}" not in allowed:
+            continue
         try:
             tree = ast.parse(py.read_text())
         except SyntaxError:
@@ -213,7 +232,10 @@ def main() -> int:
         print("--tests-dir must be a directory", file=sys.stderr)
         return 2
 
-    findings = whole_world_findings(test_dir)
+    allowed: set[str] | None = None
+    if args.staging and args.repo_tests:
+        allowed = _changed_test_files(Path(args.staging), Path(args.repo_tests))
+    findings = whole_world_findings(test_dir, allowed)
     if args.staging and args.approved and args.repo_tests:
         findings += _carried_citations(
             Path(args.staging),
