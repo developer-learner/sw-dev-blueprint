@@ -100,9 +100,10 @@ pytest scripts/selftest/selftest_gates.py -q
 
 ## When the full suite runs
 
-Steady-state cadence (D-28, D-75): each task's mapped frozen tests run
-right after that task; ONE full-suite run closes the milestone at run
-end; the freeze itself verifies only the delta (the D-75
+Steady-state cadence (D-28, D-75, D-112): each task's mapped frozen tests
+run right after that task; the delta's mapped verdict run closes the
+milestone at run end (the full frozen suite is an on-demand `--full-suite`
+regression check); the freeze itself verifies only the delta (the D-75
 red-before-green check, which is confined to the Linux sandbox and halts
 if it cannot obtain a readable report). A full-suite run
 at freeze time is **catch-up only** — for freezes where `src/` changed

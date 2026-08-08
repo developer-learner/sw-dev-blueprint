@@ -20,8 +20,9 @@
 | PRD ambiguous | TPM (in chat) | CEO decides | human |
 
 "Spec drift" is the mechanically detected case: every task passed its mapped
-tests but the full frozen suite is red. It routes EM→TPM and never to coder
-retries (D-28).
+tests but the final verdict run is red (in mapped scope the failures are, by
+definition, delta-dependent nodes — an inter-task coupling break). It routes
+EM→TPM and never to coder retries (D-28/D-112).
 
 "Spec defect" (D-79) is the other mechanically detected case, one phase
 earlier: when the plan gate has rejected `MAX_PLAN_REVISIONS` consecutive
