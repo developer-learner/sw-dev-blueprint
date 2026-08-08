@@ -33,7 +33,12 @@
 > needed. Also temporary context for this session that isn't worth a
 > DECISIONS.md entry.
 
-[none]
+- 2026-08-07: milestone-trim arc CLOSED in testchat (close-out verdict in
+  `testchat/tasks/CURRENT.md`): 291 selftests green, both repos in sync,
+  D-121/D-112 doc classes swept to zero. Next trigger = next real milestone
+  freeze (the trim's lineage test). Guard decision (doc-consistency check)
+  is the CEO's; see the testchat close-out.
+
 
 ---
 
