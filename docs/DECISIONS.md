@@ -21,6 +21,30 @@
 
 ## Decisions
 
+## D-132 — 2026-08-10 — Route pipeline-vs-direct by size and determinism, never the bug/feature label
+
+**Decision:** Every behavior change is routed by size and determinism, not by whether it is called a bug fix or a feature:
+
+- **Direct (ad hoc — no refreeze/orchestrate):** a defined defect with a known root cause whose fix is small and deterministic — a handful of files, no new behavioral scope, no structural test changes; regression tests pin the corrected behavior. Lands as a normal commit on main.
+- **Pipeline (milestone):** any change with behavioral scope (new or changed observable behavior needing AC authoring), multi-layer/cross-file work, structural test changes (new `tests/` files, frozen-mapping churn), or work too large to hold in one read — regardless of the bug/feature label.
+- **Universal, both paths:** tests are written before the code (red before green, INV-1), and the frozen suite (or the delta's mapped oracle, D-112) is green before "done" — on the sandbox AND the host (the M29 class). A direct fix is the same bar scaled down, never a lower tier.
+- **Escapes and reconciliation:** `--no-verify` still requires CEO authorization, and the INV-1 bookkeeping lands with the fix (frozen-manifest pin, as testchat's `f569528`) or a ratify milestone (D-63) catches the spec up — the oracle is never left stale.
+
+**Alternatives considered:** (a) a sizing formula (N tasks / N files / N tests) — rejected at D-83: project-dependent and gameable; the judgment stays with the routing seat; (b) bug fixes always direct, features always pipeline — rejected: the label is packaging, not size — testchat v99 was a bug fix (quarantine visibility, hydration) that needed the pipeline and sailed green, while the model-management bundle was also a bug fix that died in it for spec-authoring defects a direct read would have caught (three freezes, then shipped direct as `7bfc622`); (c) everything through the pipeline — rejected: the ceremony (EM decomposition, task DAG, VM sandbox, coder calls) exists to keep frontier-tier spec work off the code; for a small deterministic fix it is dead weight.
+**Reason:** The 2026-08-09 ruling recorded in testchat `tasks/CURRENT.md` ("the VM + EM/coder + sandbox are for milestone feature runs ONLY, not ad-hoc bug fixes") routed on the wrong axis; this decision supersedes it. The pipeline's value, in order: tests-before-code (INV-1), ACs tied to observable outcomes (spec lint), and only then the ceremony. Routing by size/determinism keeps the invariant guarantees on every path while dropping only the ceremony that adds nothing for small deterministic work — and it avoids two quality tiers, where the low tier is where regressions breed.
+**Do not suggest:** routing by the bug/feature label; a mechanical threshold (gameable, D-83); marking a direct fix done on self-judgment — the mapped oracle or the full suite is still the only success verdict; deferring a direct fix's INV-1 bookkeeping "to the next refreeze" (the pin lands with the fix).
+
+## D-131 — 2026-08-08 — Gate-owned resolution of duplicate node-ids: the DAG votes, the EM does not
+
+> Ledger entry restored 2026-08-10: the code shipped 2026-08-08 but the
+> entry was lost with the blueprint `d2e869ac` force-push; it is restored
+> now in both ledgers (code and ledger travel together).
+
+**Decision:** A node-id mapped to more than one task is resolved gate-owned by `validate-plan.py` instead of halting — but only after the pinned relocation and the D-64 browser rule have settled every authority-driven placement, and after AUTO_PLACED is reset, so the resolution observes the final plan and its notes survive to the report. The rule: the node's acceptance point is the mapped task that runs LAST in topological order — its dependency closure contains every earlier mapped task, so it is the one mapped task after which the node is provably green. Pinned re-adds are exempt by construction (test_mapping relocation already moved pinned node-ids to their declared owner, and the D-64 sweep skips pinned ids), so anything still over-mapped is UNPINNED. A duplicate surviving the block is a genuine error and halts as before.
+**Alternatives considered:** (a) keep the halt — rejected: an over-mapped node is EM mis-placement with a provably correct answer; halting burned escalation cycles on what the DAG can compute (D-05); (b) first-claimant wins — rejected: an early task's projection can pass while a later claimant's file ownership was the real one; last-in-DAG is the only placement after which green is provable.
+**Reason:** The EM tier repeatedly fails to honor prose placement rules for backend tests (testchat v88: the storage-quarantine node was placed on BOTH the storage task and the api/threads task twice in a row despite the ERD stating one owner). Same philosophy as D-64: a deterministic placement rule is gate-owned, not EM-owned. The DAG vote can never reject a test the freeze considers well-mapped, because it matches the freeze's own "any task downstream of the node's owner" acceptance view. Selftests pin the resolution and its boundaries (`scripts/selftest/selftest_gates.py`).
+**Do not suggest:** trusting an EM prose re-placement of a duplicate (the failure class this resolution removes); resolving before pinned relocation and the D-64 sweep (it must observe the final plan); treating a duplicate that survives the block as resolvable (genuine error).
+
 ## D-130 — 2026-08-08 — The milestone node-id scope is the frozen test_mapping intersection, produced once by validate-plan.py
 
 **Decision:** One producer (`milestone_scope_ids()` in `scripts/validate-plan.py`, exposed as `--milestone-scope`) computes the node-id set a delta run is about: the raw `changed_tests` intersected — on the **family** (module prefix + bare test name, parametrization-suffix-stripped) with the frozen `test_mapping` keys, plus the D-124 completeness repair (pinned ids whose owner FILE the delta staged ride even when refreeze_delta dropped them from changed_tests). Both scope consumers call it: `cmd_subtree_scope` (map_nodeids + `_hit_task_ids` invalidation) and `cmd_affected` (the task-state reset scope), and orchestrate's full-emission `NODEIDS_SCOPE` now shells out to `--milestone-scope` instead of inlining its own union. When the mapping is empty (a pre-D-124 freeze), the slice is inert — raw rides, the trim must not bite before pins exist.
@@ -37,6 +61,8 @@
 **Do not suggest:** Moving the check out of `run_tests()` into a later stage (per-D-77/erasure class: verdict-time only catches what the per-task run already green-lit); removing the CI step (belt-and-suspenders; CI's install set is the template's own gate); whitelisting mypy failures at freeze time to preserve the user's ability to iterate on non-type errors.
 
 ---
+
+## D-128 — 2026-08-08 — Reverse-direction spec lint (S6): whole-world-mock rejection and carried-tests-vs-new-ACs citation check
 
 > **Amended 2026-08-08 (same day):** check 1 (whole-world mock) is scoped to
 > the tests THIS DELTA TOUCHES (staged changed/removed, D-116's changed-test
