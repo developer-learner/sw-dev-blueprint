@@ -447,7 +447,7 @@ def test_browser_test_auto_placed_at_final_task(repo):
     ]
     r = run_validate(repo, plan)
     assert r.returncode == 0, r.stderr
-    assert "gate-owned placement (test_mapping/D-64)" in r.stderr
+    assert "gate-owned placement (test_mapping/D-64/D-131)" in r.stderr
     assert "T1 -> T2" in r.stderr
     on_disk = json.loads((repo / "tasks" / "plan.json").read_text())
     placed = [t["id"] for t in on_disk["tasks"]
@@ -554,6 +554,75 @@ def test_mapping_pinned_owner_outside_plan_fails(repo):
     r = run_validate(repo, good_plan())
     assert r.returncode == 1
     assert "no task in this plan owns" in r.stderr
+
+
+def test_d131_overmapped_unpinned_nodeid_resolved_gate_owned(repo):
+    """D-131: a node-id mapped to more than one UNPINNED task is resolved
+    by the gate instead of halted — the node's acceptance point is the
+    mapped task that runs LAST in the DAG (its dependency closure covers
+    the earlier claimants), matching the freeze's own "downstream is
+    acceptable" view. The resolution is written back to plan.json and
+    reported, exactly like the D-64 browser rule. testchat v88 died here:
+    the storage-quarantine node was mapped to BOTH the storage task and
+    the api/threads task twice in a row, and the closure repair could not
+    help because the DAG vote (last mapped task) was the only sound rule."""
+    plan = good_plan()
+    plan["tasks"][0]["tests"] = [
+        "tests/test_a.py::test_one",
+        "tests/test_b.py::test_two",   # over-mapped: also on T2
+    ]
+    plan["tasks"][1]["tests"] = [
+        "tests/test_b.py::test_two",
+    ]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+    assert "T1 drops overmapped (D-131" in r.stderr
+    on_disk = json.loads((repo / "tasks" / "plan.json").read_text())
+    by_id = {t["id"]: t for t in on_disk["tasks"]}
+    assert "tests/test_b.py::test_two" in by_id["T2"]["tests"]
+    assert "tests/test_b.py::test_two" not in by_id["T1"]["tests"]
+
+
+def test_d131_overmapped_pinned_nodeid_left_to_mapping(repo):
+    """D-131 must never sweep a PINNED node-id off its declared owner,
+    even when an earlier task also mapped it — the declared behavioral
+    owner is the authority (any placement on an earlier task is simply
+    freed there by the M35 relocation, not by the DAG vote)."""
+    contracts = dict(CONTRACTS)
+    contracts["test_mapping"] = {"tests/test_b.py::test_two": "src/a.py"}
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(contracts))
+    plan = good_plan()
+    plan["tasks"][0]["tests"] = [
+        "tests/test_a.py::test_one",
+        "tests/test_b.py::test_two",   # pinned to src/a.py -> T1 is owner
+    ]
+    plan["tasks"][1]["tests"] = [
+        "tests/test_b.py::test_two",   # duplicate on a later task
+    ]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+    on_disk = json.loads((repo / "tasks" / "plan.json").read_text())
+    by_id = {t["id"]: t for t in on_disk["tasks"]}
+    assert "tests/test_b.py::test_two" in by_id["T1"]["tests"]
+    assert "tests/test_b.py::test_two" not in by_id["T2"]["tests"]
+
+
+def test_d131_overmapped_with_dag_cycle_reports_duplicate(repo):
+    """If the DAG has a cycle the plan fails at the cycle gate before the
+    D-131 vote ever runs — a duplicate is never silently resolved to an
+    arbitrary winner."""
+    plan = good_plan()
+    plan["tasks"][0]["depends_on"] = ["T2"]
+    plan["tasks"][1]["depends_on"] = ["T1"]
+    plan["tasks"][0]["tests"] = ["tests/test_a.py::test_one"]
+    plan["tasks"][1]["tests"] = [
+        "tests/test_b.py::test_two",
+        "tests/test_a.py::test_one",
+    ]
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "dependency cycle detected" in r.stderr
 
 
 def test_task_gating_nothing_rejected(repo):
@@ -5653,8 +5722,10 @@ def test_refreeze_rejects_whole_world_mock(freezable_repo):
     halt the freeze."""
     (freezable_repo / "scripts" / ".approved" / "incoming" / "tests"
      / "test_delta.py").write_text(
-        "import httpx\n"
         "from unittest.mock import MagicMock\n"
+        "\n"
+        "import httpx\n"
+        "\n"
         "\n"
         "def test_delta():\n"
         "    httpx.get = MagicMock(return_value=MagicMock(status_code=200))\n"
@@ -5674,8 +5745,10 @@ def test_refreeze_allows_carried_whole_world_mock(freezable_repo):
     scoped to delta-touched tests, D-128 amend, and a hard halt on old
     content would freeze the pipeline)."""
     (freezable_repo / "tests" / "test_carried.py").write_text(
-        "import httpx\n"
         "from unittest.mock import MagicMock\n"
+        "\n"
+        "import httpx\n"
+        "\n"
         "\n"
         "def test_carried():\n"
         "    httpx.get = MagicMock(return_value=MagicMock(status_code=200))\n"
@@ -5722,8 +5795,10 @@ def test_refreeze_accepts_url_aware_httpx_mock(freezable_repo):
     the requested URL)."""
     (freezable_repo / "scripts" / ".approved" / "incoming" / "tests"
      / "test_delta.py").write_text(
-        "import httpx\n"
         "from unittest.mock import MagicMock\n"
+        "\n"
+        "import httpx\n"
+        "\n"
         "\n"
         "def fake_get(url, *args, **kwargs):\n"
         "    if url.endswith('/ready'):\n"

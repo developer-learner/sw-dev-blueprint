@@ -416,9 +416,22 @@ def validate():
     unknown_map = sorted(set(mapped) - frozen_set)
     if unknown_map:
         errs.append(f"mapped test node-id(s) not in the frozen suite: {unknown_map}")
-    overmapped = sorted({n for n in mapped if mapped.count(n) > 1})
-    if overmapped:
-        errs.append(f"test node-id(s) mapped to more than one task: {overmapped}")
+
+    # D-131 (2026-08-08): a node-id mapped to more than one task is
+    # resolved gate-owned instead of halted — but ONLY after the pinned
+    # relocation and the D-64 browser rule below have settled every
+    # authority-driven placement, and after AUTO_PLACED is reset, so the
+    # resolution observes the final plan and its notes survive to the
+    # report. The EM tier repeatedly fails to honor prose placement rules
+    # for backend tests (testchat v88: the storage-quarantine node was
+    # placed on BOTH the storage task and the api/threads task twice in a
+    # row, despite the ERD stating one owner). Same philosophy as D-64: a
+    # deterministic placement rule is gate-owned, not EM-owned. The rule:
+    # the node's acceptance point is the mapped task that runs LAST in the
+    # DAG (its dependency closure covers the earlier claimants), matching
+    # the freeze's own "any task downstream of the node's owner" view.
+    # Pinned node-ids were already moved to their declared owner above;
+    # a duplicate surviving the block below is a genuine error.
 
     if errs:
         fail(errs)
@@ -632,7 +645,8 @@ def validate():
             if not moved:
                 continue
             t["tests"] = [n for n in t["tests"] if n not in moved]
-            owner["tests"] = sorted(owner["tests"] + moved)
+            added = [n for n in moved if n not in owner["tests"]]
+            owner["tests"] = sorted(owner["tests"] + added)
             AUTO_PLACED.append(
                 f"{t['id']} -> {owner['id']} (pinned by test_mapping): "
                 f"{', '.join(moved)}"
@@ -708,6 +722,57 @@ def validate():
         AUTO_PLACED.append(
             f"{t['id']} -> {final_task['id']}: {', '.join(browser_files)}"
         )
+
+    # D-131 (2026-08-08): gate-owned resolution of duplicate node-ids.
+    # Everything above had its chance to place node-ids authoritatively
+    # (pinned relocation, browser rule). What remains multiply-mapped is a
+    # pure EM mis-placement, and the DAG can VOTE: the node's acceptance
+    # point is the mapped task that runs LAST in topological order, because
+    # its dependency closure contains every earlier mapped task — so it is
+    # the one mapped task after which the node is provably green. That is
+    # the same "downstream is acceptable" view the freeze's own acceptance
+    # gate uses, so the resolution can never reject a test the freeze
+    # considers well-mapped. Pinned re-adds are exempt: mapping already
+    # moved each padding node to its declared owner; a node pinned by
+    # test_mapping can at most be duplicated by the D-64 sweep, and D-64
+    # already skips mapped (pinned) node-ids, so anything over-mapped here
+    # is UNPINNED by construction. Resolve by dropping the node from every
+    # mapped task except the topologically-last one.
+    remapped = [n for t in tasks for n in t["tests"]]
+    still = sorted({n for n in remapped if remapped.count(n) > 1})
+    if still:
+        order = toposort(tasks)
+        if order is None:
+            errs.append(
+                f"test node-id(s) mapped to more than one task: {still} — "
+                "and the DAG has a cycle, so D-131 cannot order the "
+                "claimants; resolve the duplicate by hand"
+            )
+        else:
+            rank = {tid: i for i, tid in enumerate(order)}
+            for t in tasks:
+                keep, drop = [], []
+                for n in t["tests"]:
+                    if n not in still:
+                        keep.append(n)
+                        continue
+                    owners = [tt["id"] for tt in tasks if n in tt["tests"]]
+                    if t["id"] != max(owners, key=rank.get):
+                        drop.append(n)
+                    else:
+                        keep.append(n)
+                if drop:
+                    t["tests"] = keep
+                    AUTO_PLACED.append(
+                        f"{t['id']} drops overmapped (D-131, kept on LAST "
+                        f"mapped task): {', '.join(sorted(set(drop)))}"
+                    )
+            after = [n for t in tasks for n in t["tests"]]
+            gone = sorted({n for n in after if after.count(n) > 1})
+            if gone:
+                errs.append(
+                    f"test node-id(s) mapped to more than one task: {gone}"
+                )
 
     # Non-vacuous acceptance (M35 correction): a task with no mapped test
     # and no smoke check is rejected — enforced at plan-gate level (see
@@ -1894,8 +1959,8 @@ def main(argv):
         if AUTO_PLACED:
             PLAN.write_text(json.dumps(plan, indent=2) + "\n")
             print(
-                "validate-plan: gate-owned placement (test_mapping/D-64) — "
-                f"node-ids moved to their acceptance task: "
+                "validate-plan: gate-owned placement (test_mapping/D-64/"
+                f"D-131) — node-ids moved to their acceptance task: "
                 f"{'; '.join(AUTO_PLACED)}",
                 file=sys.stderr,
             )
