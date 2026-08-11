@@ -1521,6 +1521,82 @@ def test_swallow_other_filetype_ignored(tmp_path):
     assert r.returncode == 0
 
 
+# --- check-swallowed-errors.py: per-change scoping (audit 2026-08-11 item 2) -
+# The gate examined the ENTIRE edited file, so a pre-existing swallow the coder
+# never touched could block a task whose change lands elsewhere. Findings are
+# now scoped to the delta's changed region (git diff <base> -> working tree,
+# base HEAD), with a whole-file fallback whenever there is no tracked baseline
+# (never weakens a finding in a changed region — only reports more).
+
+# A file with a pre-existing bare-except swallow at line 3 (committed, left
+# untouched) and, after the coder's edit, a NEW swallow at line 9.
+_SWALLOW_BASE = "try:\n    a()\nexcept OSError:\n    pass\n\ndef g():\n    return 1\n"
+_SWALLOW_EDIT = ("try:\n    a()\nexcept OSError:\n    pass\n\ndef g():\n"
+                 "    try:\n        b()\n    except OSError:\n        pass\n")
+
+
+def _git_repo_with_edit(tmp_path, name, baseline, edited):
+    """Init a repo, commit `baseline` as `name`, then overwrite it with
+    `edited` (the coder's uncommitted working-tree change)."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"],
+                   check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"],
+                   check=True)
+    (tmp_path / name).write_text(baseline)
+    subprocess.run(["git", "-C", str(tmp_path), "add", name], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "base"],
+                   check=True)
+    (tmp_path / name).write_text(edited)
+    return tmp_path
+
+
+def _run_swallow_in(repo, *args):
+    return subprocess.run(
+        [sys.executable, str(CHECK_SWALLOW), *args],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_scoped_swallow_reports_only_changed_region(tmp_path):
+    """The NEW swallow (line 9, in the coder's changed hunk) is reported; the
+    pre-existing swallow (line 3, unchanged) no longer blocks the task."""
+    repo = _git_repo_with_edit(tmp_path, "m.py", _SWALLOW_BASE, _SWALLOW_EDIT)
+    r = _run_swallow_in(repo, "m.py")
+    assert r.returncode == 1, r.stdout
+    assert "m.py:9:" in r.stdout          # changed region — never weakened
+    assert "m.py:3:" not in r.stdout      # unchanged region — dropped
+
+
+def test_scoped_swallow_no_scope_reports_whole_file(tmp_path):
+    """--no-scope restores the whole-file behavior: both swallows reported."""
+    repo = _git_repo_with_edit(tmp_path, "m.py", _SWALLOW_BASE, _SWALLOW_EDIT)
+    r = _run_swallow_in(repo, "--no-scope", "m.py")
+    assert r.returncode == 1
+    assert "m.py:3:" in r.stdout and "m.py:9:" in r.stdout
+
+
+def test_scoped_swallow_untracked_file_reports_whole_file(tmp_path):
+    """No tracked baseline (untracked file) -> whole-file fallback, so a swallow
+    is never silently dropped when the change region can't be computed."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "n.py").write_text(_SWALLOW_EDIT)  # never committed
+    r = _run_swallow_in(tmp_path, "n.py")
+    assert r.returncode == 1
+    assert "n.py:3:" in r.stdout and "n.py:9:" in r.stdout
+
+
+def test_scoped_swallow_explicit_changed_lines(tmp_path):
+    """--changed-lines scopes without git: a finding whose span intersects the
+    given range is kept; a range excluding every finding drops them all."""
+    repo = _git_repo_with_edit(tmp_path, "m.py", _SWALLOW_BASE, _SWALLOW_EDIT)
+    kept = _run_swallow_in(repo, "--changed-lines", "m.py=6-10", "m.py")
+    assert kept.returncode == 1 and "m.py:9:" in kept.stdout
+    assert "m.py:3:" not in kept.stdout
+    dropped = _run_swallow_in(repo, "--changed-lines", "m.py=1-2", "m.py")
+    assert dropped.returncode == 0, dropped.stdout
+
+
 # --- consult_em: D-71 diagnosis hardening (bash, via drive-consult.sh) -------
 # The M23 incident this covers: the EM's one production diagnosis came back
 # schema-invalid (empty task_id) and the run dead-ended with no retry. D-71
@@ -4049,6 +4125,170 @@ def test_run_tests_mypy_gate_green_runs_pytest(tmp_path):
     assert "FINAL_TESTS_RC=0" in r.stdout, r.stdout
     args = arg_log.read_text().splitlines()
     assert args[0] == "--rw" and "pytest" in args, args
+
+
+# --- run_tests mypy type gate: per-change scoping (audit 2026-08-11 item 2) --
+# The whole-tree `mypy src/` on every acceptance run let a type error in a file
+# the task never touched block its verdict. A targeted run (node-ids passed)
+# now scopes mypy to the active delta's changed source files; the full-suite
+# regression check (no node-ids) and a src-free delta keep the whole-tree
+# check. drive-runtime.sh calls run_tests with no args and sets no
+# ACTIVE_DELTA_FILES, so it cannot reach the scoped path — this focused driver
+# extracts the SAME run_tests (anti-drift) and drives it with a delta range +
+# node-ids under a stub that runs the REAL mypy on whatever targets run_tests
+# selects, so the type error is genuinely (not stubbed) detected.
+
+_SCOPED_STUB = (
+    "#!/usr/bin/env bash\n"
+    "[ -z \"${SANDBOX_ARG_LOG:-}\" ] || printf '%s\\n' \"$@\" > \"$SANDBOX_ARG_LOG\"\n"
+    "case \" $* \" in\n"
+    "  *\" -- mypy \"*)\n"
+    "    while [ \"$1\" != \"--\" ]; do shift; done; shift\n"
+    "    \"$@\"; exit $? ;;\n"
+    "esac\n"
+    "[ -z \"${SANDBOX_REPORT_SOURCE:-}\" ] || cp \"$SANDBOX_REPORT_SOURCE\" .cache/test-report.json\n"
+    "exit \"${SANDBOX_STUB_RC:-0}\"\n"
+)
+
+_SCOPED_DRIVER = (
+    "set -euo pipefail\n"
+    "cd \"__WORK__\"\n"
+    "mark() { :; }\n"
+    "ACTIVE_DELTA_FILES=(__ACTIVE__)\n"
+    "DELTA_SCOPED=1\n"
+    "eval \"$(sed -n '/^run_tests() {/,/^}/p' \"__ORCH__\")\"\n"
+    "run_tests __IDS__\n"
+    "echo \"FINAL_TESTS_RC=$TESTS_RC\"\n"
+    "echo \"FINAL_FAILING=$FAILING\"\n"
+)
+
+_MYPY_CLEAN_SRC = "def f(x: int) -> int:\n    return x\n"
+_MYPY_ERR_SRC = 'x: int = "not an int"\n'
+
+
+def _drive_scoped_run_tests(tmp_path, *, src_files, deltas, node_ids):
+    """Invoke the real run_tests with a scoped delta range. src_files:
+    {relpath: source}; deltas: list of delta dicts (written as delta-N.json and
+    passed as ACTIVE_DELTA_FILES); node_ids: run_tests args ([] = full-suite).
+    Returns (CompletedProcess, arg_log Path). The arg log holds the LAST
+    sandbox call: on a mypy-red run that is the mypy invocation (targets
+    assertable); on a green run it is the pytest invocation."""
+    work = tmp_path
+    (work / "scripts").mkdir(parents=True, exist_ok=True)
+    (work / ".cache").mkdir(exist_ok=True)
+    stub = work / "scripts" / "sandbox-run.sh"
+    stub.write_text(_SCOPED_STUB)
+    stub.chmod(0o755)
+    for rel, body in src_files.items():
+        p = work / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body)
+    delta_paths = []
+    for i, d in enumerate(deltas):
+        dp = work / f"delta-{i}.json"
+        dp.write_text(json.dumps(d))
+        delta_paths.append(str(dp))
+    report = work / "pass-report.json"
+    report.write_text(json.dumps({
+        "summary": {"total": 1, "passed": 1},
+        "tests": [{"nodeid": "tests/test_a.py::t", "outcome": "passed"}],
+        "collectors": [],
+    }))
+    arg_log = work / "args.log"
+    driver = (_SCOPED_DRIVER
+              .replace("__WORK__", str(work))
+              .replace("__ACTIVE__", " ".join(f'"{p}"' for p in delta_paths))
+              .replace("__ORCH__", str(ORCHESTRATE))
+              .replace("__IDS__", " ".join(f'"{n}"' for n in node_ids)))
+    env = {**os.environ, "SANDBOX_REPORT_SOURCE": str(report),
+           "SANDBOX_ARG_LOG": str(arg_log), "SANDBOX_STUB_RC": "0"}
+    r = subprocess.run(["bash", "-c", driver], capture_output=True, text=True,
+                       env=env)
+    return r, arg_log
+
+
+def _mypy_call_line(arg_log):
+    return arg_log.read_text().splitlines()
+
+
+def test_scoped_mypy_ignores_unrelated_error(tmp_path):
+    """Headline: a targeted run type-checks only the delta's changed source
+    file. src/z.py carries a real type error but the delta touches only
+    src/a.py, so the gate stays GREEN — the unrelated error no longer blocks
+    the verdict. (Whole-tree `mypy src/` would have gone red on src/z.py.)"""
+    r, _ = _drive_scoped_run_tests(
+        tmp_path,
+        src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
+        deltas=[{"changed_files": ["src/a.py"]}],
+        node_ids=["tests/test_a.py::t"],
+    )
+    assert "FINAL_TESTS_RC=0" in r.stdout, (r.stdout, r.stderr)
+
+
+def test_scoped_mypy_error_in_scoped_file_fails_closed(tmp_path):
+    """D-129 preserved: a type error in a file the delta DOES touch still fails
+    the verdict, with mypy targeting exactly that file (never src/)."""
+    r, arg_log = _drive_scoped_run_tests(
+        tmp_path,
+        src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
+        deltas=[{"changed_files": ["src/z.py"]}],
+        node_ids=["tests/test_a.py::t"],
+    )
+    assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
+    assert "FINAL_FAILING=mypy:src/z.py" in r.stdout, r.stdout
+    assert _mypy_call_line(arg_log) == [
+        "--", "mypy", "--explicit-package-bases",
+        "--cache-dir=/tmp/mypy-cache", "src/z.py"], _mypy_call_line(arg_log)
+
+
+def test_scoped_mypy_full_suite_checks_whole_tree(tmp_path):
+    """The full-suite regression check (run_tests with no node-ids) keeps the
+    whole-tree `src/` check: src/z.py's error is caught and labelled mypy:src,
+    exactly as before the scoping change."""
+    r, arg_log = _drive_scoped_run_tests(
+        tmp_path,
+        src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
+        deltas=[{"changed_files": ["src/a.py"]}],
+        node_ids=[],
+    )
+    assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
+    assert "FINAL_FAILING=mypy:src" in r.stdout, r.stdout
+    assert _mypy_call_line(arg_log) == [
+        "--", "mypy", "--explicit-package-bases",
+        "--cache-dir=/tmp/mypy-cache", "src/"], _mypy_call_line(arg_log)
+
+
+def test_scoped_mypy_no_src_change_falls_back_to_whole_tree(tmp_path):
+    """Fail-closed default: a delta that changed no src/*.py (only a test file)
+    yields an empty scope, so the gate falls back to the whole-tree `src/`
+    check rather than skipping — src/z.py's error is still caught."""
+    r, arg_log = _drive_scoped_run_tests(
+        tmp_path,
+        src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
+        deltas=[{"changed_files": ["tests/test_a.py"]}],
+        node_ids=["tests/test_a.py::t"],
+    )
+    assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
+    assert "FINAL_FAILING=mypy:src" in r.stdout, r.stdout
+    assert _mypy_call_line(arg_log)[-1] == "src/", _mypy_call_line(arg_log)
+
+
+def test_scoped_mypy_unions_changed_src_across_deltas(tmp_path):
+    """A multi-delta range (a re-freeze spanning versions) type-checks the
+    UNION of changed source files, deduped and in first-seen order."""
+    r, arg_log = _drive_scoped_run_tests(
+        tmp_path,
+        src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
+        deltas=[{"changed_files": ["src/a.py"]},
+                {"changed_files": ["src/z.py", "src/a.py"]}],
+        node_ids=["tests/test_a.py::t"],
+    )
+    assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
+    assert "FINAL_FAILING=mypy:src/a.py,src/z.py" in r.stdout, r.stdout
+    assert _mypy_call_line(arg_log) == [
+        "--", "mypy", "--explicit-package-bases",
+        "--cache-dir=/tmp/mypy-cache", "src/a.py", "src/z.py"], \
+        _mypy_call_line(arg_log)
 
 
 def _run_with_json_report(tmp_path, report):

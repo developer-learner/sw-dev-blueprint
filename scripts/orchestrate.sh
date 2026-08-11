@@ -918,19 +918,57 @@ run_tests() {
   rm -f .cache/test-report.json
   # Type gate (D-129): mypy was CI-only (post-M29 "a gate that lives only in
   # CI does not exist until a remote does" — testchat shipped 40 spec versions
-  # with its type gate dark and went red on first push). Every acceptance now
-  # type-checks src/ first; a type error fails the verdict with its own
+  # with its type gate dark and went red on first push). Every acceptance
+  # type-checks first; a type error fails the verdict with its own
   # classification, never NO_REPORT. --cache-dir=/tmp: the repo mount is
   # read-only and mypy insists on writing its cache. Fail-closed: a missing
   # mypy in the sandbox stack is a hard halt (the next line's `|| true` must
   # not swallow a non-mypy exit — mypy failure rc≠0 short-circuits below).
+  #
+  # Scoped per-change (audit 2026-08-11 item 2): the whole-tree `src/` check
+  # let a type error in a file the task never touched block its verdict. A
+  # targeted acceptance/verdict run (node-ids passed, $# > 0) now type-checks
+  # only the active delta's changed source files; mypy follows imports, so a
+  # reachable error in their dependency closure still surfaces — only genuinely
+  # unrelated files stop blocking. The full-suite regression check (no
+  # node-ids) and a delta that changed no src/*.py both keep the whole-tree
+  # `src/` check (fail-closed default). The FAILING label names the checked set.
   MYPY_OUT=""
   MYPY_RC=0
+  local mypy_targets=()
+  if [ "$#" -gt 0 ] && [ "${ACTIVE_DELTA_FILES+set}" = "set" ] \
+     && [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
+    while IFS= read -r _mf; do
+      [ -n "$_mf" ] && mypy_targets+=("$_mf")
+    done < <(python3 - "${ACTIVE_DELTA_FILES[@]}" <<'PYSCOPE'
+import json, sys
+from pathlib import Path
+seen = []
+for p in sys.argv[1:]:
+    try:
+        d = json.loads(Path(p).read_text())
+    except (OSError, ValueError):
+        continue
+    for f in d.get("changed_files", []):
+        if (f.startswith("src/") and f.endswith(".py")
+                and Path(f).exists() and f not in seen):
+            seen.append(f)
+print("\n".join(seen))
+PYSCOPE
+)
+  fi
+  local mypy_label
+  if [ "${#mypy_targets[@]}" -gt 0 ]; then
+    mypy_label="mypy:$(IFS=,; printf '%s' "${mypy_targets[*]}")"
+  else
+    mypy_targets=("src/")
+    mypy_label="mypy:src"
+  fi
   MYPY_OUT=$(scripts/sandbox-run.sh -- mypy --explicit-package-bases \
-    --cache-dir=/tmp/mypy-cache src/ 2>&1) || MYPY_RC=$?
+    --cache-dir=/tmp/mypy-cache "${mypy_targets[@]}" 2>&1) || MYPY_RC=$?
   if [ "$MYPY_RC" -ne 0 ]; then
     mark "mypy gate FAILED (rc=$MYPY_RC)"
-    FAILING="mypy:src"
+    FAILING="$mypy_label"
     FAIL_DETAIL="$(printf '%s' "$MYPY_OUT" | grep -E '^(src|tests)/.*error|^error' | head -c 900 | tr '\n' ' ')" \
       || true
     [ -n "$FAIL_DETAIL" ] || FAIL_DETAIL="mypy exited $MYPY_RC — see run output"
