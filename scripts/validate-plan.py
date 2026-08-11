@@ -142,6 +142,58 @@ MAX_BRIEF_CHARS = 2500
 # actually rejected. Advisory only; the cap is the hard backstop.
 ERD_MASS_ADVISORY_THRESHOLD = 2000
 ERD_PATH = APPROVED / "ERD.md"
+ERD_DELTA_PATH = APPROVED / "ERD-DELTA.md"
+
+# D-133 (delta-only brief enforcement, 2026-08-11 audit item 4): an
+# existing-file task's brief must describe only what THIS delta changes, never
+# restate carried behavior the delta leaves untouched. em.md has said so in
+# prose since v82, but prose is a suggestion, not a rule — and the mechanical
+# synthesis lane (B3) copies the TPM's verbatim brief, which legitimately names
+# carried symbols for context, so the check cannot simply forbid mentioning
+# carried behavior. It must separate TPM-authorized context from EM-introduced
+# restatement. The rule (enforced fail-closed in validate(), mirroring the D-89
+# "name the source, suggest the fix" shape): for an EXISTING file whose plan
+# brief DIVERGES from the TPM verbatim brief, flag any backticked code symbol
+# the brief names that (a) is DEFINED in the current on-disk file — i.e.
+# carried, pre-existing behavior — AND (b) appears NOWHERE in the ERD-DELTA the
+# TPM authored. That symbol is behavior the delta does not change, restated.
+#
+# DECISIONS — the "do NOT fire / do NOT suggest" boundary (S6, 2026-08-08: an
+# over-strict gate that halts every freeze is worse than none — this check
+# fails OPEN unless every precondition for a sound verdict holds, and only then
+# fails CLOSED with a named, bounded diagnosis):
+#   * Verbatim TPM briefs are the authority. A plan brief equal (whitespace-
+#     normalized) to the file's `_parse_brief_blocks` block is exempt outright,
+#     so the synthesis path can NEVER be rejected by this gate (item-4
+#     constraint). The symbol heuristic would already pass such a brief; the
+#     explicit equality skip makes it an invariant, not an inference.
+#   * No ERD-DELTA.md, or no verbatim brief block for the file → skip. Without
+#     the TPM's authored delta there is no ground truth for "what the delta
+#     changes"; firing blind is the S6 failure. The gate speaks only when it
+#     has an authority to compare against.
+#   * A new file (nothing on disk / no defined symbols) carries no behavior to
+#     restate → skip. Grandfathering by construction: a symbol the delta
+#     introduces is not yet defined in the file, so it can never be flagged;
+#     only a symbol the file ALREADY defines can be.
+#   * Only backticked identifiers that resolve to a symbol the file DEFINES
+#     (def/class/function/const/let/var) fire — never prose, type names, or
+#     un-backticked words. The offender list is capped (bounded diagnosis).
+# The fix a fired diagnosis points to: drop the restated symbol from the brief;
+# or, if the behavior genuinely changes, the TPM's ERD-DELTA must say so — that
+# routes to the spec, not to an EM brief rewrite.
+DELTA_ONLY_MAX_REPORT = 6
+# A code identifier: the atoms we pull from a brief's backticks and match
+# against a file's definitions.
+_SYMBOL_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Definition sites across the project's two source languages (Python, JS): the
+# left-hand side of a def/class/function/const/let/var is a symbol the file
+# OWNS. Anything a brief restates from this set is carried behavior.
+_DEF_RES = (
+    re.compile(r"\bdef\s+([A-Za-z_]\w*)"),
+    re.compile(r"\bclass\s+([A-Za-z_]\w*)"),
+    re.compile(r"\bfunction\s+([A-Za-z_]\w*)"),
+    re.compile(r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*="),
+)
 VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
 HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "options"}
 # Method-agnostic registration calls (Flask .route/.add_url_rule, FastAPI
@@ -562,6 +614,46 @@ def validate():
                     f"of {t['id']} in the DAG. Either add it to depends_on or "
                     f"rewrite the brief to not assume that file exists."
                 )
+
+    # D-133: delta-only brief enforcement for EXISTING files. See the block
+    # comment by DELTA_ONLY_MAX_REPORT for the rule and its fail-open/fail-closed
+    # boundary. Fires only when the TPM's ERD-DELTA gives an authoritative delta
+    # description to diverge from; grandfathers verbatim TPM briefs, new files,
+    # and every symbol the TPM's own delta doc names.
+    if ERD_DELTA_PATH.exists():
+        try:
+            delta_text = ERD_DELTA_PATH.read_text()
+        except OSError:
+            delta_text = ""
+        if delta_text:
+            tpm_briefs = _parse_brief_blocks(delta_text)  # {file: (tid, brief)}
+            authorized = set(_SYMBOL_RE.findall(delta_text))
+            for t in tasks:
+                f = t["file"]
+                if f not in tpm_briefs:
+                    continue  # no TPM delta brief for this file → no authority
+                if " ".join(t["brief"].split()) == " ".join(tpm_briefs[f][1].split()):
+                    continue  # verbatim TPM brief → synthesis authority, exempt
+                defined = _file_defined_symbols(f)
+                if not defined:
+                    continue  # new/unreadable file → no carried behavior
+                offenders = sorted(
+                    (_brief_backtick_symbols(t["brief"]) & defined) - authorized
+                )
+                if offenders:
+                    shown = offenders[:DELTA_ONLY_MAX_REPORT]
+                    more = len(offenders) - len(shown)
+                    errs.append(
+                        f"task {t['id']} brief restates carried behavior the "
+                        f"delta does not change — {f} defines {shown}"
+                        + (f" (+{more} more)" if more else "")
+                        + ", which the frozen ERD-DELTA never names as changed "
+                        "in this delta (D-133). An existing-file brief "
+                        "describes ONLY the delta: drop the restated "
+                        "symbol(s), or if that behavior really changes, the "
+                        "TPM's ERD-DELTA must say so (route to the spec, not "
+                        "an EM brief rewrite)."
+                    )
 
     # Route reachability (testchat M5): a mapped test that exercises an HTTP
     # route can only pass once the task claiming that route contract has run.
@@ -1579,6 +1671,32 @@ def _parse_brief_blocks(text):
         if not body:
             continue
         out[hm.group(2)] = (hm.group(1), body)
+    return out
+
+
+def _brief_backtick_symbols(brief):
+    """Identifier tokens a brief names inside backticks — the symbols it claims
+    to describe. Only backticked spans count: un-backticked prose ("keep the
+    retry loop running") never contributes, so D-133 fires on symbol
+    references, not on English about behavior."""
+    syms = set()
+    for span in re.findall(r"`([^`]+)`", brief):
+        syms.update(_SYMBOL_RE.findall(span))
+    return syms
+
+
+def _file_defined_symbols(path):
+    """The symbols the current on-disk file DEFINES (def/class/function/
+    const/let/var). None when the file is absent or unreadable — a new file
+    the delta creates has nothing to restate, so D-133 skips it. A brief
+    symbol in this set is carried, pre-existing behavior."""
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return None
+    out = set()
+    for rx in _DEF_RES:
+        out.update(rx.findall(text))
     return out
 
 
