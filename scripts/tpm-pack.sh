@@ -3,16 +3,13 @@
 #
 # The TPM is a frontier LLM in a human-operated web chat with NO repo access
 # (docs/TPM-ROLE.md — the air gap is the design, not a limitation). This
-# script removes the operator's courier burden: one command packs everything
-# a TPM session needs into a single copy-pasteable blob — the role doc, the
-# contracts schema, and the currently frozen spec (when one exists) so deltas
-# are derived from ground truth, not chat memory.
+# script removes the operator's courier burden: one command packs the small
+# milestone slice a TPM session needs into a single copy-pasteable blob.
 #
-# Milestone relevance (D-117): when ERD-DELTA.md exists the milestone slice
-# is the delta — the standing ERD arrives as a generated minimal summary
-# (standing rules + per-file map via scripts/standing-summary.py, the same
-# summary the EM receives, D-116), never the accumulated standing prose.
-# Generation failure falls back to the full standing ERD with a stderr
+# Milestone relevance (D-116/D-117/D-120): the product context is a capsule
+# plus the current changed-acceptance slice; the standing architecture is
+# rules plus a generated file map; contracts contain only in-scope bodies.
+# Every missing or failed slice falls back to its full artifact with a stderr
 # warning — never a silent context loss.
 #
 # It deliberately packs NOTHING from src/ or tests/: oracle independence
@@ -48,6 +45,81 @@ emit() {  # emit <path> [label]
   echo
 }
 
+generate_prd_slice() {
+  python3 - "$1" "$2" <<'PY'
+"""Derive a product capsule and current criteria from frozen truth (D-117)."""
+import re
+import sys
+from pathlib import Path
+
+
+def first_paragraph(lines: list[str], start: int) -> str:
+    """Read one Markdown paragraph after a product heading (D-117)."""
+    paragraph: list[str] = []
+    for line in lines[start:]:
+        if line.startswith("#"):
+            break
+        if not line.strip():
+            if paragraph:
+                break
+            continue
+        paragraph.append(line.strip())
+    return re.sub(r"\s+", " ", " ".join(paragraph)).strip()
+
+
+def product_capsule(prd: str) -> str:
+    """Select the PRD's product-introduction paragraph (D-117)."""
+    lines = prd.splitlines()
+    for index, line in enumerate(lines):
+        if re.match(r"^#{1,3}\s+(what\b|product\b|overview\b)", line, re.I):
+            return first_paragraph(lines, index + 1)
+    for index, line in enumerate(lines):
+        if line.startswith("#") or not line.strip():
+            continue
+        paragraph = first_paragraph(lines, index)
+        if paragraph:
+            return paragraph
+    return ""
+
+
+def changed_acceptance(delta: str) -> str:
+    """Extract the authoritative current PRD criteria from D-107's delta."""
+    match = re.search(
+        r"^## Changed acceptance criteria\s*$\n(.*?)(?=^##\s|\Z)",
+        delta,
+        re.M | re.S | re.I,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def bounded(text: str, limit: int = 700) -> str:
+    """Keep the product capsule short without cutting a word (D-117)."""
+    if len(text) <= limit:
+        return text
+    prefix = text[: limit - 3].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return prefix + "..."
+
+
+prd_path, delta_path = map(Path, sys.argv[1:3])
+try:
+    prd = prd_path.read_text()
+    capsule = product_capsule(prd)
+    criteria = changed_acceptance(delta_path.read_text())
+except OSError:
+    sys.exit(1)
+if not capsule or not criteria:
+    sys.exit(1)
+output = (
+    "# Product milestone context\n\n"
+    f"## Product capsule\n\n{bounded(capsule)}\n\n"
+    f"## Current PRD delta (from ERD-DELTA.md)\n\n{criteria}\n"
+)
+if len(output.encode()) > len(prd.encode()):
+    sys.exit(1)
+sys.stdout.write(output)
+PY
+}
+
 bundle() {
   cat <<'HDR'
 You are the TPM for this project. Your job description and working context
@@ -61,7 +133,16 @@ HDR
   if [ -f "$APPROVED/VERSION" ]; then
     echo "--- CURRENTLY FROZEN SPEC (v$(cat "$APPROVED/VERSION")) — derive any delta from THIS, not from chat memory ---"
     echo
-    emit "$APPROVED/PRD.md"
+    prd_slice="$(mktemp "${TMPDIR:-/tmp}/prd-slice.XXXXXX")"
+    if [ -f "$APPROVED/PRD.md" ] \
+      && [ -f "$APPROVED/ERD-DELTA.md" ] \
+      && generate_prd_slice "$APPROVED/PRD.md" "$APPROVED/ERD-DELTA.md" > "$prd_slice" 2>/dev/null; then
+      emit "$prd_slice" "$APPROVED/PRD.md"
+    else
+      [ -f "$APPROVED/PRD.md" ] && emit "$APPROVED/PRD.md"
+      echo "tpm-pack: current PRD delta unavailable — shipped the full standing PRD" >&2
+    fi
+    rm -f "$prd_slice"
     if [ -f "$APPROVED/ERD-DELTA.md" ]; then
       # D-117: milestone slice only — the standing ERD arrives as the
       # generated minimal summary; ERD-DELTA.md is the authoritative
@@ -80,7 +161,15 @@ HDR
     else
       [ -f "$APPROVED/ERD.md" ] && emit "$APPROVED/ERD.md"
     fi
-    emit "$APPROVED/contracts.json"
+    contracts_slice="$(mktemp "${TMPDIR:-/tmp}/contracts-delta.XXXXXX")"
+    if [ -f "$APPROVED/contracts.json" ] \
+      && python3 scripts/contracts-delta.py "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null; then
+      emit "$contracts_slice" "$APPROVED/contracts.json"
+    else
+      [ -f "$APPROVED/contracts.json" ] && emit "$APPROVED/contracts.json"
+      echo "tpm-pack: contracts slice generation failed — shipped the full contracts.json" >&2
+    fi
+    rm -f "$contracts_slice"
   else
     echo "--- NO FROZEN SPEC YET — this is the initial freeze (v1): a complete spec is required (PRD.md, ERD.md, contracts.json, and the test suite under tests/) ---"
     echo

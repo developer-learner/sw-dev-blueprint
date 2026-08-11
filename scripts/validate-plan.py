@@ -42,6 +42,22 @@ Modes:
                                             prompt (D-130). Raw changed_tests are
                                             file-granular; the frozen test_mapping
                                             pins which tests the milestone owns.
+  validate-plan.py --synthesize-plan DELTA.json [DELTA.json ...]
+                                            mechanical plan synthesis (B3-fast
+                                            path): print the full plan JSON when
+                                            the TPM's ERD-DELTA carries a verbatim
+                                            coder brief for every inventory file,
+                                            a DAG statement, and an ownership pin
+                                            for every milestone node-id — one
+                                            deterministic task per file, the EM
+                                            never called. Exits 1 with the reasons
+                                            when any piece is missing (unbriefed
+                                            file, self/reference edges, unpinned
+                                            scope id); the orchestrator then falls
+                                            back to the EM full emission. The plan
+                                            still faces the FULL validate() gate —
+                                            this command is a producer, never an
+                                            authority.
   validate-plan.py --diagnosis FILE         validate an EM diagnosis; print its verdict
   validate-plan.py --spec-preflight OLD NEW
                                                     D-78 freeze-time satisfiability: every
@@ -193,6 +209,53 @@ def contract_ids(contracts):
         for entry in contracts.get(key, []):
             if isinstance(entry, dict) and "id" in entry:
                 ids.add(entry["id"])
+    return ids
+
+
+def contract_file_pins(contracts):
+    """{contract id: owning source path} from the D-120 file pins. Routes,
+    schemas, errors and ui entries pin their owning file via their "file"
+    field; entry_points self-pin through their module path (src.api.threads:app
+    derives to src/api/threads.py)."""
+    pins = {}
+    for key in ("routes", "schemas", "errors", "externals", "ui"):
+        for entry in contracts.get(key, []):
+            if isinstance(entry, dict) and entry.get("id") and entry.get("file"):
+                pins[entry["id"]] = entry["file"]
+    for ep in contracts.get("entry_points", []):
+        if isinstance(ep, str) and ep.startswith("src."):
+            pins[ep] = ep.split(":", 1)[0].replace(".", "/") + ".py"
+    return pins
+
+
+def delta_changed_contract_ids():
+    """Union of changed_contract_ids across the DELTA-vN.json stack under
+    scripts/.approved (every delta up to the frozen VERSION). Over-approximates
+    the active range on purpose: an id the TPM declared changed in ANY delta
+    is claimable by any task, while an id never declared changed anywhere is
+    provably a ride-along claim. Greenfield (no deltas yet) yields an empty
+    set and the claim check is inert — the first freeze's contracts are all
+    new."""
+    ids = set()
+    if not APPROVED.is_dir():
+        return ids
+    frozen_v = None
+    if VERSION.exists():
+        try:
+            frozen_v = int(VERSION.read_text().strip())
+        except ValueError:
+            pass
+    for p in sorted(APPROVED.glob("DELTA-v*.json")):
+        m = re.match(r"DELTA-v(\d+)\.json$", p.name)
+        if not m:
+            continue
+        if frozen_v is not None and int(m.group(1)) > frozen_v:
+            continue
+        try:
+            d = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        ids |= set(d.get("changed_contract_ids", []))
     return ids
 
 
@@ -403,6 +466,38 @@ def validate():
         bad = sorted(set(t["contracts"]) - known)
         if bad:
             errs.append(f"task {t['id']} references unknown contract id(s): {bad}")
+
+    # Claim minimality (finding-2): a task claims only contracts THIS
+    # milestone changed plus interfaces its file's work directly depends on
+    # (cross-file pins and unpinned interfaces). Unchanged contracts pinned
+    # to the task's OWN file are the ride-along pattern — testchat v99: a
+    # GET-side 503-mapping task claimed route:PUT/route:DELETE and every
+    # schema of its file, dragging unchanged behavior into the milestone's
+    # acceptance and over-invalidating later freezes (one task re-ran 20
+    # node-ids repeatedly). The TPM's changed_contract_ids declaration is the
+    # authority: an id never declared changed in any active delta cannot be
+    # claimed by the task owning its file. Greenfield (no DELTA stack yet)
+    # leaves the check inert — the first freeze's contracts are all new.
+    changed_contracts = delta_changed_contract_ids()
+    any_delta = any(APPROVED.glob("DELTA-v*.json")) if APPROVED.is_dir() else False
+    if any_delta:
+        pins = contract_file_pins(contracts)
+        for t in tasks:
+            ride = sorted(
+                c for c in t["contracts"]
+                if pins.get(c) == t["file"] and c not in changed_contracts
+            )
+            if ride:
+                errs.append(
+                    f"task {t['id']} claims contract(s) {ride} that are "
+                    f"unchanged in every delta and pinned to its own file "
+                    f"{t['file']!r} — a task claims only contracts this "
+                    f"milestone changed and interfaces it directly depends "
+                    f"on; unchanged self-owned contracts must not ride "
+                    f"(v99: GET-only milestone claiming PUT/DELETE). Trim "
+                    f"these claims or the milestone's acceptance and "
+                    f"invalidation both over-reach."
+                )
 
     # oracle projection, part 1 — mapped node-ids must exist in the frozen
     # suite and be mapped at most once. Whether every node-id that NEEDS a
@@ -1349,28 +1444,39 @@ def _id_family(node_id):
     return (module + "::" + name.split("[", 1)[0]) if sep else node_id
 
 
-def milestone_scope_ids(mapping, changed_files, changed_tests):
+def milestone_scope_ids(mapping, changed_files, changed_tests,
+                        granularity="file"):
     """The authoritative milestone node-id set for ONE delta: which of its
-    raw changed_tests the milestone actually owns, per the frozen
-    test_mapping. Raw deltas carry changed_tests at FILE granularity —
-    orchestrate-testchat v87: a 2-comment-line diff in tests/test_ui.py
-    staged 58 node-ids, of which only the 6 the TPM pinned were the
-    milestone's; the other 52 were relabeled leftovers (D-116 class) that
-    leaked into the EM scope and the invalidation set (audit 2026-08-08).
+    changed_tests the milestone actually owns. Raw legacy deltas carry
+    changed_tests at FILE granularity — orchestrate-testchat v87: a
+    2-comment-line diff in tests/test_ui.py staged 58 node-ids, of which only
+    the 6 the TPM pinned were the milestone's; the other 52 were relabeled
+    leftovers (D-116 class) that leaked into the EM scope and the
+    invalidation set (audit 2026-08-08).
 
-    Rule: a changed test belongs to the milestone iff its family is among
-    the pinned mapping keys (family-matched, so the slice survives either
-    id shape), plus any pinned id whose owner FILE the delta staged — the
-    D-124 completeness repair, preserved. When the mapping carries no
-    pins, the slice is inert and the raw set rides (nothing to slice
-    against yet).
+    Rule for legacy file-granular deltas: a changed test belongs to the
+    milestone iff its family is among the pinned mapping keys (family-matched,
+    so the slice survives either id shape), plus any pinned id whose owner
+    FILE the delta staged — the D-124 completeness repair, preserved. When
+    the mapping carries no pins, the slice is inert and the raw set rides.
+
+    Rule for function-granular deltas (changed_tests_granularity ==
+    "function"): the mapping NEVER trims. The producer already recorded
+    precisely which test functions changed, and an unpinned NEW or MODIFIED
+    test must never be silently discarded — testchat v99: the AC-161 oracle
+    `test_quarantine_rename_failure_is_unavailable` rode no test_mapping pin,
+    so the file-granular slice emptied its task's tests list and the default
+    D-112 verdict could pass without ever running it. The mapping's only
+    remaining role here is the D-124 completeness repair: a pinned id whose
+    owner file the delta staged rides even if the producer dropped it.
     """
-    if not mapping:
-        return list(changed_tests)
-    pinned = {_id_family(k) for k in mapping}
-    scope = {n for n in changed_tests if _id_family(n) in pinned}
-    scope |= {n for n, owner in mapping.items()
-              if owner in set(changed_files)}
+    scope = {n for n in changed_tests}
+    if mapping:
+        pinned = {_id_family(k) for k in mapping}
+        if granularity != "function":
+            scope = {n for n in scope if _id_family(n) in pinned}
+        scope |= {n for n, owner in mapping.items()
+                  if owner in set(changed_files)}
     return sorted(scope)
 
 
@@ -1419,7 +1525,8 @@ def cmd_affected(delta_paths):
         # did not touch, or a completed M33-class task re-runs on churn.
         slice_ids = milestone_scope_ids(
             mapping, delta.get("changed_files", []),
-            delta.get("changed_tests", []))
+            delta.get("changed_tests", []),
+            delta.get("changed_tests_granularity", "file"))
         hit.update(_hit_task_ids(plan["tasks"], delta, slice_ids))
     for tid in sorted(hit):
         print(tid)
@@ -1438,8 +1545,186 @@ def cmd_milestone_scope(delta_paths):
     for p in delta_paths:
         d = load_json(Path(p), f"delta {p}")
         ids += milestone_scope_ids(mapping, d.get("changed_files", []),
-                                   d.get("changed_tests", []))
+                                   d.get("changed_tests", []),
+                                   d.get("changed_tests_granularity", "file"))
     print("\n".join(sorted(set(ids))))
+
+
+_BRIEF_RE = re.compile(r"^###\s+(T\d+)\s*[—-]\s*(\S+?)\s*(?:\s*\([^)]*\))?\s*$")
+_MAP_PIN_RE = re.compile(r"`([^`]+)`\s*->\s*`([^`]+)`")
+
+
+def _parse_brief_blocks(text):
+    """{file: (task_id, brief)} from the TPM's "## Coder briefs (verbatim)"
+    section. A block opens with `### T<n> — <file> (<label>)` and runs to the
+    next heading or end of document; the body is kept verbatim (trimmed of
+    leading/trailing blank lines) — the TPM's exact wording is the coder's
+    brief, no EM paraphrase in the mechanical lane."""
+    out = {}
+    m = re.search(r"^##\s+Coder briefs \(verbatim\)\s*$", text, re.M)
+    if not m:
+        return out
+    section = text[m.end():]
+    lines = section.splitlines(keepends=True)
+    heads = [(i, line) for i, line in enumerate(lines)
+             if re.match(r"^#{2,3}\s", line)]
+    for k, (ln, line) in enumerate(heads):
+        hm = _BRIEF_RE.match(line)
+        if not hm:
+            continue
+        start = sum(len(line) for line in lines[:ln + 1])
+        end = sum(len(line) for line in lines[:heads[k + 1][0]]) \
+            if k + 1 < len(heads) else len(section)
+        body = section[start:end].strip()
+        if not body:
+            continue
+        out[hm.group(2)] = (hm.group(1), body)
+    return out
+
+
+def _parse_delta_dag(text, brief_files):
+    """Dependency edges from the delta's DAG prose, in two forms:
+      - "`<file> depends on <file>`" statements
+      - "Task order: T1 (label) -> T2 (label) -> ..." chains
+    Returns {file: [dep, ...]}. Files must resolve to brief blocks (only
+    inventory files are tasks); unresolvable references are returned as
+    (extra) refusals the caller reports."""
+    edges = {}
+    for a, b in re.findall(r"`([^`]+)`\s+depends on\s+`([^`]+)`", text):
+        edges.setdefault(a, []).append(b)
+    for chain in re.finditer(
+            r"Task order:\s*((?:T\d+[^->]*->\s*)+T\d+[^->]*)", text):
+        steps = [s.strip() for s in chain.group(1).split("->")]
+        ids = [re.match(r"T\d+", s).group(0) for s in steps if re.match(r"T\d+", s)]
+        by_id = {tid: f for f, (tid, _) in brief_files.items()}
+        for prev, cur in zip(ids, ids[1:]):
+            if cur in by_id and prev in by_id:
+                edges.setdefault(by_id[cur], []).append(by_id[prev])
+    return edges
+
+
+def _parse_mapping_pins(text):
+    """{node-id: file} from the TPM's "## Test-to-file mapping" section —
+    the delta-side pin table the frozen contracts.json test_mapping cannot
+    yet hold (a NEW test added by this delta is frozen only after the
+    freeze; its ownership pin lives here first)."""
+    m = re.search(r"^##\s+Test-to-file mapping\s*$", text, re.M)
+    if not m:
+        return {}
+    return dict(_MAP_PIN_RE.findall(text[m.end():]))
+
+
+def cmd_synthesize_plan(delta_paths):
+    """Mechanical plan synthesis (B3): when the TPM's ERD-DELTA carries the
+    complete decomposition — a verbatim coder brief for EVERY inventory file,
+    a DAG statement, and a test-to-file pin for every milestone node-id — the
+    plan is fully determined and no EM call is needed. This command prints
+    that plan JSON to stdout; ensure_plan then runs the full validate() gate
+    over it and the gate (not this command) is the authority. On any missing
+    piece it refuses (exit 1, reasons on stderr) and the orchestrator falls
+    back to the EM full emission with the reasons as context — the EM is
+    exception-only in the mechanical lane.
+
+    Ownership rules (all gate-checked afterwards by validate()):
+      - one task per contracts.files entry; brief = TPM verbatim block
+      - tests = milestone_scope_ids(node-ids whose owner file is this task's:
+        frozen test_mapping ∪ ERD-DELTA Test-to-file mapping) — plus, per
+        D-124's v99 fix, a NEW test pinned in the delta's mapping section
+        rides even when the legacy file-granular slice dropped it
+      - contracts = changed_contract_ids pinned to this task's file
+        (D-120 pins / entry-point self-pins); ride-along claims are never
+        synthesized
+      - depends_on = the delta's DAG prose (`A` depends on `B` statements and
+        Task-order chains), resolved to brief-file tasks
+    """
+    delta_texts = []
+    for p in delta_paths:
+        try:
+            delta_texts.append(Path(p).read_text())
+        except OSError:
+            fail([f"--synthesize-plan: cannot read delta {p}"])
+    erd_delta = APPROVED / "ERD-DELTA.md"
+    if not erd_delta.exists():
+        fail(["--synthesize-plan: ERD-DELTA.md missing — no TPM brief/DAG/pins "
+              "to synthesize from; the EM must emit the full plan"])
+    text = erd_delta.read_text()
+    contracts = load_json(CONTRACTS, "frozen contracts")
+    files = contracts.get("files") or []
+    if not files:
+        fail(["--synthesize-plan: contracts.files is empty"])
+    briefs = _parse_brief_blocks(text)
+    missing = [f for f in files if f not in briefs]
+    if missing:
+        fail(["--synthesize-plan: no verbatim coder brief for "
+              f"{len(missing)} inventory file(s): {sorted(missing)} — TPM "
+              "briefs for every file are the mechanical-lane precondition; "
+              "the EM must emit the full plan"])
+    ids = [briefs[f][0] for f in files]
+    if len(set(ids)) != len(ids):
+        fail(["--synthesize-plan: brief-task ids repeat or collide "
+              f"({sorted(ids)}) — renumber and sync the DAG prose"])
+    task_ids = {f: ids[i] for i, f in enumerate(files)}
+
+    edges = _parse_delta_dag(text, briefs)
+    unknown = sorted(set(edges) - set(files))
+    if unknown:
+        fail(["--synthesize-plan: DAG prose references non-inventory file(s) "
+              f"{unknown} — no task can own their dependency edges"])
+    if len(files) > 1 and not edges:
+        fail(["--synthesize-plan: no DAG statement in ERD-DELTA (no "
+              "`<file> depends on <file>` line and no Task-order chain) — "
+              "dependencies are semantic, never assumed empty; the EM must "
+              "emit the full plan"])
+    deps = {f: sorted({task_ids[d] for d in edges.get(f, [])}) for f in files}
+    for f in files:
+        bad = [d for d in deps[f] if d == f]
+        if bad:
+            fail([f"--synthesize-plan: self-dependency in DAG prose for {f}"])
+
+    scope = []
+    for p in delta_paths:
+        d = json.loads(Path(p).read_text())
+        scope += milestone_scope_ids(
+            contracts.get("test_mapping") or {},
+            d.get("changed_files", []),
+            d.get("changed_tests", []),
+            d.get("changed_tests_granularity", "file"))
+    pins = dict(contracts.get("test_mapping") or {})
+    pins.update(_parse_mapping_pins(text))
+    unpinned = sorted(set(scope) - set(pins))
+    if unpinned:
+        fail(["--synthesize-plan: milestone node-id(s) with no ownership pin "
+              f"in test_mapping or the delta's Test-to-file mapping: "
+              f"{unpinned} — the EM must place them"])
+
+    changed_contracts = set()
+    for p in delta_paths:
+        d = json.loads(Path(p).read_text())
+        changed_contracts |= set(d.get("changed_contract_ids", []))
+    cpins = contract_file_pins(contracts)
+
+    tasks = []
+    for f in files:
+        tasks.append({
+            "id": task_ids[f],
+            "file": f,
+            "depends_on": deps[f],
+            "brief": briefs[f][1],
+            "contracts": sorted(c for c in changed_contracts
+                                if cpins.get(c) == f),
+            "tests": sorted(n for n, owner in pins.items() if owner == f),
+        })
+    frozen_v = 1
+    if VERSION.exists():
+        try:
+            frozen_v = int(VERSION.read_text().strip())
+        except ValueError:
+            pass
+    print(json.dumps({
+        "version": 1,
+        "erd_version": frozen_v,
+        "tasks": tasks,
+    }, indent=2))
 
 
 def _load_plan_lenient(path, what="prior plan"):
@@ -1510,7 +1795,8 @@ def cmd_subtree_scope(prior_path, delta_paths):
         # tasks nor enter map_ids (audit 2026-08-08: v87 staged 6 real +
         # 52 relabeled; the run re-emitted and re-mapped all 58).
         slice_ids = milestone_scope_ids(
-            mapping, d.get("changed_files", []), d.get("changed_tests", []))
+            mapping, d.get("changed_files", []), d.get("changed_tests", []),
+            d.get("changed_tests_granularity", "file"))
         hit |= _hit_task_ids(tasks, d, slice_ids)
         changed_tests |= set(slice_ids)
         if d.get("changed_contract_ids"):
@@ -1992,6 +2278,9 @@ def main(argv):
         return
     if argv[0] == "--milestone-scope" and len(argv) >= 2:
         cmd_milestone_scope(argv[1:])
+        return
+    if argv[0] == "--synthesize-plan" and len(argv) >= 2:
+        cmd_synthesize_plan(argv[1:])
         return
     if argv[0] == "--subtree-scope" and len(argv) >= 3:
         cmd_subtree_scope(argv[1], argv[2:])

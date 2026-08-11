@@ -177,6 +177,73 @@ def test_unknown_contract_id_fails(repo):
     assert "unknown contract id" in r.stderr
 
 
+# --- Finding-2: claim minimality (unchanged self-owned contracts) ------------
+# testchat v99: a GET-side 503-mapping task claimed route:PUT/route:DELETE
+# and every schema of its file, dragging unchanged behavior into the
+# milestone's acceptance and over-invalidating later freezes (one task re-ran
+# 20 node-ids repeatedly). A task claims only contracts a delta declared
+# changed plus interfaces it directly depends on (cross-file pins, unpinned
+# interfaces). The TPM's changed_contract_ids declaration is the authority.
+
+def _repo_with_changed_contract(repo, changed_ids):
+    approved = repo / "scripts" / ".approved"
+    contracts = dict(CONTRACTS)
+    contracts["routes"] = [
+        {"id": "route-items", "path": "/items", "file": "src/b.py"},
+        {"id": "route-item", "path": "/items/{item_id}", "file": "src/b.py"},
+    ]
+    contracts["changed_files"] = ["src/b.py"]
+    (approved / "contracts.json").write_text(json.dumps(contracts))
+    (approved / "DELTA-v1.json").write_text(json.dumps(
+        {"changed_contract_ids": changed_ids,
+         "changed_tests": [], "changed_files": ["src/b.py"]}))
+    return contracts
+
+
+def test_unchanged_self_owned_contract_claim_rejected(repo):
+    """T2 (src/b.py) claims route-items — pinned to its OWN file but never
+    declared changed in any delta: the ride-along pattern, rejected with
+    the ids named so the EM revision trims them."""
+    _repo_with_changed_contract(repo, ["route-item"])
+    plan = good_plan()
+    plan["tasks"][1]["contracts"] = ["src.b:handler", "route-items", "route-item"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "route-items" in r.stderr
+    assert "unchanged in every delta" in r.stderr
+
+
+def test_changed_contract_claim_allowed(repo):
+    """An id the delta declared changed is claimable by the task owning its
+    file — the milestone's own surface."""
+    _repo_with_changed_contract(repo, ["route-item"])
+    plan = good_plan()
+    plan["tasks"][0]["contracts"] = []
+    plan["tasks"][1]["contracts"] = ["route-item"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
+def test_cross_file_pinned_claim_allowed(repo):
+    """An unchanged contract pinned to ANOTHER file is a directly-required
+    interface — the dependency channel, not a ride-along. T1 (src/a.py)
+    may claim route-items owned by src/b.py unchanged."""
+    _repo_with_changed_contract(repo, ["route-item"])
+    plan = good_plan()
+    plan["tasks"][0]["contracts"] = ["route-items"]
+    plan["tasks"][1]["contracts"] = ["route-item"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 0, r.stderr
+
+
+def test_claim_gate_inert_without_delta_stack(repo):
+    """Greenfield: no DELTA files yet means no TPM declaration to enforce
+    against — every claim rides (the existing good_plan fixture passes
+    unchanged)."""
+    r = run_validate(repo, good_plan())
+    assert r.returncode == 0, r.stderr
+
+
 def test_file_outside_build_lane_fails(repo):
     plan = good_plan()
     plan["tasks"][0]["file"] = "tests/test_a.py"
@@ -884,9 +951,11 @@ def test_contracts_delta_no_pins_emits_full_file(tmp_path):
 
 
 def test_contracts_delta_slices_out_of_scope_pins(tmp_path):
-    """With pins present, the slice keeps in-inventory pinned entries and
-    every unpinned entry in full, reduces out-of-inventory pins to a
-    one-line index, and derives entry_points to their owning module (D-120)."""
+    """D-120: with pins present, the slice keeps in-inventory pinned entries
+    and every unpinned entry in full; out-of-inventory pinned entries are
+    omitted entirely (the review-cut `out_of_scope` index is gone) and
+    entry_points derive to their owning module. The slice never exceeds the
+    source it was generated from."""
     source = tmp_path / "contracts.json"
     source.write_text(json.dumps({
         "files": ["src/a.py"],
@@ -927,13 +996,13 @@ def test_contracts_delta_slices_out_of_scope_pins(tmp_path):
     assert [e["id"] for e in kept["errors"]] == ["err:A"]
     assert [e["id"] for e in kept["ui"]] == ["ui:keep", "ui:carry"]
     assert kept["entry_points"] == ["src.a:app", "not-a-module"]
-    assert kept["out_of_scope"] == [
-        "route:GET /b — GET /b; pinned src/b.py (outside this milestone)",
-        "schema:B; pinned src/b.py (outside this milestone)",
-        "err:B — plain text; pinned src/b.py (outside this milestone)",
-        "ui:drop — testid drop; pinned src/b.py (outside this milestone)",
-        "src.b:handler — module outside this milestone (import path exists)",
-    ]
+    assert "out_of_scope" not in kept, (
+        "the D-120 slice must not carry an out-of-scope index")
+    assert "route:GET /b" not in r.stdout and "schema:B" not in r.stdout
+    assert "err:B" not in r.stdout and "ui:drop" not in r.stdout
+    assert "src.b:handler" not in r.stdout
+    assert len(r.stdout.encode()) <= len(source.read_bytes()), (
+        "the slice must never exceed its source")
 
 
 def test_contracts_delta_missing_input_fails(tmp_path):
@@ -1610,15 +1679,19 @@ evidence="two failed coder attempts on src/x.py; token cap + mixed-mode reply"
 
 
 def test_escalation_bundle_carries_milestone_slice(tmp_path):
-    """D-118: a TPM-bound escalation bundle must carry the milestone slice
-    it revises against — the standing summary (D-116) and the frozen
-    ERD-DELTA.md (D-107). The D-117 audit found the bundle shipped the task
-    entry and evidence but not the delta; a contract_or_test_wrong verdict
-    was handed to the TPM without the spec text it must correct."""
+    """D-118: a TPM-bound escalation must carry the milestone slice it
+    revises against — the standing summary (D-116) and the frozen
+    ERD-DELTA.md (D-107). Finding-7 moved that slice from INSIDE each
+    per-item bundle (where batching duplicated it N times) to ONCE at the
+    batch top in finalize_batch: the per-item bundle carries evidence and
+    contract references only; the shared context block precedes every item."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
     fn = re.search(r"^package_escalation\(\) \{.*?^\}$", source, re.M | re.S)
     assert fn, "package_escalation not found — extractor drift"
     fn_body = fn.group(0)
+    fin = re.search(r"^finalize_batch\(\) \{.*?^\}$", source, re.M | re.S)
+    assert fin, "finalize_batch not found — extractor drift"
+    fin_body = fin.group(0)
     branch = re.search(
         r'if \[ "\$revs" -ge "\$MAX_BRIEF_REVISIONS" \]; then'
         r".*?"
@@ -1654,20 +1727,30 @@ mkdir -p "$ESC_DIR"
 
 {fn_body}
 
+{fin_body}
+
 id=T1
 evidence="two failed coder attempts on src/x.py"
 {call_line}
+finalize_batch
 """
     r = subprocess.run(["bash", "-c", runner], capture_output=True, text=True)
-    assert r.returncode == 0, f"stderr:\n{r.stderr}\nstdout:\n{r.stdout}"
-    text = (tmp_path / ".pipeline-state" / "escalations" / "T1" /
-            "bundle.md").read_text()
-    assert "### Milestone slice — standing summary + ERD-DELTA (D-118)" in text
-    assert "standing-marker-line" in text
-    assert "### ERD-DELTA.md (spec v82) — the authoritative current-change slice" in text
-    assert "delta-marker-line" in text
-    # the delta must come before the frozen artifacts section
-    assert text.index("delta-marker-line") < text.index("### Frozen artifacts involved")
+    assert r.returncode == 2, f"finalize_batch must halt with rc 2\nstderr:\n{r.stderr}"
+    batch = (tmp_path / ".pipeline-state" / "escalations" / "BATCH.md").read_text()
+    assert "## Shared milestone context (applies to every item below — D-118)" in batch
+    assert "### Standing summary" in batch
+    assert batch.count("standing-marker-line") == 1, (
+        "the standing summary must appear EXACTLY once in the batch")
+    assert "### ERD-DELTA.md (spec v82) — the authoritative current-change slice" in batch
+    assert batch.count("delta-marker-line") == 1, (
+        "ERD-DELTA must appear EXACTLY once in the batch")
+    assert batch.index("delta-marker-line") < batch.index("## Escalation:"), (
+        "the shared context must precede every per-item section")
+    per_item = (tmp_path / ".pipeline-state" / "escalations" / "T1" /
+                "bundle.md").read_text()
+    assert "standing-marker-line" not in per_item and "delta-marker-line" not in per_item, (
+        "finding-7: the per-item bundle must NOT re-copy the milestone slice")
+    assert "Milestone slice" not in per_item
 
 
 def stage_consult_full_fixtures(tmp_path):
@@ -1759,7 +1842,10 @@ def test_em_context_sites_use_standing_summary():
 
 def test_standing_summary_keeps_invariants_collapses_architecture(tmp_path):
     """D-116: the generator keeps standing rules verbatim and collapses the
-    accumulated as-built prose to a per-file map."""
+    accumulated as-built prose to a per-file map. The review cut appended
+    surfaces entirely: oracle mappings, smoke tours, risk registers, and
+    file inventories do not belong in milestone context, and descriptions
+    are capped at a word boundary (no tail-token bleed)."""
     erd = tmp_path / "ERD.md"
     erd.write_text(
         "## Model-selector invariant\n\n**MUST NEVER** be disabled.\n\n"
@@ -1777,10 +1863,18 @@ def test_standing_summary_keeps_invariants_collapses_architecture(tmp_path):
     )
     assert out.returncode == 0, out.stderr
     assert "**MUST NEVER** be disabled." in out.stdout
-    assert "## As-built architecture — front end (file map)" in out.stdout
-    assert "as-built prose is intentionally not shipped" not in out.stdout
+    assert "## File map" in out.stdout
     assert "- `src/static/catalog.js` — dropdown lifecycle." in out.stdout
-    assert "## File inventory" in out.stdout
+    assert "- `src/static/chrome.js` — themes, a very long description that " \
+        "should be truncated because it repeats the accumulated milestone " \
+        "detail the summary exists to..." in out.stdout
+    assert "no informational value left in it" not in out.stdout, (
+        "the 140-char cap must cut the tail, not ship it")
+    assert "## File inventory" not in out.stdout, (
+        "appendix surfaces are dropped, not retained")
+    assert "| file | owner |" not in out.stdout
+    assert len(out.stdout.encode()) <= len(erd.read_bytes()), (
+        "the summary must never exceed its source")
 
 
 def test_standing_summary_missing_erd_exits_nonzero(tmp_path):
@@ -1863,7 +1957,13 @@ def run_tpm_pack(tmp_path, with_delta=True, with_summary_generator=True):
         shutil.copy(SCRIPTS / "standing-summary.py",
                     repo / "scripts" / "standing-summary.py")
     (repo / "scripts" / ".approved" / "VERSION").write_text("117\n")
-    (repo / "scripts" / ".approved" / "PRD.md").write_text("# PRD\n\nstanding product\n")
+    (repo / "scripts" / ".approved" / "PRD.md").write_text(
+        "# PRD\n\n## What fixture is\n\n"
+        "Fixture is a local product with one current milestone.\n\n"
+        "## Acceptance criteria\n\n"
+        "* **AC-OLD:** DISTINCT_ACCUMULATED_PRODUCT_DETAIL that the capsule "
+        "exists to collapse, long enough as standing prose to prove the "
+        "generated slice is smaller than its source artifact.\n")
     (repo / "scripts" / ".approved" / "ERD.md").write_text(
         "## Model-selector invariant\n\nkeep me\n\n"
         "## As-built architecture — front end\n\n"
@@ -1872,7 +1972,9 @@ def run_tpm_pack(tmp_path, with_delta=True, with_summary_generator=True):
         "truncation threshold with no informational value left in it.\n")
     if with_delta:
         (repo / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
-            "# ERD-DELTA M117\n\nchange app.js\n")
+            "# ERD-DELTA M117\n\n"
+            "## Changed acceptance criteria\n\n"
+            "* **AC-117:** change app.js\n")
     (repo / "scripts" / ".approved" / "contracts.json").write_text(
         '{"files": ["src/static/app.js"], "smoke_checks": [], '
         '"test_mapping": {}}\n')
@@ -1885,16 +1987,25 @@ def run_tpm_pack(tmp_path, with_delta=True, with_summary_generator=True):
 
 
 def test_tpm_pack_ships_milestone_slice_not_standing_erd(tmp_path):
-    """D-117: with a delta in flight, the TPM bundle carries the generated
-    standing summary + ERD-DELTA — never the accumulated standing ERD."""
+    """D-117: with a delta in flight, the TPM bundle carries the product
+    capsule + current criteria (from ERD-DELTA.md), the generated standing
+    summary (rules + per-file map), the contracts slice, and ERD-DELTA —
+    never the accumulated standing PRD or ERD."""
     r = run_tpm_pack(tmp_path, with_delta=True)
     assert r.returncode == 0, r.stderr
     out = r.stdout
     assert "=== CONTEXT FILE: scripts/.approved/ERD-DELTA.md ===" in out
-    assert "(file map)" in out
+    assert "per-file map" in out
+    assert "- `src/static/app.js` — the whole accumulated milestone detail " \
+        "that the summary exists to drop, going on and on past the " \
+        "truncation threshold with no..." in out
     assert "=== CONTEXT FILE: scripts/.approved/ERD.md ===" not in out
     assert "no informational value left in it" not in out
     assert "=== CONTEXT FILE: scripts/.approved/PRD.md ===" in out
+    assert "Fixture is a local product with one current milestone." in out
+    assert "AC-117" in out
+    assert "AC-OLD" not in out
+    assert "DISTINCT_ACCUMULATED_PRODUCT_DETAIL" not in out
     assert "=== CONTEXT FILE: scripts/.approved/contracts.json ===" in out
 
 
@@ -2499,17 +2610,32 @@ def test_genuine_removed_file_still_counts():
     assert out == ["tests/test_gone.py::test_x"], out
 
 
-def test_edited_file_counts_both_dropped_and_current_ids():
-    """A staged byte-different edit that drops a test: the dropped id (removed
-    term, file in changed_files) and the surviving id (changed-files term)
-    both belong to the delta."""
+def test_edited_file_counts_only_functions_whose_bytes_changed():
+    """Finding-1 (function-level delta): a staged edit that removes test_b
+    and leaves test_a byte-identical carries ONLY the removed id (the removed
+    term) — never unchanged test_a: its behavior did not change, so the
+    milestone must not re-run it. (Pre-fix the changed-files term carried
+    every id in a staged file.)"""
+    old_src = (
+        "def test_a():\n"
+        "    assert True\n"
+        "\n"
+        "def test_b():\n"
+        "    assert True\n"
+    )
+    new_src = (
+        "def test_a():\n"
+        "    assert True\n"
+    )
     out = refreeze_delta.compute_changed_tests(
         old_nodeids={"tests/test_x.py::test_a", "tests/test_x.py::test_b"},
         new_nodeids={"tests/test_x.py::test_a"},
         changed_files={"tests/test_x.py"},
         removed_files=set(),
+        old_sources={"tests/test_x.py": old_src},
+        new_sources={"tests/test_x.py": new_src},
     )
-    assert out == ["tests/test_x.py::test_a", "tests/test_x.py::test_b"], out
+    assert out == ["tests/test_x.py::test_b"], out
 
 
 def test_relabel_and_real_edit_are_separated():
@@ -2530,6 +2656,112 @@ def test_relabel_and_real_edit_are_separated():
     )
     assert out == ["tests/test_edit.py::test_new", "tests/test_edit.py::test_old"], out
     assert not any("test_ui.py" in n for n in out), out
+
+
+# --- Finding-1: function-level changed tests ---------------------------------
+# testchat v99: the file-granular delta listed all 12 storage tests; the
+# genuinely new AC-161 oracle (test_quarantine_rename_failure_is_unavailable)
+# rode no test_mapping pin, the milestone slice dropped it, its task's tests
+# list came out empty, and the default verdict could pass without running it.
+# The producer now records changed tests at FUNCTION level (byte-diff per
+# test-function span, comment noise filtered) with a conservative file-level
+# fallback for infra changes. These pin the granularity seam directly.
+
+def _src_a_v1():
+    return (
+        "import pytest\n"
+        "\n"
+        "def test_first():\n"
+        "    assert True\n"
+        "\n"
+        "def test_second():\n"
+        "    assert True\n"
+        "\n"
+        "def test_third():\n"
+        "    assert True\n"
+    )
+
+
+def test_only_the_edited_function_is_changed():
+    old_src = _src_a_v1()
+    new_src = old_src.replace("    assert True\n", "    assert False\n", 1)
+    fams, infra = refreeze_delta.function_changes(
+        "tests/test_a.py", old_src, new_src)
+    assert fams == {"tests/test_a.py::test_first"}
+    assert infra is False
+
+
+def test_new_function_rides():
+    old_src = _src_a_v1()
+    new_src = old_src + "\ndef test_added():\n    assert True\n"
+    fams, infra = refreeze_delta.function_changes(
+        "tests/test_a.py", old_src, new_src)
+    assert "tests/test_a.py::test_added" in fams
+    assert infra is False
+
+
+def test_comment_only_change_is_noise():
+    """The v87/D-116 class: a comment edit — at module level OR inside a
+    function — cannot change test meaning and must not widen the delta."""
+    old_src = _src_a_v1()
+    new_src = old_src + "# a new comment line\n"
+    fams, infra = refreeze_delta.function_changes(
+        "tests/test_a.py", old_src, new_src)
+    assert fams == set()
+    assert infra is False
+    ids = {"tests/test_a.py::test_first", "tests/test_a.py::test_second",
+           "tests/test_a.py::test_third"}
+    out = refreeze_delta.compute_changed_tests(
+        old_nodeids=ids, new_nodeids=ids,
+        changed_files={"tests/test_a.py"}, removed_files=set(),
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+    )
+    assert out == [], out
+
+
+def test_module_level_fixture_change_falls_back_to_file():
+    """A content-bearing change OUTSIDE every test function (fixture, helper,
+    import, module constant) can alter test meaning without any test body
+    changing — conservative file-level fallback: every id in the file rides.
+    An over-run is safe; an under-run could green a milestone without running
+    the affected test."""
+    old_src = (
+        "import pytest\n"
+        "\n"
+        "@pytest.fixture\n"
+        "def f():\n"
+        "    return 1\n"
+        "\n"
+        + _src_a_v1()
+    )
+    new_src = old_src.replace("    return 1\n", "    return 2\n", 1)
+    fams, infra = refreeze_delta.function_changes(
+        "tests/test_a.py", old_src, new_src)
+    assert fams == set()
+    assert infra is True
+    ids = {"tests/test_a.py::test_first", "tests/test_a.py::test_second",
+           "tests/test_a.py::test_third"}
+    out = refreeze_delta.compute_changed_tests(
+        old_nodeids=ids, new_nodeids=ids,
+        changed_files={"tests/test_a.py"}, removed_files=set(),
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+    )
+    assert out == sorted(ids), out
+
+
+def test_decorator_change_counts_as_function_change():
+    """Parametrization decorators belong to the function's span: changing the
+    parameter list changes the test's meaning and must ride."""
+    old_src = _src_a_v1()
+    new_src = old_src.replace(
+        "def test_first():\n",
+        "@pytest.mark.parametrize('x', [1])\ndef test_first():\n", 1)
+    fams, infra = refreeze_delta.function_changes(
+        "tests/test_a.py", old_src, new_src)
+    assert fams == {"tests/test_a.py::test_first"}
+    assert infra is False
 
 
 # --- validate-plan.py --spec-preflight (D-78) --------------------------------
@@ -2802,7 +3034,7 @@ def test_plan_full_emit_scopes_nodeids_to_active_delta(tmp_path):
         "changed_tests": ["tests/test_a.py::test_one",
                           "tests/test_b.py::test_two"],
         "changed_files": ["src/a.py", "src/b.py"],
-        "changed_contract_ids": [],
+        "changed_contract_ids": ["src.a", "src.b:handler", "route-items"],
     }))
     r = run_drive_plan(work)
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
@@ -2849,7 +3081,7 @@ def test_nodeids_scope_union_includes_pinned_mapping_entries(tmp_path):
     (work / "scripts" / ".approved" / "DELTA-v2.json").write_text(json.dumps({
         "changed_tests": ["tests/test_a.py::test_one"],
         "changed_files": ["src/a.py", "src/b.py"],
-        "changed_contract_ids": [],
+        "changed_contract_ids": ["src.a", "src.b:handler", "route-items"],
     }))
     r = run_drive_plan(work)
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
@@ -5189,6 +5421,35 @@ def test_milestone_scope_keeps_pinned_of_staged_file():
     mapping = {"tests/test_ui.py::test_more": "src/static/app.js"}
     got = vp.milestone_scope_ids(mapping, ["src/static/app.js"], [])
     assert got == ["tests/test_ui.py::test_more"]
+
+
+def test_milestone_scope_never_discards_unpinned_new_test():
+    """Finding-1 (v99): for a FUNCTION-granular delta the slice is the raw
+    changed set plus the D-124 repair — the mapping NEVER trims. The AC-161
+    oracle rode no test_mapping pin; file-granular trimming emptied its
+    task's tests list and the default verdict could pass without running
+    it. The mapping's only remaining role is placement."""
+    vp = _vp_module()
+    mapping = {"tests/test_ui.py::test_more": "src/static/app.js"}
+    changed = [
+        "tests/test_storage.py::test_quarantine_rename_failure_is_unavailable",
+        "tests/test_storage.py::test_roundtrip",
+    ]
+    got = vp.milestone_scope_ids(mapping, [], changed, "function")
+    assert got == changed
+
+
+def test_milestone_scope_legacy_delta_still_trims():
+    """Legacy file-granular deltas (no changed_tests_granularity key) keep
+    the D-130 pinned-family trim — the relabel-noise defense must not
+    silently vanish for already-written deltas."""
+    vp = _vp_module()
+    got = vp.milestone_scope_ids(MILESTONE_MAPPING, [], MILESTONE_RAW)
+    assert len(got) == 6
+    assert {vp._id_family(n) for n in got} == MILESTONE_FAMILIES
+    got_explicit = vp.milestone_scope_ids(
+        MILESTONE_MAPPING, [], MILESTONE_RAW, "file")
+    assert got == got_explicit
 
 
 def run_milestone_scope(repo, *deltas):

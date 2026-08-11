@@ -544,6 +544,19 @@ cp "$APPROVED/contracts.json" .pipeline-state/refreeze-old-contracts.json 2>/dev
 echo ""
 echo "auto-approved (D-121): all mechanical preflights green; DIFF-SHA $DIFF_SHA"
 
+# --- Snapshot the pre-apply test sources (function-level delta, finding-1) ---
+# refreeze_delta.py diffs each staged test file's OLD bytes (this snapshot)
+# against the NEW bytes (the applied tree) at FUNCTION granularity, so the
+# DELTA's changed_tests names exactly the test functions this freeze changed
+# instead of every test in a touched file. A brand-new test file has no old
+# source: refreeze_delta.py treats it as fully changed, which is correct.
+mkdir -p .pipeline-state/old-tests
+for f in $CHANGED_TEST_FILES; do
+  [ -f "$f" ] || continue
+  mkdir -p ".pipeline-state/old-tests/$(dirname "$f")"
+  cp "$f" ".pipeline-state/old-tests/$f"
+done
+
 # --- Apply ---
 for f in $CHANGED_DOCS; do
   cp "$IN/$f" "$APPROVED/$f"
@@ -638,6 +651,7 @@ case " $CHANGED_DOCS " in *" contracts.json "*) CONTRACTS_STAGED=1 ;; esac
 # Delta computation (incl. the D-116 relabel guard) lives in refreeze_delta.py
 # so it has a real producer test; the state files above are its inputs.
 python3 scripts/refreeze_delta.py "$NEW" "$APPROVED/test-nodeids" "$CONTRACTS_STAGED"
+rm -rf "$TMP/old-tests"
 rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-removed-files" "$TMP/refreeze-changed-contracts"
 
 # --- D-75: red-before-green check on the delta (warn-only) -------------------

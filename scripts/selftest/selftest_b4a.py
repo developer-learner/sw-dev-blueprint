@@ -1,0 +1,226 @@
+"""Focused selftests for the B4a milestone-context trim (D-116/D-117/D-120)."""
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+SCRIPTS = Path(__file__).resolve().parent.parent
+
+
+def run_python(script: str, artifact: Path) -> subprocess.CompletedProcess[str]:
+    """Run one owned context generator against a fixture artifact (D-116)."""
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / script), str(artifact)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def make_pack_repo(tmp_path: Path, with_delta: bool = True) -> Path:
+    """Build the minimum air-gapped TPM-pack fixture (D-117)."""
+    repo = tmp_path / "repo"
+    approved = repo / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    (repo / "scripts" / "schemas").mkdir()
+    (repo / "docs").mkdir()
+    for name in (
+        "tpm-pack.sh",
+        "spec_artifacts.py",
+        "standing-summary.py",
+        "contracts-delta.py",
+    ):
+        shutil.copy(SCRIPTS / name, repo / "scripts" / name)
+    (approved / "VERSION").write_text("41\n")
+    (approved / "PRD.md").write_text(
+        "PRD — fixture\n\n"
+        "## What fixture is\n\n"
+        "Fixture is a local product with one current milestone.\n\n"
+        "## Acceptance criteria\n\n"
+        "* **AC-OLD:** DISTINCT_OLD_PRODUCT_FAMILY remains accumulated and "
+        "carries enough historical product detail to prove the generated "
+        "milestone slice is smaller than its standing source artifact.\n"
+    )
+    (approved / "ERD.md").write_text(
+        "# ERD\n\n"
+        "## Safety invariant\n\nNever discard persisted bytes.\n\n"
+        "## As-built architecture — service\n\n"
+        "* **`src/current.py`** — public interface begins on this line and\n"
+        "  exposes load_current() and save_current() to milestone callers.\n\n"
+        "* **`src/old.py`** — DISTINCT_ACCUMULATED_ARCHITECTURE.\n\n"
+        "## Oracle mapping\n\nDISTINCT_ORACLE_INVENTORY\n\n"
+        "## Risk notes\n\nDISTINCT_RISK_REGISTER\n"
+    )
+    if with_delta:
+        (approved / "ERD-DELTA.md").write_text(
+            "# ERD-DELTA\n\n"
+            "## Changed acceptance criteria\n\n"
+            "* **AC-NEW:** CURRENT_MILESTONE_BEHAVIOR is visible.\n\n"
+            "## Superseded acceptance criteria\n\nNone.\n"
+        )
+    contracts = {
+        "files": ["src/current.py"],
+        "routes": [
+            {"id": "route:current", "file": "src/current.py"},
+            {"id": "route:old", "file": "src/old.py"},
+            {"id": "route:unpinned", "shape": "conservative carry"},
+        ],
+        "schemas": [],
+        "errors": [],
+        "ui": [],
+        "entry_points": ["src.current:app", "src.old:app"],
+    }
+    (approved / "contracts.json").write_text(json.dumps(contracts, indent=2) + "\n")
+    (repo / "docs" / "TPM-ROLE.md").write_text("# TPM role\n")
+    (repo / "scripts" / "schemas" / "contracts.schema.json").write_text("{}\n")
+    return repo
+
+
+def run_pack(repo: Path) -> subprocess.CompletedProcess[str]:
+    """Run the real TPM bundle assembler inside its fixture repo (D-117)."""
+    return subprocess.run(
+        ["bash", "scripts/tpm-pack.sh"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_b4a_contracts_slice_has_only_in_scope_and_unpinned_entries(
+    tmp_path: Path,
+) -> None:
+    """D-120 drops the out-of-scope index but conservatively carries unpinned bodies."""
+    source = tmp_path / "contracts.json"
+    payload = {
+        "files": ["src/current.py"],
+        "routes": [
+            {"id": "keep", "file": "src/current.py", "detail": "full body"},
+            {"id": "drop", "file": "src/old.py", "detail": "legacy body"},
+            {"id": "carry", "detail": "unpinned full body"},
+        ],
+        "schemas": [],
+        "errors": [],
+        "ui": [],
+        "entry_points": ["src.current:app", "src.old:app", "external"],
+    }
+    source.write_text(json.dumps(payload, indent=2) + "\n")
+
+    result = run_python("contracts-delta.py", source)
+
+    assert result.returncode == 0, result.stderr
+    sliced = json.loads(result.stdout)
+    assert "out_of_scope" not in sliced
+    assert [entry["id"] for entry in sliced["routes"]] == ["keep", "carry"]
+    assert sliced["routes"][1]["detail"] == "unpinned full body"
+    assert sliced["entry_points"] == ["src.current:app", "external"]
+    assert len(result.stdout.encode()) <= len(source.read_bytes())
+
+
+def test_b4a_contracts_slice_without_pins_carries_full_source(tmp_path: Path) -> None:
+    """D-120 remains inert until a contract body carries an ownership pin."""
+    source = tmp_path / "contracts.json"
+    source.write_text('{"files":[],"routes":[{"id":"unpinned"}]}')
+
+    result = run_python("contracts-delta.py", source)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == source.read_text()
+
+
+def test_b4a_standing_summary_is_rules_plus_real_file_interfaces(
+    tmp_path: Path,
+) -> None:
+    """D-116 drops unrelated appendices and reads wrapped interface paragraphs."""
+    erd = tmp_path / "ERD.md"
+    erd.write_text(
+        "# Standing architecture\n\n"
+        "## Safety invariant\n\nNever discard persisted bytes.\n\n"
+        "## As-built architecture — service\n\n"
+        "* **`src/service.py`** — public interface begins here and\n"
+        "  exposes load_snapshot() plus save_snapshot() to callers.\n\n"
+        "## File inventory\n\nDISTINCT_FULL_INVENTORY\n\n"
+        "## Oracle mapping\n\nDISTINCT_ORACLE_MAPPING\n\n"
+        "## Smoke checks\n\nDISTINCT_SMOKE_TOUR\n\n"
+        "## Risk notes\n\nDISTINCT_RISK_REGISTER\n"
+    )
+
+    result = run_python("standing-summary.py", erd)
+
+    assert result.returncode == 0, result.stderr
+    assert "## Safety invariant" in result.stdout
+    assert "## File map" in result.stdout
+    assert "exposes load_snapshot() plus save_snapshot()" in result.stdout
+    assert "DISTINCT_FULL_INVENTORY" not in result.stdout
+    assert "DISTINCT_ORACLE_MAPPING" not in result.stdout
+    assert "DISTINCT_SMOKE_TOUR" not in result.stdout
+    assert "DISTINCT_RISK_REGISTER" not in result.stdout
+    assert len(result.stdout.encode()) <= len(erd.read_bytes())
+
+
+def test_b4a_standing_summary_refuses_to_expand_a_tiny_source(tmp_path: Path) -> None:
+    """D-116 fails to the caller when summary scaffolding would add context bytes."""
+    erd = tmp_path / "ERD.md"
+    erd.write_text("# ERD\n")
+
+    result = run_python("standing-summary.py", erd)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+
+
+def test_b4a_tpm_pack_emits_only_milestone_product_and_contract_context(
+    tmp_path: Path,
+) -> None:
+    """D-117/D-120 pack the product capsule, current criteria, and contract bodies."""
+    repo = make_pack_repo(tmp_path)
+
+    result = run_pack(repo)
+
+    assert result.returncode == 0, result.stderr
+    assert "Fixture is a local product with one current milestone." in result.stdout
+    assert "CURRENT_MILESTONE_BEHAVIOR" in result.stdout
+    assert "DISTINCT_OLD_PRODUCT_FAMILY" not in result.stdout
+    assert "- `src/old.py` — DISTINCT_ACCUMULATED_ARCHITECTURE." in result.stdout
+    assert "DISTINCT_ORACLE_INVENTORY" not in result.stdout
+    assert "DISTINCT_RISK_REGISTER" not in result.stdout
+    assert '"id": "route:current"' in result.stdout
+    assert '"id": "route:unpinned"' in result.stdout
+    assert '"id": "route:old"' not in result.stdout
+    assert "out_of_scope" not in result.stdout
+
+
+def test_b4a_tpm_pack_missing_delta_warns_and_falls_back_to_full_artifacts(
+    tmp_path: Path,
+) -> None:
+    """D-117 makes missing-delta context expansion loud rather than lossy."""
+    repo = make_pack_repo(tmp_path, with_delta=False)
+
+    result = run_pack(repo)
+
+    assert result.returncode == 0, result.stderr
+    assert "DISTINCT_OLD_PRODUCT_FAMILY" in result.stdout
+    assert "DISTINCT_ACCUMULATED_ARCHITECTURE" in result.stdout
+    assert "current PRD delta unavailable" in result.stderr
+    assert "ERD-DELTA.md" not in result.stdout.split(
+        "=== REPLY FORMAT", 1
+    )[0]
+
+
+def test_b4a_tpm_pack_generator_failures_warn_and_ship_full_sources(
+    tmp_path: Path,
+) -> None:
+    """D-116/D-120 preserve context loudly when either generator is unavailable."""
+    repo = make_pack_repo(tmp_path)
+    (repo / "scripts" / "standing-summary.py").unlink()
+    (repo / "scripts" / "contracts-delta.py").unlink()
+
+    result = run_pack(repo)
+
+    assert result.returncode == 0, result.stderr
+    assert "DISTINCT_ACCUMULATED_ARCHITECTURE" in result.stdout
+    assert '"id": "route:old"' in result.stdout
+    assert "standing summary generation failed" in result.stderr
+    assert "contracts slice generation failed" in result.stderr

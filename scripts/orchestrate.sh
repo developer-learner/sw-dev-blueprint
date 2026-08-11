@@ -1212,6 +1212,28 @@ $audit" "-"
         # Fall through with SUBTREE_MODE=1 so the EM branch below fires.
       fi
     fi
+    # --- B3: mechanical plan synthesis — the TPM-authored briefs fast path ---
+    # When ERD-DELTA carries a verbatim coder brief for every inventory file,
+    # a DAG statement, and an ownership pin for every milestone node-id, the
+    # plan is fully determined and the EM's full emission is redundant — the
+    # plan is transcribed, never judged. Fires once per run (the producer is
+    # deterministic, so a retry after its own gate rejection is pointless —
+    # but the synthesized draft then feeds the EM's revision loop as
+    # plan-being-revised, which gives the EM a concrete draft to fix instead
+    # of a blank slate). If the TPM materials are incomplete the command
+    # refuses (exit 1, reasons on stderr) and the EM emission continues
+    # below — the EM is exception-only in the mechanical lane.
+    if [ "${SUBTREE_MODE:-0}" != "1" ] \
+       && [ -z "${synthesis_tried:-}" ] \
+       && [ "${ACTIVE_DELTA_FILES+set}" = "set" ] && [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
+      synthesis_tried=1
+      if synth_err=$(python3 scripts/validate-plan.py --synthesize-plan "${ACTIVE_DELTA_FILES[@]}" > tasks/plan.json 2>&1); then
+        echo "=== B3: plan synthesized mechanically from the TPM's ERD-DELTA briefs/DAG/pins (no EM call); full gate judges it next ==="
+        continue
+      else
+        echo "mechanical synthesis refused — TPM materials incomplete; EM full emission (reason: $(printf '%s' "$synth_err" | tr '\n' ' '))"
+      fi
+    fi
     check_budget "plan revision $((revs + 1))"
     write_state plan_revisions $((revs + 1))
     if [ "${SUBTREE_MODE:-0}" = "1" ]; then
@@ -1377,30 +1399,14 @@ print(json.dumps(t, indent=2))"
       echo '```'
     fi
     echo
-    echo "### Milestone slice — standing summary + ERD-DELTA (D-118)"
-    echo
-    echo '```markdown'
-    if [ -f "${STANDING_SUMMARY:-$APPROVED/ERD.md}" ]; then
-      cat "${STANDING_SUMMARY:-$APPROVED/ERD.md}"
-    else
-      echo "(standing summary unavailable)"
-    fi
-    echo '```'
-    echo
-    echo "### ERD-DELTA.md (spec v$FROZEN_V) — the authoritative current-change slice"
-    echo '```markdown'
-    if [ -f "$APPROVED/ERD-DELTA.md" ]; then
-      cat "$APPROVED/ERD-DELTA.md"
-    else
-      echo "(no ERD-DELTA.md — consolidation freeze; the standing ERD is the current reference)"
-    fi
-    echo '```'
-    echo
+    # Finding-7: the milestone slice (standing summary + ERD-DELTA, D-118) is
+    # shared by every item, so it is emitted ONCE at the batch top in
+    # finalize_batch — never re-copied per item, where batching duplicated it N
+    # times.
     echo "### Frozen artifacts involved"
-    python3 - "$id" "$evidence" <<'PYEOF'
+    python3 - "$id" <<'PYEOF'
 import json, sys
-from pathlib import Path
-tid, evidence = sys.argv[1], sys.argv[2]
+tid = sys.argv[1]
 # contract entries referenced by the task
 try:
     plan = json.load(open("tasks/plan.json"))
@@ -1418,17 +1424,43 @@ try:
                 print(f"- entry_point: `{ep}`")
 except Exception as e:
     print(f"(could not extract contract entries: {e})")
-# failing test sources, capped
-files = sorted({part.split("::")[0] for part in evidence.split("|")
-                if part.strip().startswith("tests/")})
-for f in files:
-    p = Path(f)
-    if p.exists():
-        lines = p.read_text().splitlines()[:200]
-        print(f"\nFrozen test source `{f}`:")
-        print("```python"); print("\n".join(lines)); print("```")
 PYEOF
     echo
+    # Finding-7: failing-test evidence is the EXTRACTED failing function(s) plus
+    # the module-level helpers they call (scripts/extract-test-functions.py) —
+    # never head -200, which can splice in unrelated tests or omit a failing
+    # function that sits below line 200. Node-ids come from the evidence, the
+    # same grep pattern run_task_consult uses (D-116). Any failure to extract
+    # (no node-id in the evidence, extraction error, empty output) falls back to
+    # a bounded 200-line excerpt behind an explicit WARNING line — evidence only
+    # ever narrows, it is never silently dropped.
+    local ef
+    for ef in $(printf '%s' "$evidence" | grep -oE 'tests/[A-Za-z0-9_/]+\.py' | sort -u || true); do
+      [ -f "$ef" ] || continue
+      local enids=() _enid
+      while IFS= read -r _enid; do
+        [ -n "$_enid" ] && enids+=("$_enid")
+      done < <(printf '%s' "$evidence" \
+        | grep -oE "${ef}::[A-Za-z0-9_]+(\[[^]]*\])?" | sort -u || true)
+      local xf="$STATE_DIR/esc-excerpt-${id}-${ef##*/}"
+      if [ "${#enids[@]}" -gt 0 ] \
+         && python3 scripts/extract-test-functions.py "$ef" "${enids[@]}" \
+              > "$xf" 2>/dev/null && [ -s "$xf" ]; then
+        echo "Failing test function(s) from \`$ef\` — extracted: ${enids[*]}"
+        echo '```python'
+        cat "$xf"
+        echo '```'
+      else
+        echo "Frozen test source \`$ef\` — WARNING: focused extraction found no"
+        echo "named function (no node-id in the evidence, or extraction failed);"
+        echo "showing a bounded 200-line excerpt, which may include unrelated"
+        echo "tests or omit a failing function below line 200:"
+        echo '```python'
+        head -200 "$ef"
+        echo '```'
+      fi
+      echo
+    done
   } > "$dir/bundle.md"
   echo "escalation packaged: $dir/bundle.md"
 }
@@ -1448,6 +1480,31 @@ finalize_batch() {  # writes the single copy-pasteable batch and halts
     echo "> paths (tests go in scripts/.approved/incoming/tests/), then run:"
     echo ">     scripts/refreeze.sh scripts/.approved/incoming"
     echo "> and re-run scripts/orchestrate.sh. Only the affected subtree resumes."
+    echo
+    echo "---"
+    echo
+    # Finding-7: the milestone slice is shared by every item, so it is emitted
+    # ONCE here at the batch top instead of being re-copied inside each bundle
+    # (which batching then duplicated N times).
+    echo "## Shared milestone context (applies to every item below — D-118)"
+    echo
+    echo "### Standing summary"
+    echo '```markdown'
+    if [ -f "${STANDING_SUMMARY:-$APPROVED/ERD.md}" ]; then
+      cat "${STANDING_SUMMARY:-$APPROVED/ERD.md}"
+    else
+      echo "(standing summary unavailable)"
+    fi
+    echo '```'
+    echo
+    echo "### ERD-DELTA.md (spec v$FROZEN_V) — the authoritative current-change slice"
+    echo '```markdown'
+    if [ -f "$APPROVED/ERD-DELTA.md" ]; then
+      cat "$APPROVED/ERD-DELTA.md"
+    else
+      echo "(no ERD-DELTA.md — consolidation freeze; the standing ERD is the current reference)"
+    fi
+    echo '```'
     echo
     echo "---"
     find "$ESC_DIR" -name bundle.md | sort | while read -r b; do

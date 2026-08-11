@@ -7,12 +7,136 @@ refreeze.sh invokes `main()` from the repo root with the previous freeze's
 node-ids, changed/removed test files, and changed contract ids already written
 to .pipeline-state/. The pure `compute_changed_tests` below is what the D-116
 guard lives in and what the selftest pins directly.
+
+changed_tests granularity (finding-1 fix): the delta records changed tests at
+FUNCTION level, not file level. refreeze.sh snapshots each staged test file's
+pre-apply source under .pipeline-state/old-tests/; the new source is the
+applied tree. A test is changed iff its function's source bytes changed (or it
+is newly added); a content-bearing change OUTSIDE every test function
+(fixtures, helpers, imports, module constants) can alter test meaning without
+any test body changing, so it conservatively falls back to file-level scope —
+an over-run, never an under-run that could green a milestone without running
+the affected test. Comment-only and whitespace-only changes are noise (the
+v87 two-comment-line class, D-116): they cannot change meaning and never
+widen the delta. DELTA files written by this producer carry
+"changed_tests_granularity": "function"; consumers slice function-granular
+deltas without trimming (an unpinned new test must never be silently
+discarded — testchat v99: the AC-161 oracle rode no test_mapping pin, so the
+file-granular slice emptied its task and the default verdict could pass
+without running it).
 """
 from __future__ import annotations
 
+import ast
+import difflib
 import json
 import sys
 from pathlib import Path
+
+
+def family_of(node_id: str) -> str:
+    """The stable family of a test node-id: module-prefix + bare test name,
+    parametrization stripped. Matches validate-plan.py's _id_family."""
+    module, sep, tail = node_id.rpartition("::")
+    return module + "::" + tail.split("[", 1)[0] if sep else node_id
+
+
+def _filtered_lines(src: str) -> list[tuple[int, str]]:
+    """(original_lineno, line) pairs for every line that can carry meaning:
+    non-blank, non-comment. Comment/whitespace-only changes are the D-116
+    noise class and must never widen the delta, wherever they sit."""
+    return [
+        (i, line)
+        for i, line in enumerate(src.splitlines(keepends=True), 1)
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def _test_spans(tree):
+    """{node-id family suffix: (start_lineno, end_lineno)} for every test
+    function (def test_* and Test* class methods), including decorators."""
+    spans: dict[str, tuple[int, int]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name.startswith("test"):
+            start = min((d.lineno for d in node.decorator_list),
+                        default=node.lineno)
+            spans[f"::{node.name}"] = (start, node.end_lineno)
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            for m in node.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                        and m.name.startswith("test"):
+                    start = min((d.lineno for d in m.decorator_list),
+                                default=m.lineno)
+                    spans[f"::{node.name}::{m.name}"] = (start, m.end_lineno)
+    return spans
+
+
+def _slice_lines(src: str, start: int, end: int) -> list[str]:
+    return [
+        ln for ln in src.splitlines(keepends=True)[start - 1:end]
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+
+
+def function_changes(
+    file_path: str,
+    old_src: str,
+    new_src: str,
+) -> tuple[set[str], bool]:
+    """Function-level diff of one test file.
+
+    Returns (families, infra):
+    - families: node-id families whose test-function source bytes changed or
+      that are newly added (comment/whitespace-only deltas ignored).
+    - infra: True when a content-bearing line outside every test-function
+      span changed (imports, fixtures, helpers, module constants) — test
+      MEANING can change there without any test body changing, so the caller
+      falls back to file-level scope for this file.
+    A file that cannot be parsed (SyntaxError) or diffed is conservative
+    infra: full file-level scope, never a silent under-scope.
+    """
+    old_lines = _filtered_lines(old_src)
+    new_lines = _filtered_lines(new_src)
+    if [ln for _, ln in old_lines] == [ln for _, ln in new_lines]:
+        return set(), False
+    try:
+        old_tree = ast.parse(old_src, filename=file_path)
+        new_tree = ast.parse(new_src, filename=file_path)
+    except SyntaxError:
+        return set(), True
+    old_spans = _test_spans(old_tree)
+    new_spans = _test_spans(new_tree)
+    families: set[str] = set()
+    for suffix in sorted(set(old_spans) | set(new_spans)):
+        if suffix not in old_spans:
+            families.add(file_path + suffix)          # newly added test
+        elif suffix in new_spans:
+            o_start, o_end = old_spans[suffix]
+            n_start, n_end = new_spans[suffix]
+            if _slice_lines(old_src, o_start, o_end) \
+                    != _slice_lines(new_src, n_start, n_end):
+                families.add(file_path + suffix)      # source bytes changed
+        # else: removed test — the removed node-id term below covers it
+    infra = False
+    matcher = difflib.SequenceMatcher(
+        None, [ln for _, ln in old_lines], [ln for _, ln in new_lines])
+    old_bounds = list(old_spans.values())
+    new_bounds = list(new_spans.values())
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if any(
+            not any(a <= old_lines[i][0] <= b for a, b in old_bounds)
+            for i in range(i1, i2)
+        ):
+            infra = True
+        if any(
+            not any(a <= new_lines[j][0] <= b for a, b in new_bounds)
+            for j in range(j1, j2)
+        ):
+            infra = True
+    return families, infra
 
 
 def compute_changed_tests(
@@ -20,28 +144,58 @@ def compute_changed_tests(
     new_nodeids: set[str],
     changed_files: set[str],
     removed_files: set[str],
+    old_sources: dict[str, str] | None = None,
+    new_sources: dict[str, str] | None = None,
 ) -> list[str]:
-    """The delta's changed_tests: retired/relocated node-ids plus every node-id
-    living in a file this delta actually staged.
+    """The delta's changed_tests: retired/relocated node-ids plus every
+    node-id whose test function this delta actually changed.
 
-    D-116: a node-id in (old - new) is a *real* removal only when its source FILE
-    actually changed in this delta — a staged byte-different edit (changed_files)
-    or a REMOVED retirement (removed_files). When the file is byte-identical and
-    still present, an id that "disappeared" did so only because collection
-    relabeled it: pytest's parametrized `name[chromium]` expands with sandbox
-    collect success, static AST emits the bare `name` when it does not, so the
-    frozen set flips shape between freezes with no spec change. Counting that
-    flip re-runs finished, green work off a phantom delta (testchat v77: 60
-    relabeled node-ids in a byte-identical suite reset three already-done tasks).
-    Scope the removed term to files this delta actually touched; the
-    changed-files term is already file-scoped and unaffected.
+    D-116: a node-id in (old - new) is a *real* removal only when its source
+    FILE actually changed in this delta — a staged byte-different edit
+    (changed_files) or a REMOVED retirement (removed_files). When the file is
+    byte-identical and still present, an id that "disappeared" did so only
+    because collection relabeled it: pytest's parametrized `name[chromium]`
+    expands with sandbox collect success, static AST emits the bare `name`
+    when it does not, so the frozen set flips shape between freezes with no
+    spec change. Counting that flip re-runs finished, green work off a phantom
+    delta (testchat v77: 60 relabeled node-ids in a byte-identical suite reset
+    three already-done tasks). Scope the removed term to files this delta
+    actually touched.
+
+    Changed-files term (finding-1 fix): when the pre/post-apply sources are
+    supplied, the surviving-id term is FUNCTION-granular — only node-ids whose
+    family function_changes marks changed, plus every node-id of a file whose
+    infra-level lines changed (conservative file-level fallback). Without
+    sources the term falls back to file granularity (the legacy shape; the
+    snapshot lives in refreeze.sh and is always supplied in production).
     """
     delta_scope_files = changed_files | removed_files
     removed = {
         n for n in (old_nodeids - new_nodeids)
         if n.split("::")[0] in delta_scope_files
     }
-    in_changed_files = {n for n in new_nodeids if n.split("::")[0] in changed_files}
+    if old_sources is not None and new_sources is not None:
+        infra_files: set[str] = set()
+        changed_families: set[str] = set()
+        for f in sorted(changed_files):
+            if f not in old_sources or f not in new_sources:
+                infra_files.add(f)
+                continue
+            fams, infra = function_changes(
+                f, old_sources[f], new_sources[f])
+            changed_families |= fams
+            if infra:
+                infra_files.add(f)
+        in_changed_files = {
+            n for n in new_nodeids
+            if n.split("::")[0] in changed_files
+            and (n.split("::")[0] in infra_files
+                 or family_of(n) in changed_families)
+        }
+    else:
+        in_changed_files = {
+            n for n in new_nodeids if n.split("::")[0] in changed_files
+        }
     return sorted(removed | in_changed_files)
 
 
@@ -57,8 +211,19 @@ def main(argv: list[str]) -> int:
     new_nodeids = set(_lines(nodeids_path))
     changed_files = set(_lines(".pipeline-state/refreeze-changed-files"))
     removed_files = set(_lines(".pipeline-state/refreeze-removed-files"))
+    old_root = Path(".pipeline-state/old-tests")
+    old_sources = {}
+    new_sources = {}
+    for f in changed_files:
+        old_p = old_root / f
+        if old_p.is_file():
+            old_sources[f] = old_p.read_text()
+        new_p = Path(f)
+        if new_p.is_file():
+            new_sources[f] = new_p.read_text()
     changed_tests = compute_changed_tests(
-        old_nodeids, new_nodeids, changed_files, removed_files
+        old_nodeids, new_nodeids, changed_files, removed_files,
+        old_sources, new_sources,
     )
 
     # D-86: the TPM's own scope declaration. Until D-86 this was hardcoded [],
@@ -74,6 +239,7 @@ def main(argv: list[str]) -> int:
     delta = {
         "changed_contract_ids": _lines(".pipeline-state/refreeze-changed-contracts"),
         "changed_tests": changed_tests,
+        "changed_tests_granularity": "function",
         "changed_files": declared_files,
     }
     with open(f"scripts/.approved/DELTA-v{new_v}.json", "w") as f:
