@@ -35,6 +35,7 @@ CHECK_SURFACE = SCRIPTS / "check-test-surface.py"
 APPLY_BLOCKS = SCRIPTS / "apply-edit-blocks.py"
 COMPLETION_LEDGER = SCRIPTS / "completion-ledger.py"
 FLAKE_LEDGER = SCRIPTS / "flake-ledger.py"
+REFREEZE_DELTA = SCRIPTS / "refreeze_delta.py"
 
 # refreeze_delta is underscore-named precisely so its delta computation (and the
 # D-116 relabel guard inside it) can be imported and unit-tested directly.
@@ -2456,6 +2457,18 @@ def test_phase_gate_gitignored_bytecode_does_not_trip(frozen_repo):
 # staging validation (including the REMOVED check) but applies nothing —
 # so we can test the freeze door without a real interactive terminal.
 REFREEZE = SCRIPTS / "refreeze.sh"
+
+
+def _PIN_ROW(name):
+    """A two-line mapping row pinning `tests/test_delta.py::<name>` to
+    src/app.py — the fixture's staged delta test file (item-1 pin gate:
+    every added/modified test function needs an owning-file pin)."""
+    return (
+        f"* `tests/test_delta.py::{name}`\n"
+        "  -> `src/app.py`\n"
+    )
+
+
 VALID_ERD_DELTA = (
     "# Current milestone\n\n"
     "## Changed acceptance criteria\n\n"
@@ -2467,7 +2480,7 @@ VALID_ERD_DELTA = (
     "- src/api/chat.py\n"
     "- src/api/models.py\n\n"
     "## Test-to-file mapping\n\n"
-    "No new mapping.\n"
+    + _PIN_ROW("test_param")
 )
 
 
@@ -2762,6 +2775,211 @@ def test_decorator_change_counts_as_function_change():
         "tests/test_a.py", old_src, new_src)
     assert fams == {"tests/test_a.py::test_first"}
     assert infra is False
+
+
+# --- Item 1: freeze-time owning-file pin gate --------------------------------
+# testchat v99: the genuinely new AC-161 oracle rode no test_mapping pin, the
+# file-granular milestone slice emptied its task, and the default verdict
+# could pass without running it. The gate REQUIRES every new/modified test
+# function to carry an owning-file pin at freeze time (contracts.test_mapping
+# or the ERD-DELTA '## Test-to-file mapping' section); infra fallbacks and
+# carried tests stay grandfathered. These pin the gate on its producer.
+
+_ERD_MAPPING = (
+    "## Test-to-file mapping\n"
+    "\n"
+    "Now-approved node IDs pin exactly:\n"
+    "\n"
+    "* `tests/test_a.py::test_second`\n"
+    "  -> `src/api/a.py` (AC-1; after storage).\n"
+    "* `tests/test_a.py::test_third[chromium]`\n"
+    "  -> `src/static/a.js`\n"
+    "* `tests/test_a.py::test_unpinned_row`\n"
+    "  -> (no owner named)\n"
+)
+
+
+def test_erd_pins_parse_two_line_rows():
+    pins = refreeze_delta._erd_pins(_ERD_MAPPING)
+    assert pins == {
+        "tests/test_a.py::test_second": "src/api/a.py",
+        "tests/test_a.py::test_third[chromium]": "src/static/a.js",
+    }
+
+
+def test_new_function_without_pin_fails_gate():
+    old_src = _src_a_v1()
+    new_src = old_src + "\ndef test_added():\n    assert True\n"
+    bad = refreeze_delta.pin_gate_violations(
+        changed_files=["tests/test_a.py"],
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+        test_mapping={},
+        erd_delta="",
+    )
+    assert bad == ["tests/test_a.py::test_added"], bad
+
+
+def test_modified_function_without_pin_fails_gate():
+    old_src = _src_a_v1()
+    new_src = old_src.replace("    assert True\n", "    assert False\n", 1)
+    bad = refreeze_delta.pin_gate_violations(
+        changed_files=["tests/test_a.py"],
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+        test_mapping={},
+        erd_delta="",
+    )
+    assert bad == ["tests/test_a.py::test_first"], bad
+
+
+def test_new_function_pinned_in_test_mapping_passes():
+    old_src = _src_a_v1()
+    new_src = old_src + "\ndef test_added():\n    assert True\n"
+    bad = refreeze_delta.pin_gate_violations(
+        changed_files=["tests/test_a.py"],
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+        test_mapping={"tests/test_a.py::test_added": "src/services/a.py"},
+        erd_delta="",
+    )
+    assert bad == [], bad
+
+
+def test_new_function_pinned_in_erd_mapping_passes():
+    """The exact v99 hole closed: a NEW test pinned ONLY in the delta's
+    '## Test-to-file mapping' section (never in test_mapping) must satisfy
+    the gate — that is the placement the milestone slice drops otherwise."""
+    old_src = _src_a_v1()
+    new_src = old_src + "\ndef test_added():\n    assert True\n"
+    erd = _ERD_MAPPING + (
+        "* `tests/test_a.py::test_added`\n"
+        "  -> `src/services/a.py` (AC-161; NEW this delta).\n"
+    )
+    bad = refreeze_delta.pin_gate_violations(
+        changed_files=["tests/test_a.py"],
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+        test_mapping={},
+        erd_delta=erd,
+    )
+    assert bad == [], bad
+
+
+def test_parametrized_pin_satisfies_bare_family():
+    """Pins match at family granularity: the family the diff produces is
+    bare (`test_third`), the pin may be parametrized (`test_third[chromium]`)
+    — and the reverse direction too."""
+    old_src = _src_a_v1()
+    new_src = old_src.replace(
+        "def test_third():\n",
+        "@pytest.mark.parametrize('x', [1])\ndef test_third():\n", 1)
+    bad = refreeze_delta.pin_gate_violations(
+        changed_files=["tests/test_a.py"],
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+        test_mapping={},
+        erd_delta=_ERD_MAPPING,
+    )
+    assert bad == [], bad
+
+
+def test_brand_new_file_gates_every_function():
+    """A brand-new test file has no old source: every test function in it is
+    newly added, so every one must be pinned — a new file of 3 tests with 2
+    pins must fail naming the unpinned third."""
+    new_src = _src_a_v1()
+    bad = refreeze_delta.pin_gate_violations(
+        changed_files=["tests/test_a.py"],
+        old_sources={},
+        new_sources={"tests/test_a.py": new_src},
+        test_mapping={
+            "tests/test_a.py::test_first": "src/services/a.py",
+            "tests/test_a.py::test_second": "src/api/a.py",
+        },
+        erd_delta="",
+    )
+    assert bad == ["tests/test_a.py::test_third"], bad
+
+
+def test_infra_change_is_grandfathered():
+    """A content-bearing change outside every test function (fixture, helper)
+    falls back to file-level scope — the tests themselves did not change, so
+    the pin gate must NOT demand pins for them (S6/D-128 lesson: a hard halt
+    on untouched content freezes the pipeline)."""
+    old_src = (
+        "@pytest.fixture\n"
+        "def f():\n"
+        "    return 1\n"
+        "\n"
+        + _src_a_v1()
+    )
+    new_src = old_src.replace("    return 1\n", "    return 2\n", 1)
+    bad = refreeze_delta.pin_gate_violations(
+        changed_files=["tests/test_a.py"],
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+        test_mapping={},
+        erd_delta="",
+    )
+    assert bad == [], bad
+
+
+def test_removed_file_gates_nothing():
+    """A file that only disappears this delta has no living tests to pin."""
+    bad = refreeze_delta.pin_gate_violations(
+        changed_files=["tests/test_gone.py"],
+        old_sources={"tests/test_gone.py": _src_a_v1()},
+        new_sources={},
+        test_mapping={},
+        erd_delta="",
+    )
+    assert bad == [], bad
+
+
+def test_pin_gate_cli_exits_1_with_unpinned_listing(tmp_path):
+    """The CLI contract refreeze.sh calls: exit 1 on unpinned families with
+    the family names on stderr; the listing must include the file path."""
+    old = tmp_path / "tests"
+    old.mkdir()
+    (old / "test_a.py").write_text(_src_a_v1())
+    new = tmp_path / "in"
+    (new / "tests").mkdir(parents=True)
+    (new / "tests" / "test_a.py").write_text(
+        _src_a_v1() + "\ndef test_added():\n    assert True\n")
+    proc = subprocess.run(
+        [sys.executable, str(REFREEZE_DELTA), "pin-gate",
+         "--old-root", str(tmp_path), "--new-root", str(new),
+         "--test-mapping", str(new / "contracts.json"),
+         "--erd-delta", str(new / "ERD-DELTA.md"),
+         "tests/test_a.py"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "test_added" in proc.stderr, proc.stderr
+    assert "test_a.py" in proc.stderr, proc.stderr
+    assert "PIN GATE FAIL" in proc.stderr, proc.stderr
+
+
+def test_pin_gate_cli_exits_0_when_pinned(tmp_path):
+    old = tmp_path / "tests"
+    old.mkdir()
+    (old / "test_a.py").write_text(_src_a_v1())
+    new = tmp_path / "in"
+    (new / "tests").mkdir(parents=True)
+    (new / "tests" / "test_a.py").write_text(
+        _src_a_v1() + "\ndef test_added():\n    assert True\n")
+    (new / "contracts.json").write_text(json.dumps({
+        "test_mapping": {"tests/test_a.py::test_added": "src/services/a.py"},
+    }))
+    proc = subprocess.run(
+        [sys.executable, str(REFREEZE_DELTA), "pin-gate",
+         "--old-root", str(tmp_path), "--new-root", str(new),
+         "--test-mapping", str(new / "contracts.json"),
+         "tests/test_a.py"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 # --- validate-plan.py --spec-preflight (D-78) --------------------------------
@@ -3554,7 +3772,8 @@ def test_plan_gate_brief_overflow_names_erd_mass(tmp_path):
 def refreeze_scripts(repo):
     for name in ("validate-plan.py", "check-test-surface.py",
                  "check-swallowed-errors.py", "check-spec-delta.py",
-                 "check-ac-postconditions.py", "check-test-direction.py"):
+                 "check-ac-postconditions.py", "check-test-direction.py",
+                 "refreeze_delta.py"):
         (repo / "scripts" / name).write_bytes((SCRIPTS / name).read_bytes())
     (repo / "scripts" / ".approved" / "incoming"
      / "ERD-DELTA.md").write_text(VALID_ERD_DELTA)
@@ -5029,6 +5248,8 @@ def test_refreeze_smoke_check_must_be_red_on_unchanged_tree(freezable_repo):
     incoming = freezable_repo / "scripts" / ".approved" / "incoming" / "tests"
     (incoming / "test_delta.py").write_text(
         "def test_red_probe():\n    assert False\n")
+    (freezable_repo / "scripts" / ".approved" / "incoming"
+     / "ERD-DELTA.md").write_text(VALID_ERD_DELTA + _PIN_ROW("test_red_probe"))
     r = _stage_contracts_smoke(
         freezable_repo,
         "grep -q 'def preexisting' src/app.py")
@@ -5972,7 +6193,7 @@ def test_refreeze_accepts_ac_with_postcondition(freezable_repo):
         "## Changed acceptance criteria\n\nAC-50\n\n"
         "## Superseded acceptance criteria\n\nNone.\n\n"
         "## Changed files\n\n- src/app.py\n\n"
-        "## Test-to-file mapping\n\nNo new mapping.\n"
+        "## Test-to-file mapping\n\n" + _PIN_ROW("test_param")
     )
     r = _run_refreeze_diff(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
@@ -6072,6 +6293,8 @@ def test_refreeze_accepts_url_aware_httpx_mock(freezable_repo):
         "    monkeypatch.setattr(httpx, 'get', fake_get)\n"
         "    assert True\n"
     )
+    (freezable_repo / "scripts" / ".approved" / "incoming"
+     / "ERD-DELTA.md").write_text(VALID_ERD_DELTA + _PIN_ROW("test_delta"))
     r = _run_refreeze_diff(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "S6" not in r.stdout + r.stderr

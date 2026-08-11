@@ -30,6 +30,7 @@ from __future__ import annotations
 import ast
 import difflib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -199,11 +200,77 @@ def compute_changed_tests(
     return sorted(removed | in_changed_files)
 
 
+def _erd_pins(text: str) -> dict[str, str]:
+    """Node-id -> owner-file rows from ERD-DELTA.md's '## Test-to-file mapping'
+    section: `* ``node-id`` bullets whose next non-blank line carries
+    `-> ``file`` (the two-line row shape testchat's v99 delta uses). Rows
+    that name no backticked file are not pins: a mapping line without an
+    owner resolves nothing."""
+    pins: dict[str, str] = {}
+    lines = text.splitlines()
+    in_section = False
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            in_section = line.strip() == "## Test-to-file mapping"
+            continue
+        if not in_section or not line.lstrip().startswith("*"):
+            continue
+        ids = re.findall(r"`([^`]+)`", line)
+        if not ids:
+            continue
+        node_id = ids[0].strip()
+        j = i + 1
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        if j >= len(lines):
+            continue
+        m = re.search(r"->\s*`([^`]+)`", lines[j])
+        if m and m.group(1).strip():
+            pins[node_id] = m.group(1).strip()
+    return pins
+
+
+def pin_gate_violations(
+    changed_files: list[str],
+    old_sources: dict[str, str],
+    new_sources: dict[str, str],
+    test_mapping: dict[str, str],
+    erd_delta: str,
+) -> list[str]:
+    """Item 1 freeze-time gate: every test function this delta ADDS or
+    MODIFIES (the function-granular changed term) must carry an explicit
+    owning-file pin in contracts.test_mapping or the ERD-DELTA '## Test-to-file
+    mapping' section, at freeze time. A pin matches at FAMILY granularity
+    (parametrization stripped), so a bare family is satisfied by a
+    `name[chromium]` pin and vice versa.
+
+    The testchat v99 hole: the AC-161 oracle was a genuinely new test riding
+    no pin — the file-granular milestone slice emptied its task and the
+    default verdict could pass without running it. Grandfathered by design
+    (S6/D-128 lesson): infra-level file fallbacks and carried tests are NOT
+    gated — requiring a pin for every test in a 50-test file whose fixture
+    changed would halt the pipeline. Only functions whose own bytes changed
+    must pin. Returns the sorted list of unpinned families; empty = green.
+    """
+    pins = {family_of(k): v for k, v in (test_mapping or {}).items() if v}
+    pins.update({family_of(k): v for k, v in _erd_pins(erd_delta or "").items()})
+    unpinned: set[str] = set()
+    for f in changed_files:
+        new_src = new_sources.get(f)
+        if new_src is None:
+            continue                     # removed file: no living tests to gate
+        fams, _ = function_changes(f, old_sources.get(f, ""), new_src)
+        unpinned |= {fam for fam in fams if fam not in pins}
+    return sorted(unpinned)
+
+
 def _lines(p: str) -> list[str]:
     return [line for line in Path(p).read_text().splitlines() if line.strip()]
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) > 1 and argv[1] == "pin-gate":
+        return cmd_pin_gate(argv[2:])
     new_v, nodeids_path = int(argv[1]), argv[2]
     contracts_staged = argv[3] == "1"
 
@@ -250,6 +317,54 @@ def main(argv: list[str]) -> int:
               "no-edit default every existing file is untouchable, so a run will "
               "invoke the coder for nothing and report normally. If a milestone is "
               "unbuilt, declare its files in contracts.changed_files and re-freeze.")
+    return 0
+
+
+def cmd_pin_gate(argv: list[str]) -> int:
+    """Pre-apply freezer gate (item 1): staged change files' new/modified test
+    functions must carry owning-file pins. Runs from the repo root with
+    --old-root . (current tree = pre-apply sources) and --new-root <staging>
+    (the incoming files); pin sources are the staged contracts.json and
+    ERD-DELTA.md. Exits 0 when every changed test function is pinned."""
+    import argparse
+    ap = argparse.ArgumentParser(
+        prog="refreeze_delta.py pin-gate", description=__doc__)
+    ap.add_argument("--old-root", required=True)
+    ap.add_argument("--new-root", required=True)
+    ap.add_argument("--test-mapping")
+    ap.add_argument("--erd-delta")
+    ap.add_argument("files", nargs="*")
+    args = ap.parse_args(argv)
+    old_sources: dict[str, str] = {}
+    new_sources: dict[str, str] = {}
+    for f in args.files:
+        old_p = Path(args.old_root) / f
+        if old_p.is_file():
+            old_sources[f] = old_p.read_text()
+        new_p = Path(args.new_root) / f
+        if new_p.is_file():
+            new_sources[f] = new_p.read_text()
+    test_mapping: dict[str, str] = {}
+    if args.test_mapping and Path(args.test_mapping).is_file():
+        c = json.load(open(args.test_mapping))
+        mapping = c.get("test_mapping", {})
+        if isinstance(mapping, dict):
+            test_mapping = mapping
+    erd = ""
+    if args.erd_delta and Path(args.erd_delta).is_file():
+        erd = Path(args.erd_delta).read_text()
+    bad = pin_gate_violations(
+        args.files, old_sources, new_sources, test_mapping, erd)
+    if bad:
+        print(f"PIN GATE FAIL: {len(bad)} changed test function(s) carry no "
+              "owning-file pin:", file=sys.stderr)
+        for fam in bad:
+            print(f"  {fam}", file=sys.stderr)
+        print("  -> name each one's owner file in contracts.test_mapping or the",
+              file=sys.stderr)
+        print("     ERD-DELTA.md '## Test-to-file mapping' section, and restage.",
+              file=sys.stderr)
+        return 1
     return 0
 
 

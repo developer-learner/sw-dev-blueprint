@@ -348,6 +348,25 @@ if [ -f "$IN/contracts.json" ]; then
     || die "satisfiability preflight rejected the delta (D-78) — add the named implementing file(s) to contracts.files (or fix the entry_point) and restage"
 fi
 
+# --- Item 1: every changed test function must carry an owning-file pin ---
+# testchat v99: the AC-161 oracle was a genuinely NEW test riding no
+# test_mapping pin — the file-granular milestone slice emptied its task and
+# the default verdict could pass without running it. The function-level delta
+# (finding-1) names exactly which test functions this freeze adds or modifies;
+# each must pin its owner file in contracts.test_mapping or the ERD-DELTA
+# "## Test-to-file mapping" section AT FREEZE TIME. Infra-level changes
+# (fixtures/helpers/imports) and carried tests stay grandfathered — only the
+# function-granular term is gated (S6/D-128 lesson: a whole-file pin demand
+# would halt every freeze on a 50-test file whose fixture changed). Runs in
+# --diff mode too, so the CEO never reviews a delta the pipeline will reject.
+PIN_GATE_ARGS=(--old-root . --new-root "$IN")
+[ -f "$IN/contracts.json" ] && PIN_GATE_ARGS+=(--test-mapping "$IN/contracts.json")
+[ -f "$IN/ERD-DELTA.md" ] && PIN_GATE_ARGS+=(--erd-delta "$IN/ERD-DELTA.md")
+if ! python3 scripts/refreeze_delta.py pin-gate "${PIN_GATE_ARGS[@]}" \
+    $CHANGED_TEST_FILES; then
+  die "owning-file pin gate rejected the delta — every added or modified test function must name its owner file in contracts.test_mapping (or the ERD-DELTA '## Test-to-file mapping' section); see the listing above and restage"
+fi
+
 # --- Build the full diff (deterministic — its hash is the approval token) ---
 DIFF_FILE=".pipeline-state/refreeze-pending.diff"
 mkdir -p .pipeline-state
