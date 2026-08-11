@@ -7200,3 +7200,197 @@ def test_metrics_report_evidence_matches_recorded_row(tmp_path):
     assert "feature v7" in r.stdout
     assert "success_runs=1  retry_runs=1" in r.stdout
     assert not (root / ".measurement" / "metrics.tsv").exists()
+
+
+# --- validate-plan.py --synthesize-plan (B3 mechanical plan synthesis) -------
+# When the TPM's ERD-DELTA carries the complete decomposition — a verbatim
+# coder brief for EVERY inventory file, a DAG statement, and a test-to-file pin
+# for every milestone node-id — the plan is fully determined and no EM call is
+# needed: cmd_synthesize_plan prints that plan JSON (exit 0). On any missing
+# piece it refuses (exit 1, `PLAN GATE FAIL:` on stderr) and the orchestrator
+# falls back to the EM full emission. These tests pin the success placement and
+# each refusal against minimal synthetic ERD-DELTA/contract/delta fixtures.
+
+SYNTH_CONTRACTS = {
+    "files": ["src/a.py", "src/b.py"],
+    # entry_points self-pin through their module path (src.a -> src/a.py);
+    # the route carries a D-120 file pin so its id lands on src/b.py's task.
+    "entry_points": ["src.a", "src.b:handler"],
+    "routes": [{"id": "route-items", "path": "/items", "file": "src/b.py"}],
+    "test_mapping": {"tests/test_a.py::test_one": "src/a.py"},
+}
+
+SYNTH_BRIEF_A = "Implement module a.\nLine two of the a brief."
+SYNTH_BRIEF_B = "Implement module b."
+
+
+def _synth_erd(brief_a=SYNTH_BRIEF_A, brief_b=SYNTH_BRIEF_B,
+               dag="`src/b.py` depends on `src/a.py`",
+               pins=("`tests/test_a.py::test_one` -> `src/a.py`",
+                     "`tests/test_b.py::test_two` -> `src/b.py`")):
+    """A minimal ERD-DELTA.md for --synthesize-plan. Any piece can be dropped
+    (brief_x=None) or replaced (dag="") to exercise a refusal. The DAG section
+    heading is deliberately NOT "Task order" so only the `dag` body can supply
+    a chain; `pins` becomes the "## Test-to-file mapping" table."""
+    parts = ["# ERD-DELTA", "", "## Coder briefs (verbatim)", ""]
+    if brief_a is not None:
+        parts += ["### T1 — src/a.py (module a)", brief_a, ""]
+    if brief_b is not None:
+        parts += ["### T2 — src/b.py (handler b)", brief_b, ""]
+    parts += ["## Dependencies", "", dag, "", "## Test-to-file mapping", ""]
+    parts += list(pins)
+    return "\n".join(parts) + "\n"
+
+
+@pytest.fixture
+def synth_repo(tmp_path):
+    """Repo layout --synthesize-plan reads: frozen contracts + VERSION and an
+    ERD-DELTA carrying the TPM briefs/DAG/pins. The delta file(s) are written
+    per test by _write_delta and passed as CLI args."""
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    (approved / "contracts.json").write_text(json.dumps(SYNTH_CONTRACTS))
+    (approved / "VERSION").write_text("7\n")
+    (approved / "ERD-DELTA.md").write_text(_synth_erd())
+    return tmp_path
+
+
+def _write_delta(repo, name="delta.json", *,
+                 changed_files=("src/a.py", "src/b.py"),
+                 changed_tests=("tests/test_a.py::test_one",
+                                "tests/test_b.py::test_two"),
+                 granularity="function",
+                 changed_contract_ids=("route-items", "src.a")):
+    (repo / name).write_text(json.dumps({
+        "changed_files": list(changed_files),
+        "changed_tests": list(changed_tests),
+        "changed_tests_granularity": granularity,
+        "changed_contract_ids": list(changed_contract_ids),
+    }))
+    return name
+
+
+def run_synthesize(repo, *delta_names):
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--synthesize-plan", *delta_names],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_synthesize_plan_full_success(synth_repo):
+    """Complete ERD-DELTA (briefs + DAG + pins) → the plan is fully determined:
+    one task per contracts.files entry in files order, ids from the brief
+    headings, verbatim briefs, resolved depends_on, and version/erd_version."""
+    _write_delta(synth_repo)
+    r = run_synthesize(synth_repo, "delta.json")
+    assert r.returncode == 0, r.stderr
+    plan = json.loads(r.stdout)
+    assert plan["version"] == 1
+    assert plan["erd_version"] == 7          # int from scripts/.approved/VERSION
+    assert [t["id"] for t in plan["tasks"]] == ["T1", "T2"]
+    t1, t2 = plan["tasks"]
+    assert t1["file"] == "src/a.py" and t2["file"] == "src/b.py"
+    # keys are EXACTLY the six the contract names — no extras, none dropped
+    exact = {"id", "file", "depends_on", "brief", "contracts", "tests"}
+    assert set(t1) == exact and set(t2) == exact
+    # depends_on are task ids (never paths), resolved from the DAG prose
+    assert t1["depends_on"] == [] and t2["depends_on"] == ["T1"]
+    # briefs are the TPM's verbatim blocks, multi-line preserved
+    assert t1["brief"] == SYNTH_BRIEF_A
+    assert t2["brief"] == SYNTH_BRIEF_B
+    # tests come from the pins owned by each file
+    assert t1["tests"] == ["tests/test_a.py::test_one"]
+    assert t2["tests"] == ["tests/test_b.py::test_two"]
+
+
+def test_synthesize_plan_contract_placement_by_file_pins(synth_repo):
+    """Changed contract ids are pinned to the task that owns their file: the
+    entry-point self-pin (src.a → src/a.py) lands on T1, the route's D-120
+    file pin (route-items → src/b.py) lands on T2 — never the other way."""
+    _write_delta(synth_repo)
+    r = run_synthesize(synth_repo, "delta.json")
+    assert r.returncode == 0, r.stderr
+    t1, t2 = json.loads(r.stdout)["tasks"]
+    assert t1["contracts"] == ["src.a"]
+    assert t2["contracts"] == ["route-items"]
+
+
+def test_synthesize_plan_missing_brief_refused(synth_repo):
+    """No verbatim coder brief for an inventory file → refuse; the EM must
+    emit the full plan. The refusal names the unbriefed file."""
+    (synth_repo / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
+        _synth_erd(brief_b=None))
+    _write_delta(synth_repo)
+    r = run_synthesize(synth_repo, "delta.json")
+    assert r.returncode == 1
+    assert "PLAN GATE FAIL:" in r.stderr
+    assert "no verbatim coder brief" in r.stderr
+    assert "src/b.py" in r.stderr
+
+
+def test_synthesize_plan_missing_dag_refused(synth_repo):
+    """Two files but no DAG statement → refuse: dependencies are semantic,
+    never assumed empty."""
+    (synth_repo / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
+        _synth_erd(dag=""))
+    _write_delta(synth_repo)
+    r = run_synthesize(synth_repo, "delta.json")
+    assert r.returncode == 1
+    assert "PLAN GATE FAIL:" in r.stderr
+    assert "no DAG statement" in r.stderr
+
+
+def test_synthesize_plan_unpinned_scope_id_refused(synth_repo):
+    """A function-granularity delta records a changed test with no ownership
+    pin anywhere (frozen test_mapping ∪ ERD-DELTA mapping) → refuse: the EM
+    must place it. Function granularity never trims, so the id survives to the
+    unpinned check (a file-granular delta would trim it — see the companion
+    test below)."""
+    _write_delta(synth_repo, changed_files=["src/a.py"],
+                 changed_tests=["tests/test_a.py::test_ghost"],
+                 granularity="function")
+    r = run_synthesize(synth_repo, "delta.json")
+    assert r.returncode == 1
+    assert "PLAN GATE FAIL:" in r.stderr
+    assert "no ownership pin" in r.stderr
+    assert "tests/test_a.py::test_ghost" in r.stderr
+
+
+def test_synthesize_plan_file_granular_unpinned_id_trimmed(synth_repo):
+    """The negative-space companion (Rule 6): the SAME unpinned id under FILE
+    granularity is trimmed out of the milestone slice, so the plan synthesizes
+    cleanly (exit 0). This proves the function-granularity refusal above is the
+    granularity check firing, not the id being intrinsically rejected."""
+    _write_delta(synth_repo, changed_files=["src/a.py"],
+                 changed_tests=["tests/test_a.py::test_ghost"],
+                 granularity="file")
+    r = run_synthesize(synth_repo, "delta.json")
+    assert r.returncode == 0, r.stderr
+
+
+def test_synthesize_plan_self_dependency_refused(synth_repo):
+    """A task that depends on its own file is a self-loop and must be refused
+    at synthesis. Pinned as a hard gate on the host lane's fix of the dead
+    guard (task-id vs file-path comparison) that let the loop through."""
+    (synth_repo / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
+        _synth_erd(dag="`src/a.py` depends on `src/a.py`"))
+    _write_delta(synth_repo)
+    r = run_synthesize(synth_repo, "delta.json")
+    assert r.returncode == 1
+    assert "self-dependency" in r.stderr
+
+
+def test_synthesize_plan_chain_dag_and_edge_dedupe(synth_repo):
+    """The "Task order: T1 -> T2" chain form resolves the same T2→T1 edge as a
+    `depends on` line, and a duplicated edge (chain AND explicit line) dedupes
+    to a single entry via the id set."""
+    dag = ("Task order: T1 (module a) -> T2 (handler b)\n\n"
+           "`src/b.py` depends on `src/a.py`")
+    (synth_repo / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
+        _synth_erd(dag=dag))
+    _write_delta(synth_repo)
+    r = run_synthesize(synth_repo, "delta.json")
+    assert r.returncode == 0, r.stderr
+    t1, t2 = json.loads(r.stdout)["tasks"]
+    assert t1["depends_on"] == []
+    assert t2["depends_on"] == ["T1"]

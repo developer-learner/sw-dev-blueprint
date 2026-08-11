@@ -1670,6 +1670,11 @@ def cmd_synthesize_plan(delta_paths):
     if unknown:
         fail(["--synthesize-plan: DAG prose references non-inventory file(s) "
               f"{unknown} — no task can own their dependency edges"])
+    targets = {d for deps in edges.values() for d in deps}
+    unknown_t = sorted(targets - set(files))
+    if unknown_t:
+        fail(["--synthesize-plan: DAG prose depends on non-inventory file(s) "
+              f"{unknown_t} — no task can claim those dependency edges"])
     if len(files) > 1 and not edges:
         fail(["--synthesize-plan: no DAG statement in ERD-DELTA (no "
               "`<file> depends on <file>` line and no Task-order chain) — "
@@ -1677,8 +1682,7 @@ def cmd_synthesize_plan(delta_paths):
               "emit the full plan"])
     deps = {f: sorted({task_ids[d] for d in edges.get(f, [])}) for f in files}
     for f in files:
-        bad = [d for d in deps[f] if d == f]
-        if bad:
+        if task_ids[f] in deps[f]:
             fail([f"--synthesize-plan: self-dependency in DAG prose for {f}"])
 
     scope = []
