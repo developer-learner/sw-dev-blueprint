@@ -4135,16 +4135,20 @@ def test_run_tests_mypy_gate_green_runs_pytest(tmp_path):
 # check. drive-runtime.sh calls run_tests with no args and sets no
 # ACTIVE_DELTA_FILES, so it cannot reach the scoped path — this focused driver
 # extracts the SAME run_tests (anti-drift) and drives it with a delta range +
-# node-ids under a stub that runs the REAL mypy on whatever targets run_tests
-# selects, so the type error is genuinely (not stubbed) detected.
+# node-ids. mypy is a sandbox-only tool (it does not exist on the dev host —
+# the correction-log class of a template selftest growing a transitive tool
+# dependency without CI installs), so the stub FAKES the mypy outcome via
+# SANDBOX_MYPY_RC exactly like the drive-runtime stub; the arg log still pins
+# EXACTLY which targets the gate selected, which is the scoping contract
+# (a regression that leaked src/z.py into a scoped call changes the arg line
+# and fails these tests).
 
 _SCOPED_STUB = (
     "#!/usr/bin/env bash\n"
-    "[ -z \"${SANDBOX_ARG_LOG:-}\" ] || printf '%s\\n' \"$@\" > \"$SANDBOX_ARG_LOG\"\n"
+    "[ -z \"${SANDBOX_ARG_LOG:-}\" ] || printf '%s\\n' \"$@\" >> \"$SANDBOX_ARG_LOG\"\n"
     "case \" $* \" in\n"
     "  *\" -- mypy \"*)\n"
-    "    while [ \"$1\" != \"--\" ]; do shift; done; shift\n"
-    "    \"$@\"; exit $? ;;\n"
+    "    exit \"${SANDBOX_MYPY_RC:-0}\" ;;\n"
     "esac\n"
     "[ -z \"${SANDBOX_REPORT_SOURCE:-}\" ] || cp \"$SANDBOX_REPORT_SOURCE\" .cache/test-report.json\n"
     "exit \"${SANDBOX_STUB_RC:-0}\"\n"
@@ -4166,13 +4170,17 @@ _MYPY_CLEAN_SRC = "def f(x: int) -> int:\n    return x\n"
 _MYPY_ERR_SRC = 'x: int = "not an int"\n'
 
 
-def _drive_scoped_run_tests(tmp_path, *, src_files, deltas, node_ids):
+def _drive_scoped_run_tests(tmp_path, *, src_files, deltas, node_ids,
+                            mypy_rc=0):
     """Invoke the real run_tests with a scoped delta range. src_files:
     {relpath: source}; deltas: list of delta dicts (written as delta-N.json and
-    passed as ACTIVE_DELTA_FILES); node_ids: run_tests args ([] = full-suite).
-    Returns (CompletedProcess, arg_log Path). The arg log holds the LAST
-    sandbox call: on a mypy-red run that is the mypy invocation (targets
-    assertable); on a green run it is the pytest invocation."""
+    passed as ACTIVE_DELTA_FILES); node_ids: run_tests args ([] = full-suite);
+    mypy_rc: the faked mypy outcome (0 green / 1 red — mypy is a sandbox-only
+    tool and does not exist on the dev host). Returns (CompletedProcess,
+    arg_log Path). The arg log holds every sandbox call IN ORDER: on a mypy-red
+    run that is only the mypy invocation (pytest never launches — targets
+    assertable); on a green run it is the mypy line followed by the pytest
+    invocation."""
     work = tmp_path
     (work / "scripts").mkdir(parents=True, exist_ok=True)
     (work / ".cache").mkdir(exist_ok=True)
@@ -4201,7 +4209,8 @@ def _drive_scoped_run_tests(tmp_path, *, src_files, deltas, node_ids):
               .replace("__ORCH__", str(ORCHESTRATE))
               .replace("__IDS__", " ".join(f'"{n}"' for n in node_ids)))
     env = {**os.environ, "SANDBOX_REPORT_SOURCE": str(report),
-           "SANDBOX_ARG_LOG": str(arg_log), "SANDBOX_STUB_RC": "0"}
+           "SANDBOX_ARG_LOG": str(arg_log), "SANDBOX_STUB_RC": "0",
+           "SANDBOX_MYPY_RC": str(mypy_rc)}
     r = subprocess.run(["bash", "-c", driver], capture_output=True, text=True,
                        env=env)
     return r, arg_log
@@ -4213,16 +4222,24 @@ def _mypy_call_line(arg_log):
 
 def test_scoped_mypy_ignores_unrelated_error(tmp_path):
     """Headline: a targeted run type-checks only the delta's changed source
-    file. src/z.py carries a real type error but the delta touches only
-    src/a.py, so the gate stays GREEN — the unrelated error no longer blocks
-    the verdict. (Whole-tree `mypy src/` would have gone red on src/z.py.)"""
-    r, _ = _drive_scoped_run_tests(
+    file. src/z.py carries a (stubbed red) type error but the delta touches
+    only src/a.py, so the gate stays GREEN — the unrelated error no longer
+    blocks the verdict. (Whole-tree `mypy src/` would have gone red on
+    src/z.py.) The arg log pins the scoping: mypy is invoked with src/a.py
+    exactly, never src/ or src/z.py."""
+    r, arg_log = _drive_scoped_run_tests(
         tmp_path,
         src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
         deltas=[{"changed_files": ["src/a.py"]}],
         node_ids=["tests/test_a.py::t"],
+        mypy_rc=0,
     )
     assert "FINAL_TESTS_RC=0" in r.stdout, (r.stdout, r.stderr)
+    lines = _mypy_call_line(arg_log)
+    assert lines[:5] == [
+        "--", "mypy", "--explicit-package-bases",
+        "--cache-dir=/tmp/mypy-cache", "src/a.py"], lines
+    assert "pytest" in lines, lines
 
 
 def test_scoped_mypy_error_in_scoped_file_fails_closed(tmp_path):
@@ -4233,6 +4250,7 @@ def test_scoped_mypy_error_in_scoped_file_fails_closed(tmp_path):
         src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
         deltas=[{"changed_files": ["src/z.py"]}],
         node_ids=["tests/test_a.py::t"],
+        mypy_rc=1,
     )
     assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
     assert "FINAL_FAILING=mypy:src/z.py" in r.stdout, r.stdout
@@ -4250,6 +4268,7 @@ def test_scoped_mypy_full_suite_checks_whole_tree(tmp_path):
         src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
         deltas=[{"changed_files": ["src/a.py"]}],
         node_ids=[],
+        mypy_rc=1,
     )
     assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
     assert "FINAL_FAILING=mypy:src" in r.stdout, r.stdout
@@ -4267,6 +4286,7 @@ def test_scoped_mypy_no_src_change_falls_back_to_whole_tree(tmp_path):
         src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
         deltas=[{"changed_files": ["tests/test_a.py"]}],
         node_ids=["tests/test_a.py::t"],
+        mypy_rc=1,
     )
     assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
     assert "FINAL_FAILING=mypy:src" in r.stdout, r.stdout
@@ -4282,6 +4302,7 @@ def test_scoped_mypy_unions_changed_src_across_deltas(tmp_path):
         deltas=[{"changed_files": ["src/a.py"]},
                 {"changed_files": ["src/z.py", "src/a.py"]}],
         node_ids=["tests/test_a.py::t"],
+        mypy_rc=1,
     )
     assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
     assert "FINAL_FAILING=mypy:src/a.py,src/z.py" in r.stdout, r.stdout
