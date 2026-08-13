@@ -567,7 +567,22 @@ SMOKE_MAX_TIME="${SMOKE_MAX_TIME:-240}"
 echo "  LLM round-trip smoke test (budget ${SMOKE_MAX_TIME}s — cold model start counts)..."
 _smoke_sys=$(mktemp)
 printf 'You are a test probe. Reply with exactly the text the user sends.' > "$_smoke_sys"
-SMOKE_REPLY=$(printf 'SMOKE_OK' | scripts/llm-call.sh em "$_smoke_sys" --max-time "$SMOKE_MAX_TIME" 2>/dev/null || true)
+# D-55/P1e: the smoke is seat-specific — resolve the model the EM seat is
+# mapped to (same resolution path as llm-call.sh: env, else models.env) and
+# pass --expect-model so the probe fails closed when the server answers with
+# a DIFFERENT model than the seat's mapping (model-reload drift, D-62 class).
+_em_model="${SWBP_EM_MODEL:-}"
+if [ -z "$_em_model" ] && [ -f "$HOME/.config/sw-dev-blueprint/models.env" ]; then
+  # shellcheck disable=SC1090
+  . "$HOME/.config/sw-dev-blueprint/models.env"
+  _em_model="${SWBP_EM_MODEL:-}"
+fi
+# An unresolvable mapping is llm-call's own hard halt (D-52); no flag then.
+[ -n "$_em_model" ] && echo "  EM seat: expect model '$_em_model'"
+if ! SMOKE_REPLY=$(printf 'SMOKE_OK' | scripts/llm-call.sh em "$_smoke_sys" --max-time "$SMOKE_MAX_TIME" ${_em_model:+--expect-model "$_em_model"} 2>/dev/null); then
+  rm -f "$_smoke_sys"
+  die "LLM smoke test failed — llm-call.sh could not complete the trivial probe within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised; a seat mismatch means the mapped model is not the one answering)"
+fi
 rm -f "$_smoke_sys"
 [ -n "$SMOKE_REPLY" ] \
   || die "LLM smoke test failed — llm-call.sh returned empty output for a trivial prompt within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised)"

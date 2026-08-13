@@ -23,15 +23,17 @@
 # No mapping for the requested role = hard halt (D-52: no silent fallback).
 set -euo pipefail
 
-ROLE="${1:?usage: llm-call.sh <role> <system-prompt-file> [--schema f] [--max-time s]}"
+ROLE="${1:?usage: llm-call.sh <role> <system-prompt-file> [--schema f] [--max-time s] [--expect-model id]}"
 SYS_FILE="${2:?system prompt file required}"
 shift 2
 SCHEMA=""
 MAX_TIME=1800
+EXPECT_MODEL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --schema)   SCHEMA="${2:?}"; shift 2 ;;
     --max-time) MAX_TIME="${2:?}"; shift 2 ;;
+    --expect-model) EXPECT_MODEL="${2:?}"; shift 2 ;;
     *) echo "llm-call: unknown arg $1" >&2; exit 2 ;;
   esac
 done
@@ -67,6 +69,7 @@ PROFILES="$HOME/.config/sw-dev-blueprint/model-profiles.toml"
 SWBP_LLM_URL="$URL" SWBP_LLM_MODEL="$MODEL" SWBP_LLM_SYS="$SYS_FILE" \
 SWBP_LLM_SCHEMA="$SCHEMA" SWBP_LLM_MAXTIME="$MAX_TIME" SWBP_LLM_ROLE="$ROLE" \
 SWBP_LLM_USER_FILE="$USER_FILE" SWBP_LLM_PROFILES="$PROFILES" \
+SWBP_LLM_EXPECT_MODEL="$EXPECT_MODEL" \
 python3 - <<'PYEOF'
 import json
 import os
@@ -173,6 +176,26 @@ if not content and reasoning:
              f"reasoning but no content — thinking model loaded (Hard Rule 1).")
 if not content:
     sys.exit(f"llm-call FAIL: empty content from model '{model}'.")
+
+# Seat verification (--expect-model): when the caller names the model the
+# seat must answer with, the server's own "model" field is the claim to
+# check. A mismatch means the mapped seat model is NOT the one serving —
+# e.g. the server reloaded a different default (D-62 drift) or the mapping
+# points at an id the server aliases. Fail closed: proceeding on the wrong
+# seat is how mid-run confusion starts. A server that does not report a
+# model id cannot be verified — warn and continue (the reply checks above
+# still run).
+expect_model = os.environ.get("SWBP_LLM_EXPECT_MODEL")
+if expect_model:
+    served = resp.get("model")
+    if not served:
+        print(f"llm-call: warning: cannot verify seat model — server did "
+              f"not report 'model'; expected {expect_model}", file=sys.stderr)
+    elif served != expect_model:
+        sys.exit(f"llm-call FAIL: seat mismatch — server answered with model "
+                 f"'{served}', expected '{expect_model}' for role '{role}'. "
+                 f"The mapped seat model is not the one serving; check the "
+                 f"loaded model / model mapping before proceeding.")
 
 if profile.get("strip_think_tags", True):
     # LEADING block only — that is the shape of leaked reasoning. A global
