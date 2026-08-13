@@ -208,8 +208,32 @@ fi
 # A non-behavioral standing-ERD refresh retires the prior delta automatically:
 # folding the completed milestone into standing architecture is the explicit
 # consolidation point, and the next EM cannot mistake the old slice for new.
+# --- D-136: staged contracts merge (PRODUCER, never authority) ---------------
+# contracts.json enters as a STAGED MERGE ARTIFACT, not a full-file
+# replacement: the TPM stages only the changed/new id-array entries (each
+# `file`-pinned) and contracts-merge.py reconstructs the full contracts.json by
+# overlaying them onto the standing file, proving mechanically that it touched
+# nothing it did not name (byte-identical carried remainder; a staged entry
+# identical to standing fails closed). The merge runs BEFORE every
+# contracts-consuming gate so each sees the MERGED file, never the raw partial:
+# check-spec-delta (D-107/D-122 — a partial would read every omitted id-array
+# as changed and defeat the invisible-change guard), D-56, INV-4, the D-78
+# preflight, the DELTA, the apply, the manifest. The merge is transparent — the
+# gates see the same full contracts a return would have produced. At v1 (no
+# standing) the staged file IS the full spec, so no merge runs. Runs in --diff
+# too, so the CEO never previews a merge the pipeline will reject.
+MERGED_CONTRACTS="$IN/contracts.json"
+if [ -f "$IN/contracts.json" ] && [ "$V" -gt 0 ] && [ -f "$APPROVED/contracts.json" ]; then
+  mkdir -p .pipeline-state
+  MERGED_CONTRACTS=".pipeline-state/refreeze-merged-contracts.json"
+  python3 scripts/contracts-merge.py "$APPROVED/contracts.json" "$IN/contracts.json" \
+    > "$MERGED_CONTRACTS" \
+    || die "staged contracts merge rejected (D-136) — see the id named above; the TPM stages only changed/new entries onto the standing contracts.json"
+fi
+
 if ! SPEC_DELTA_KIND=$(python3 scripts/check-spec-delta.py \
-  --staging "$IN" --approved "$APPROVED" --repo . --current-version "$V"); then
+  --staging "$IN" --approved "$APPROVED" --repo . --current-version "$V" \
+  --contracts "$MERGED_CONTRACTS"); then
   die "current-milestone ERD delta rejected (D-107)"
 fi
 RETIRE_ERD_DELTA=0
@@ -272,27 +296,6 @@ for key in ("routes", "schemas", "errors"):
 if errs:
     sys.exit("REFREEZE FAIL: " + "; ".join(errs))
 PYEOF
-fi
-
-# --- D-136: staged contracts merge (PRODUCER, never authority) ---------------
-# contracts.json enters as a STAGED MERGE ARTIFACT, not a full-file
-# replacement: the TPM stages only the changed/new id-array entries (each
-# `file`-pinned) and contracts-merge.py reconstructs the full contracts.json by
-# overlaying them onto the standing file, proving mechanically that it touched
-# nothing it did not name (byte-identical carried remainder; a staged entry
-# identical to standing fails closed). Everything downstream — D-56, INV-4, the
-# D-78 preflight, the DELTA, the apply, the manifest — reads the MERGED file, so
-# the merge is transparent: the gates see the same full contracts a return
-# would have produced. At v1 (no standing) the staged file IS the full spec, so
-# no merge runs. Fires before --diff prints, so the CEO never previews a merge
-# the pipeline will reject.
-MERGED_CONTRACTS="$IN/contracts.json"
-if [ -f "$IN/contracts.json" ] && [ "$V" -gt 0 ] && [ -f "$APPROVED/contracts.json" ]; then
-  mkdir -p .pipeline-state
-  MERGED_CONTRACTS=".pipeline-state/refreeze-merged-contracts.json"
-  python3 scripts/contracts-merge.py "$APPROVED/contracts.json" "$IN/contracts.json" \
-    > "$MERGED_CONTRACTS" \
-    || die "staged contracts merge rejected (D-136) — see the id named above; the TPM stages only changed/new entries onto the standing contracts.json"
 fi
 
 # --- D-56: declared externals must carry captured reality ---

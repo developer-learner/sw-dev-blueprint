@@ -5747,6 +5747,69 @@ def test_refreeze_rejects_touched_unchanged_contract(freezable_repo):
     assert "route:GET /a" in combined, combined
 
 
+def test_check_spec_delta_validates_merged_not_partial_contracts(tmp_path):
+    """Regression (D-136): check-spec-delta must validate the MERGED contracts,
+    not the raw staged partial. A partial changing only an invisible key
+    (smoke_checks) omits the id-arrays; compared against the full standing those
+    omitted arrays read as 'changed' and falsely satisfy D-122's visibility
+    test, so the invisible-only change slips through. Given the MERGED file
+    (id-arrays carried), D-122 correctly fires — which is why refreeze feeds the
+    merge result here, not the partial."""
+    approved = tmp_path / "approved"
+    approved.mkdir()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    standing = {
+        "erd_version": 1, "files": ["src/app.py"], "entry_points": [],
+        "routes": [{"id": "route:GET /a", "method": "GET", "path": "/a",
+                    "file": "src/app.py"}],
+    }
+    (approved / "contracts.json").write_text(json.dumps(standing))
+    (approved / "test-nodeids").write_text("")
+    (staging / "ERD-DELTA.md").write_text(VALID_ERD_DELTA)
+
+    def run(contracts):
+        p = tmp_path / "c.json"
+        p.write_text(json.dumps(contracts))
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "check-spec-delta.py"),
+             "--staging", str(staging), "--approved", str(approved),
+             "--repo", str(tmp_path), "--current-version", "1",
+             "--contracts", str(p)],
+            capture_output=True, text=True)
+
+    # MERGED: standing + an invisible-only change (smoke_checks), id-arrays
+    # carried identical -> D-122 must fire.
+    merged = dict(standing)
+    merged["erd_version"] = 2
+    merged["smoke_checks"] = {"src/app.py": "true"}
+    r = run(merged)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "D-122" in r.stderr, r.stderr
+    assert "smoke_checks" in r.stderr, r.stderr
+
+    # The raw PARTIAL (id-arrays omitted) slips past D-122 — the exact defect
+    # the merged path closes.
+    partial = {"erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+               "smoke_checks": {"src/app.py": "true"}}
+    r2 = run(partial)
+    assert r2.returncode == 0, (r2.stdout, r2.stderr)
+
+
+def test_refreeze_feeds_merged_contracts_to_check_spec_delta(tmp_path):
+    """D-136 wiring pin: the staged merge must run BEFORE check-spec-delta and
+    the merged file must be what check-spec-delta validates (--contracts). If
+    refreeze reverts to handing check-spec-delta the raw partial, D-122's
+    invisible-change guard is defeated (see the unit test above)."""
+    src = REFREEZE.read_text()
+    merge_at = src.index("scripts/contracts-merge.py")
+    spec_at = src.index("scripts/check-spec-delta.py")
+    assert merge_at < spec_at, \
+        "contracts-merge.py must run before check-spec-delta.py"
+    spec_call = src[spec_at:spec_at + 400]
+    assert '--contracts "$MERGED_CONTRACTS"' in spec_call, spec_call
+
+
 # --- refreeze.sh D-95 auto mode (retires the ceremonial y/N) -----------------
 # The pre-D-95 default prompted the CEO for y/N after every mechanical
 # preflight had already passed — the material verdict was the gates

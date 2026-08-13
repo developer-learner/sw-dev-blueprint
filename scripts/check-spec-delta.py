@@ -65,11 +65,10 @@ def removed_tests(staging: Path) -> list[str]:
     ]
 
 
-def contracts_changed(staging: Path, approved: Path) -> tuple[bool, list[str]]:
-    incoming_path = staging / "contracts.json"
-    if not incoming_path.is_file():
+def contracts_changed(contracts_path: Path, approved: Path) -> tuple[bool, list[str]]:
+    if not contracts_path.is_file():
         return False, []
-    incoming = load_json(incoming_path)
+    incoming = load_json(contracts_path)
     current = load_json(approved / "contracts.json")
     changed_files = [
         value for value in incoming.get("changed_files", [])
@@ -91,7 +90,8 @@ def staged_changed_test_files(staging: Path, repo: Path) -> set[str]:
     return changed
 
 
-def delta_completeness(staging: Path, approved: Path, repo: Path) -> list[str]:
+def delta_completeness(staging: Path, approved: Path, repo: Path,
+                       contracts_path: Path) -> list[str]:
     """D-122: fail a freeze whose changes the DELTA-vN bookkeeping cannot see.
 
     The DELTA-vN file is the orchestrator's only scope source (subtree reset,
@@ -100,9 +100,14 @@ def delta_completeness(staging: Path, approved: Path, repo: Path) -> list[str]:
     only the INVISIBLE_CONTRACT_KEYS, or that claims a test update in
     ERD-DELTA.md without staging its bytes, would bookkeep as an empty or
     partial delta — the v82 class.
+
+    D-136: contracts_path is the MERGED contracts (refreeze's staged-merge
+    result), never the raw partial — comparing a partial against the full
+    standing would read every id-array the delta omits as "changed" and defeat
+    the invisible-change detection below.
     """
     errors: list[str] = []
-    incoming = load_json(staging / "contracts.json")
+    incoming = load_json(contracts_path)
     current = load_json(approved / "contracts.json")
     if incoming:
         invisible_changed = [
@@ -171,11 +176,16 @@ def new_ac_ids(staging: Path, approved: Path, repo: Path) -> set[str]:
     return added
 
 
-def validate(staging: Path, approved: Path, repo: Path, current_version: int) -> str:
+def validate(staging: Path, approved: Path, repo: Path, current_version: int,
+             contracts_path: Path | None = None) -> str:
     if current_version == 0:
         return "initial"
 
-    contract_delta, changed_files = contracts_changed(staging, approved)
+    # D-136: validate the MERGED contracts (refreeze passes --contracts); a
+    # standalone call defaults to the staged file for backward compatibility.
+    if contracts_path is None:
+        contracts_path = staging / "contracts.json"
+    contract_delta, changed_files = contracts_changed(contracts_path, approved)
     introduced_acs = new_ac_ids(staging, approved, repo)
     behavior_delta = bool(
         staged_test_files(staging)
@@ -198,7 +208,7 @@ def validate(staging: Path, approved: Path, repo: Path, current_version: int) ->
     missing_files = sorted(path for path in changed_files if path not in text)
     errors: list[str] = []
     if contract_delta:
-        incoming = load_json(staging / "contracts.json")
+        incoming = load_json(contracts_path)
         mapping = incoming.get("test_mapping", {})
         if not isinstance(mapping, dict):
             errors.append("contracts.test_mapping must be an object")
@@ -253,7 +263,7 @@ def validate(staging: Path, approved: Path, repo: Path, current_version: int) ->
             "contracts.changed_files absent from ERD-DELTA.md: "
             + ", ".join(missing_files)
         )
-    errors += delta_completeness(staging, approved, repo)
+    errors += delta_completeness(staging, approved, repo, contracts_path)
     if errors:
         raise ValueError("; ".join(errors))
     return "behavioral"
@@ -265,9 +275,14 @@ def main() -> int:
     parser.add_argument("--approved", required=True, type=Path)
     parser.add_argument("--repo", default=Path("."), type=Path)
     parser.add_argument("--current-version", required=True, type=int)
+    parser.add_argument("--contracts", type=Path, default=None,
+                        help="D-136: the MERGED contracts to validate "
+                             "(refreeze passes the staged-merge result); "
+                             "defaults to <staging>/contracts.json")
     args = parser.parse_args()
     try:
-        print(validate(args.staging, args.approved, args.repo, args.current_version))
+        print(validate(args.staging, args.approved, args.repo,
+                       args.current_version, args.contracts))
     except ValueError as exc:
         print(f"SPEC DELTA FAIL: {exc}", file=sys.stderr)
         return 1
