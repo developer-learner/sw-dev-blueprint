@@ -236,6 +236,18 @@ if [ -n "$S5_FILES" ]; then
     || die "S5 rejected: state-changing AC(s) without 'such that' post-condition clause — every AC that spawns/terminates/kills/unloads/evicts/deletes/releases/clears/cancels MUST name an observable check"
 fi
 
+# --- D-136: PRD additive-only guard ------------------------------------------
+# The PRD is the standing product record; a milestone adds to it, never
+# silently drops from it. A staged PRD must carry the standing product capsule
+# unchanged and retain every historical AC id — a vanished criterion is either
+# an accident or an unrecorded supersession, and supersessions go through the
+# ERD-DELTA (D-107), which keeps the id. Runs only over an existing PRD (v>1);
+# fires in --diff too, so the CEO never previews a lossy PRD.
+if [ -f "$IN/PRD.md" ] && [ -f "$APPROVED/PRD.md" ]; then
+  python3 scripts/check-prd-additive.py "$APPROVED/PRD.md" "$IN/PRD.md" \
+    || die "PRD additive guard rejected the delta (D-136) — a staged PRD must carry the standing product capsule and every historical AC id; record supersessions in ERD-DELTA.md, do not delete the criterion"
+fi
+
 # --- Sanity-check incoming contracts against the schema's structural core ---
 if [ -f "$IN/contracts.json" ]; then
   python3 - "$IN/contracts.json" "$NEW" <<'PYEOF' || exit 1
@@ -262,6 +274,27 @@ if errs:
 PYEOF
 fi
 
+# --- D-136: staged contracts merge (PRODUCER, never authority) ---------------
+# contracts.json enters as a STAGED MERGE ARTIFACT, not a full-file
+# replacement: the TPM stages only the changed/new id-array entries (each
+# `file`-pinned) and contracts-merge.py reconstructs the full contracts.json by
+# overlaying them onto the standing file, proving mechanically that it touched
+# nothing it did not name (byte-identical carried remainder; a staged entry
+# identical to standing fails closed). Everything downstream — D-56, INV-4, the
+# D-78 preflight, the DELTA, the apply, the manifest — reads the MERGED file, so
+# the merge is transparent: the gates see the same full contracts a return
+# would have produced. At v1 (no standing) the staged file IS the full spec, so
+# no merge runs. Fires before --diff prints, so the CEO never previews a merge
+# the pipeline will reject.
+MERGED_CONTRACTS="$IN/contracts.json"
+if [ -f "$IN/contracts.json" ] && [ "$V" -gt 0 ] && [ -f "$APPROVED/contracts.json" ]; then
+  mkdir -p .pipeline-state
+  MERGED_CONTRACTS=".pipeline-state/refreeze-merged-contracts.json"
+  python3 scripts/contracts-merge.py "$APPROVED/contracts.json" "$IN/contracts.json" \
+    > "$MERGED_CONTRACTS" \
+    || die "staged contracts merge rejected (D-136) — see the id named above; the TPM stages only changed/new entries onto the standing contracts.json"
+fi
+
 # --- D-56: declared externals must carry captured reality ---
 # Every contracts.externals entry names a capture (raw probe output recorded
 # from the REAL dependency). A freeze that declares an external without its
@@ -269,7 +302,7 @@ fi
 # — and is rejected here. Staged captures nobody references are also
 # rejected (dead weight in the frozen spec).
 EXT_CONTRACTS="$APPROVED/contracts.json"
-[ -f "$IN/contracts.json" ] && EXT_CONTRACTS="$IN/contracts.json"
+[ -f "$IN/contracts.json" ] && EXT_CONTRACTS="$MERGED_CONTRACTS"
 if [ -f "$EXT_CONTRACTS" ]; then
   SWBP_IN="$IN" SWBP_APPROVED="$APPROVED" python3 - "$EXT_CONTRACTS" <<'PYD56' || exit 1
 import json, os, sys
@@ -316,7 +349,7 @@ mkdir -p "$PREVIEW/tests"
 [ -d "$IN/tests" ] && cp -R "$IN/tests/." "$PREVIEW/tests/"
 for f in $REMOVED_FILES; do rm -f "$PREVIEW/$f"; done   # preview reflects the post-delta suite
 INV4_CONTRACTS="$APPROVED/contracts.json"
-[ -f "$IN/contracts.json" ] && INV4_CONTRACTS="$IN/contracts.json"
+[ -f "$IN/contracts.json" ] && INV4_CONTRACTS="$MERGED_CONTRACTS"
 python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
   || die "INV-4 rejected the delta — fix the tests or lock the surface in contracts.json, then restage"
 
@@ -344,7 +377,7 @@ python3 scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
 # provable from the spec alone, so it is proved HERE, before the human reads
 # the diff — in --diff mode too, so the CEO never reviews a doomed delta.
 if [ -f "$IN/contracts.json" ]; then
-  python3 scripts/validate-plan.py --spec-preflight "$APPROVED/contracts.json" "$IN/contracts.json" \
+  python3 scripts/validate-plan.py --spec-preflight "$APPROVED/contracts.json" "$MERGED_CONTRACTS" \
     || die "satisfiability preflight rejected the delta (D-78) — add the named implementing file(s) to contracts.files (or fix the entry_point) and restage"
 fi
 
@@ -382,7 +415,11 @@ show_diff() {  # $1 current-path  $2 incoming-path
   for f in $CHANGED_DOCS; do
     echo ""
     echo "--- $APPROVED/$f ---"
-    show_diff "$APPROVED/$f" "$IN/$f"
+    if [ "$f" = "contracts.json" ]; then
+      show_diff "$APPROVED/$f" "$MERGED_CONTRACTS"   # D-136: preview the merged result, not the delta
+    else
+      show_diff "$APPROVED/$f" "$IN/$f"
+    fi
   done
   for f in $CHANGED_TEST_FILES; do
     echo ""
@@ -429,7 +466,7 @@ EXT_COUNT=$(SWBP_C="$EXT_CONTRACTS" python3 -c \
   "import json,os; print(len(json.load(open(os.environ['SWBP_C'])).get('externals') or []))" \
   2>/dev/null || echo 0)
 if [ "$EXT_COUNT" -eq 0 ]; then
-  _http_hits=$( { grep -rlE 'https?://' "$IN/tests" "$IN/contracts.json" 2>/dev/null || true; } | head -5)
+  _http_hits=$( { grep -rlE 'https?://' "$IN/tests" "$MERGED_CONTRACTS" 2>/dev/null || true; } | head -5)
   if [ -n "$_http_hits" ]; then
     echo ""
     echo "  WARNING (D-56): staged artifacts reference http(s):// URLs but the"
@@ -514,7 +551,7 @@ fi
 OLD_NODEIDS=$(cat "$APPROVED/test-nodeids" 2>/dev/null || true)
 DELTA_CONTRACTS=""
 if [ -f "$IN/contracts.json" ]; then
-  DELTA_CONTRACTS=$(python3 - "$APPROVED/contracts.json" "$IN/contracts.json" <<'PYEOF'
+  DELTA_CONTRACTS=$(python3 - "$APPROVED/contracts.json" "$MERGED_CONTRACTS" <<'PYEOF'
 import json, sys
 from pathlib import Path
 old_p, new_p = sys.argv[1], sys.argv[2]
@@ -578,7 +615,11 @@ done
 
 # --- Apply ---
 for f in $CHANGED_DOCS; do
-  cp "$IN/$f" "$APPROVED/$f"
+  if [ "$f" = "contracts.json" ]; then
+    cp "$MERGED_CONTRACTS" "$APPROVED/$f"   # D-136: install the merged full file
+  else
+    cp "$IN/$f" "$APPROVED/$f"
+  fi
 done
 if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then
   rm -f "$APPROVED/ERD-DELTA.md"
@@ -738,7 +779,7 @@ fi
 # (the D-75 marker above — then the check passes for the right reason and the
 # warning is the verdict, not a halt).
 if [ "$CONTRACTS_STAGED" = "1" ] && [ -f "$IN/contracts.json" ]; then
-  NEW_SMOKE=$(python3 - ".pipeline-state/refreeze-old-contracts.json" "$IN/contracts.json" <<'PYEOF'
+  NEW_SMOKE=$(python3 - ".pipeline-state/refreeze-old-contracts.json" "$MERGED_CONTRACTS" <<'PYEOF'
 import json, sys
 old = json.load(open(sys.argv[1])).get("smoke_checks", {})
 new = json.load(open(sys.argv[2])).get("smoke_checks", {})

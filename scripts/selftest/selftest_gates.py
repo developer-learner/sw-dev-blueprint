@@ -3115,6 +3115,23 @@ def v51_new(files):
     }
 
 
+def v51_incoming_partial(files):
+    """D-136 staged-merge shape of v51_new: stage ONLY the new catalog route
+    (the carried GET /api/v1/models entry rides from standing, and re-staging
+    it byte-identical would trip the merge's touched-unchanged guard). The
+    merged result equals v51_new, so the D-78 preflight still fires on the
+    catalog route whose implementing file is outside the inventory."""
+    return {
+        "erd_version": 2,
+        "files": files,
+        "entry_points": [],
+        "routes": [
+            {"id": "route:GET /api/v1/models/catalog",
+             "method": "GET", "path": "/api/v1/models/catalog",
+             "file": "src/api/models.py"}],
+    }
+
+
 def test_preflight_v51_sibling_file_outside_inventory_fails(tmp_path):
     """The exact v51 shape: new route, registered nowhere, whose path-sibling
     (GET /api/v1/models) is registered in a file absent from contracts.files.
@@ -3849,7 +3866,8 @@ def refreeze_scripts(repo):
     for name in ("validate-plan.py", "check-test-surface.py",
                  "check-swallowed-errors.py", "check-spec-delta.py",
                  "check-ac-postconditions.py", "check-test-direction.py",
-                 "refreeze_delta.py"):
+                 "refreeze_delta.py", "contracts-merge.py",
+                 "check-prd-additive.py"):
         (repo / "scripts" / name).write_bytes((SCRIPTS / name).read_bytes())
     (repo / "scripts" / ".approved" / "incoming"
      / "ERD-DELTA.md").write_text(VALID_ERD_DELTA)
@@ -3865,7 +3883,7 @@ def test_refreeze_diff_mode_runs_preflight(stageable_repo):
     (repo / "scripts" / ".approved" / "contracts.json").write_text(
         json.dumps(V51_OLD))
     (repo / "scripts" / ".approved" / "incoming" / "contracts.json").write_text(
-        json.dumps(v51_new(["src/api/chat.py"])))
+        json.dumps(v51_incoming_partial(["src/api/chat.py"])))
     r = _run_refreeze_diff(repo)
     assert r.returncode != 0, (r.stdout, r.stderr)
     combined = r.stdout + r.stderr
@@ -5390,6 +5408,8 @@ def freezable_repo(tmp_path):
     for name in (
         "refreeze.sh",
         "refreeze_delta.py",
+        "contracts-merge.py",
+        "check-prd-additive.py",
         "check-test-surface.py",
         "spec_artifacts.py",
         "check-spec-delta.py",
@@ -5566,6 +5586,167 @@ def test_refreeze_ui_change_reaches_delta(freezable_repo):
     assert "ui:new-badge" in delta["changed_contract_ids"], delta
 
 
+# --- D-136: staged contracts merge + PRD additive guard ----------------------
+# contracts.json enters refreeze as a staged merge artifact (only changed/new
+# id-array entries), reconstructed onto the standing file by contracts-merge.py
+# and proved to touch nothing it did not name. The four unit pins below are the
+# producer's contract; the two end-to-end pins arm it inside the real refreeze
+# path (Rule 6: a fixture-green producer and a suite-armed gate are separate
+# claims).
+
+_MERGE_STANDING = {
+    "erd_version": 1, "files": ["src/app.py"],
+    "entry_points": ["src.app:app"],
+    "routes": [
+        {"id": "route:GET /a", "method": "GET", "path": "/a",
+         "file": "src/app.py"},
+        {"id": "route:GET /b", "method": "GET", "path": "/b",
+         "file": "src/app.py"}],
+    "ui": [
+        {"id": "ui:x", "testid": "x", "description": "X"},
+        {"id": "ui:y", "testid": "y", "description": "Y"}],
+}
+
+
+def _run_merge(tmp_path, standing, staged):
+    (tmp_path / "standing.json").write_text(json.dumps(standing))
+    (tmp_path / "staged.json").write_text(json.dumps(staged))
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "contracts-merge.py"),
+         str(tmp_path / "standing.json"), str(tmp_path / "staged.json")],
+        capture_output=True, text=True,
+    )
+
+
+def test_contracts_merge_clean_preserves_carried(tmp_path):
+    """A delta naming two ids (one changed, one new) merges; every entry it
+    does NOT name stays byte-identical to standing — the untouched-remainder
+    checksum (D-136), the 15-routes/46-UI-carried-intact property in miniature."""
+    staged = {
+        "erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+        "routes": [
+            {"id": "route:GET /a", "method": "GET", "path": "/a",
+             "file": "src/api/v2.py"},                       # changed
+            {"id": "route:GET /c", "method": "GET", "path": "/c",
+             "file": "src/app.py"}],                         # new
+    }
+    r = _run_merge(tmp_path, _MERGE_STANDING, staged)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    merged = json.loads(r.stdout)
+    assert [e["id"] for e in merged["routes"]] == [
+        "route:GET /a", "route:GET /b", "route:GET /c"], merged
+    assert merged["routes"][0]["file"] == "src/api/v2.py"   # /a updated
+    assert merged["routes"][1] == _MERGE_STANDING["routes"][1]  # /b carried
+    assert merged["ui"] == _MERGE_STANDING["ui"]            # ui omitted -> carried
+    assert merged["entry_points"] == ["src.app:app"]        # unioned onto standing
+
+
+def test_contracts_merge_touched_unchanged_fails_closed(tmp_path):
+    """A staged entry byte-identical to standing changed nothing — the delta
+    must carry only genuine changes, so it fails closed with the id named."""
+    staged = {
+        "erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+        "routes": [
+            {"id": "route:GET /b", "method": "GET", "path": "/b",
+             "file": "src/app.py"}],                         # == standing /b
+    }
+    r = _run_merge(tmp_path, _MERGE_STANDING, staged)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "route:GET /b" in r.stderr, r.stderr
+    assert "byte-identical" in r.stderr, r.stderr
+
+
+def test_contracts_merge_carry_only_zero_churn(tmp_path):
+    """An empty changed set (the delta stages no id-array entries) merges to
+    zero churn: every carried array is byte-identical to standing."""
+    staged = {"erd_version": 2, "files": ["src/app.py"], "entry_points": []}
+    r = _run_merge(tmp_path, _MERGE_STANDING, staged)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    merged = json.loads(r.stdout)
+    assert merged["routes"] == _MERGE_STANDING["routes"], merged
+    assert merged["ui"] == _MERGE_STANDING["ui"], merged
+    assert merged["entry_points"] == ["src.app:app"], merged
+
+
+_PRD_STANDING = (
+    "# What\n\nAcme tracks widgets for teams.\n\n"
+    "## Acceptance criteria\n\n- AC-1: login works\n- AC-2: logout works\n"
+)
+
+
+def _run_prd_guard(tmp_path, standing, staged):
+    (tmp_path / "prd_standing.md").write_text(standing)
+    (tmp_path / "prd_staged.md").write_text(staged)
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "check-prd-additive.py"),
+         str(tmp_path / "prd_standing.md"), str(tmp_path / "prd_staged.md")],
+        capture_output=True, text=True,
+    )
+
+
+def test_prd_additive_guard_rejects_silent_removal(tmp_path):
+    """An additive PRD (adds AC-3, keeps the capsule + AC-1/AC-2) passes; a PRD
+    that silently drops a historical AC id fails closed naming it (supersessions
+    go through ERD-DELTA, D-136)."""
+    additive = _PRD_STANDING + "- AC-3: reset works\n"
+    ok = _run_prd_guard(tmp_path, _PRD_STANDING, additive)
+    assert ok.returncode == 0, (ok.stdout, ok.stderr)
+    dropped = (
+        "# What\n\nAcme tracks widgets for teams.\n\n"
+        "## Acceptance criteria\n\n- AC-1: login works\n"
+    )
+    bad = _run_prd_guard(tmp_path, _PRD_STANDING, dropped)
+    assert bad.returncode != 0, (bad.stdout, bad.stderr)
+    assert "AC-2" in bad.stderr, bad.stderr
+
+
+def _seed_standing_route(approved):
+    """Give the freezable fixture a non-empty standing routes array so the
+    merge has a carried entry to preserve (its default contracts are empty)."""
+    standing = json.loads((approved / "contracts.json").read_text())
+    standing["routes"] = [
+        {"id": "route:GET /a", "method": "GET", "path": "/a",
+         "file": "src/app.py"}]
+    (approved / "contracts.json").write_text(json.dumps(standing))
+
+
+def test_refreeze_merges_staged_contracts_delta(freezable_repo):
+    """End-to-end: standing carries route /a; a staged PARTIAL adds route /b;
+    the freeze applies and the INSTALLED contracts.json carries BOTH — the
+    carried entry survived and the delta entry merged in through the real
+    refreeze path (arms the wiring, not just the producer)."""
+    approved = freezable_repo / "scripts" / ".approved"
+    _seed_standing_route(approved)
+    (approved / "incoming" / "contracts.json").write_text(json.dumps({
+        "files": ["src/app.py"], "entry_points": [], "erd_version": 2,
+        "routes": [{"id": "route:GET /b", "method": "GET", "path": "/b",
+                    "file": "src/app.py"}],
+    }))
+    r = _run_refreeze_install(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    merged = json.loads((approved / "contracts.json").read_text())
+    assert [e["id"] for e in merged["routes"]] == [
+        "route:GET /a", "route:GET /b"], merged
+
+
+def test_refreeze_rejects_touched_unchanged_contract(freezable_repo):
+    """End-to-end negative: re-staging a carried entry byte-identical to
+    standing fails the freeze with the id named — the merge guard is armed
+    inside refreeze, not only in the standalone producer."""
+    approved = freezable_repo / "scripts" / ".approved"
+    _seed_standing_route(approved)
+    (approved / "incoming" / "contracts.json").write_text(json.dumps({
+        "files": ["src/app.py"], "entry_points": [], "erd_version": 2,
+        "routes": [{"id": "route:GET /a", "method": "GET", "path": "/a",
+                    "file": "src/app.py"}],   # identical to standing
+    }))
+    r = _run_refreeze_install(freezable_repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "D-136" in combined, combined
+    assert "route:GET /a" in combined, combined
+
+
 # --- refreeze.sh D-95 auto mode (retires the ceremonial y/N) -----------------
 # The pre-D-95 default prompted the CEO for y/N after every mechanical
 # preflight had already passed — the material verdict was the gates
@@ -5611,7 +5792,7 @@ def test_refreeze_auto_halts_on_preflight_fail(stageable_repo):
     (repo / "scripts" / ".approved" / "contracts.json").write_text(
         json.dumps(V51_OLD))
     (repo / "scripts" / ".approved" / "incoming" / "contracts.json").write_text(
-        json.dumps(v51_new(["src/api/chat.py"])))
+        json.dumps(v51_incoming_partial(["src/api/chat.py"])))
     r = subprocess.run(
         ["bash", "scripts/refreeze.sh", "scripts/.approved/incoming"],
         cwd=repo, capture_output=True, text=True,
