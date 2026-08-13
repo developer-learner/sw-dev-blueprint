@@ -5668,6 +5668,43 @@ def test_contracts_merge_carry_only_zero_churn(tmp_path):
     assert merged["entry_points"] == ["src.app:app"], merged
 
 
+def test_contracts_merge_omitted_scalars_carry(tmp_path):
+    """D-136's remainder check extends to the scalar accumulators: an
+    artifact that omits no_edit_files/externals/test_mapping/smoke_checks
+    carries the standing values intact — a silent omission must not strip
+    the frozen spec of coder protections, captures, test pins, or smoke
+    checks when a behavioural freeze forgets to restate them."""
+    standing = dict(_MERGE_STANDING)
+    standing.update({
+        "no_edit_files": ["src/app.py"],
+        "externals": [{"id": "external:db", "probe": "probe",
+                       "capture": "captures/db.json"}],
+        "test_mapping": {"tests/test_app.py::test_x": "src/app.py"},
+        "smoke_checks": {"src/app.py": "grep health"},
+    })
+    staged = {"erd_version": 2, "files": ["src/app.py"], "entry_points": []}
+    r = _run_merge(tmp_path, standing, staged)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    merged = json.loads(r.stdout)
+    assert merged["no_edit_files"] == standing["no_edit_files"]
+    assert merged["externals"] == standing["externals"]
+    assert merged["test_mapping"] == standing["test_mapping"]
+    assert merged["smoke_checks"] == standing["smoke_checks"]
+
+
+def test_contracts_merge_explicit_empty_clears_scalar(tmp_path):
+    """The only way to clear a carried accumulator is to stage it EXPLICITLY
+    empty — an intentional retirement stays expressible (D-136 shape)."""
+    standing = dict(_MERGE_STANDING)
+    standing["smoke_checks"] = {"src/app.py": "grep health"}
+    staged = {"erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+              "smoke_checks": {}}
+    r = _run_merge(tmp_path, standing, staged)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    merged = json.loads(r.stdout)
+    assert merged["smoke_checks"] == {}
+
+
 _PRD_STANDING = (
     "# What\n\nAcme tracks widgets for teams.\n\n"
     "## Acceptance criteria\n\n- AC-1: login works\n- AC-2: logout works\n"

@@ -30,9 +30,12 @@ the standing contracts.json and verifies the merge MECHANICALLY, fail-closed:
     symbols appended) so INV-4 still covers carried tests; the merged file's
     entry_points then face the existing deterministic slice rule (D-120).
 
-Everything else in the staged partial (files, erd_version, changed_files,
-no_edit_files, test_mapping, smoke_checks, externals) is a per-delta
-declaration re-stated at every freeze and is taken from the delta as-is.
+Everything else splits by kind: files/erd_version are required restatements
+(the refreeze sanity check dies if omitted) and changed_files is a transient
+per-freeze declaration; the carried accumulators (no_edit_files, externals,
+test_mapping, smoke_checks) merge like the id-arrays do — omitted means
+carried byte-identical from standing, staged explicit-empty is the only way
+to clear them (D-136's remainder checksum applied to the scalar surface).
 
 The merge is a PRODUCER, never an authority: the merged file it emits still
 faces every existing freeze gate (check-spec-delta, check-test-surface,
@@ -79,11 +82,22 @@ def main() -> int:
     standing = load(sys.argv[1])
     staged = load(sys.argv[2])
 
-    # Per-delta scalars (files/erd_version/changed_files/no_edit_files/
-    # test_mapping/smoke_checks/externals) come from the delta verbatim; the
-    # id-arrays and entry_points below overwrite their delta values with the
-    # merged result.
+    # Scalar keys split two ways:
+    #   * required restatements — files and erd_version: the refreeze sanity
+    #     check demands them on the staged file, dying before this producer
+    #     runs if omitted; changed_files is a per-freeze TRANSIENT
+    #     declaration (carrying the previous freeze's would be a lie).
+    #   * carried accumulators — no_edit_files, externals, test_mapping,
+    #     smoke_checks: D-136's byte-identical remainder extends to them. An
+    #     artifact that omits one carries the standing value intact; a
+    #     staged EXPLICIT empty ([]/{}) is the only way to clear it. A
+    #     silent omission must not strip the frozen spec of its coder
+    #     protections, external captures, test pins, or smoke checks just
+    #     because a behavioural freeze forgot to restate them.
     merged = dict(staged)
+    for key in ("no_edit_files", "externals", "test_mapping", "smoke_checks"):
+        if key not in merged and key in standing:
+            merged[key] = standing[key]
 
     for key in MERGE_KEYS:
         standing_entries = standing.get(key) or []
