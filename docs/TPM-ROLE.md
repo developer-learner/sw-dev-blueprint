@@ -85,6 +85,15 @@ This is what moved up the ladder and why the role exists at frontier tier:
   inventory), `entry_points`, `routes`, `schemas`, `errors`, each with an
   `id`, plus `erd_version` matching the version being frozen. This is what
   the plan validator and the INV-4 test-surface check enforce against.
+  **Stage it as a delta, not the whole file (D-136).** On every freeze after
+  v1, `contracts.json` is a STAGED MERGE ARTIFACT: include only the entries
+  this milestone CHANGES or ADDS (each `file`-pinned per D-120), plus the
+  per-delta scalars (`files`, `erd_version`, `changed_files`). Omit every
+  unchanged carried entry — `refreeze.sh` merges your delta onto the standing
+  contracts, and re-staging an entry byte-identical to standing fails closed
+  with its id named. Do NOT reproduce the accumulated routes/schemas/errors/ui
+  you did not touch. The v1 initial freeze is the sole exception: it has no
+  standing to merge onto, so it carries the complete contracts.
 - **Externals are captured, never imagined (D-56).** If the spec touches any
   external interface — a third-party API, a model's streaming format, a wire
   protocol — you do not get to assume its shape. Declare it in
@@ -189,7 +198,10 @@ advisory was retired, D-115).
 Deliver all artifacts as complete files (never fragments) in the staging
 layout `docs/ESCALATION.md` specifies: `PRD.md`, `ERD.md`,
 `ERD-DELTA.md` (required for behavioral deltas), `contracts.json`, `REMOVED`,
-`tests/<...>` (test modules and frozen fixtures), and `captures/<...>`.
+`tests/<...>` (test modules and frozen fixtures), and `captures/<...>`. The
+one exception is `contracts.json`, which after v1 carries only its changed/new
+entries (the staged merge delta above, D-136) — never the full accumulated
+file.
 
 **Delivery format (mandatory):** wrap every artifact in sentinels, exactly —
 
