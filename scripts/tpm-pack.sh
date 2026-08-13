@@ -120,6 +120,72 @@ sys.stdout.write(output)
 PY
 }
 
+generate_delta_slice() {
+  python3 - "$1" <<'PY'
+"""Strip the execution-side decomposition from the ERD-DELTA before it reaches
+the TPM bundle. Starting intake of the NEXT feature does not need the CURRENT
+milestone's coder briefs, DAG, or task scheduling (~8 KB of dead weight); the
+TPM re-derives all of that when it authors the next delta. Keep exactly the
+spec-side content: ACs, supersessions, changed files, test-to-file mapping.
+
+Pack-only: the execution lane (orchestrate.sh plan assembly) still reads the
+full ERD-DELTA.md on disk — this view is generated into a temp file for the
+bundle and never written back."""
+import re
+import sys
+from pathlib import Path
+
+try:
+    text = Path(sys.argv[1]).read_text()
+except OSError:
+    sys.exit(1)
+
+kept: list[str] = []
+in_briefs = False
+for line in text.splitlines(keepends=True):
+    # Drop the whole "## Coder briefs (verbatim)" section (heading through the
+    # next top-level heading or EOF).
+    if re.match(r"^##\s+Coder briefs \(verbatim\)\s*$", line):
+        in_briefs = True
+        continue
+    if in_briefs:
+        if re.match(r"^##\s+", line):
+            in_briefs = False  # a new section resumes normal handling
+        else:
+            continue
+    # Drop DAG scheduling wherever it sits: `A` depends on `B` statements and
+    # any Task-order chain (parser forms in validate-plan.py:_parse_delta_dag).
+    if re.search(r"`[^`]+`\s+depends on\s+`[^`]+`", line):
+        continue
+    if "Task order:" in line:
+        continue
+    kept.append(line)
+
+# Second pass: drop any "## " heading whose body is now empty — a dedicated
+# DAG heading emptied above leaves an orphan title otherwise. The kept spec
+# sections (ACs, supersessions "None.", changed files, mapping) always carry
+# content, so this only removes headings the strip hollowed out.
+lines = kept
+out: list[str] = []
+i = 0
+while i < len(lines):
+    if re.match(r"^##\s+", lines[i]):
+        j = i + 1
+        while j < len(lines) and not re.match(r"^##\s+", lines[j]):
+            j += 1
+        if not "".join(lines[i + 1:j]).strip():
+            i = j  # heading + empty body: skip both
+            continue
+    out.append(lines[i])
+    i += 1
+
+result = re.sub(r"\n{3,}", "\n\n", "".join(out)).rstrip("\n") + "\n"
+if not result.strip():
+    sys.exit(1)
+sys.stdout.write(result)
+PY
+}
+
 bundle() {
   cat <<'HDR'
 You are the TPM for this project. Your job description and working context
@@ -157,7 +223,17 @@ HDR
         echo "tpm-pack: standing summary generation failed — shipped the full standing ERD" >&2
       fi
       rm -f "$summary"
-      emit "$APPROVED/ERD-DELTA.md"
+      # D-38 pack-only: strip the execution-side coder briefs / DAG / task
+      # scheduling — irrelevant for starting TPM intake of the next feature.
+      # Generation failure falls back to the full delta loudly (stderr).
+      delta_slice="$(mktemp "${TMPDIR:-/tmp}/erd-delta-slice.XXXXXX")"
+      if generate_delta_slice "$APPROVED/ERD-DELTA.md" > "$delta_slice" 2>/dev/null; then
+        emit "$delta_slice" "$APPROVED/ERD-DELTA.md"
+      else
+        emit "$APPROVED/ERD-DELTA.md"
+        echo "tpm-pack: ERD-DELTA slice generation failed — shipped the full delta" >&2
+      fi
+      rm -f "$delta_slice"
     else
       [ -f "$APPROVED/ERD.md" ] && emit "$APPROVED/ERD.md"
     fi

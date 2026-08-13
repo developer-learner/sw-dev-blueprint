@@ -30,6 +30,7 @@ mkdir -p scripts/schemas tasks .opencode/prompts prompts
 cp "$REPO/scripts/validate-plan.py" scripts/
 cp "$REPO/scripts/schemas/plan.schema.json" scripts/schemas/
 : > .opencode/prompts/em.md
+: > .opencode/prompts/em-plan.md
 
 # Fake EM: replay replies/N in call order; keep each prompt for assertions.
 cat > scripts/llm-call.sh <<'STUB'

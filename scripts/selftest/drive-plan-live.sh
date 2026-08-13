@@ -38,6 +38,7 @@ cp "$REPO/scripts/standing-summary.py" scripts/
 cp "$REPO/scripts/contracts-delta.py" scripts/
 # The real EM brief and the real llm-call transport — no stub, no fake.
 cp "$REPO/.opencode/prompts/em.md" .opencode/prompts/em.md
+cp "$REPO/.opencode/prompts/em-plan.md" .opencode/prompts/em-plan.md
 cp "$REPO/scripts/llm-call.sh" scripts/llm-call.sh
 chmod +x scripts/llm-call.sh
 

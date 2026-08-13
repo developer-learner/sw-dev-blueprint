@@ -714,11 +714,21 @@ build_context() {
 em_call() {
   local out="$1" schema="$2" instr="$3"; shift 3
   local phase_start; phase_start=$(git rev-parse HEAD)
+  # Plan emission ships em.md PLUS the em-plan.md block (the plan-emission
+  # requirements live there since the prompt split); diagnosis calls ship
+  # em.md alone. The combined file lands inside .pipeline-state, which the
+  # run lifecycle owns. Missing em-plan.md fails the cat loudly (set -e) —
+  # the split em.md must never reach the plan call without its block.
+  local sys_prompt=".opencode/prompts/em.md"
+  if [[ "$schema" == *plan.schema.json ]]; then
+    sys_prompt="$LOG_DIR/em-plan.sys"
+    cat .opencode/prompts/em.md .opencode/prompts/em-plan.md > "$sys_prompt"
+  fi
   write_state phase em
   mark "em-call start -> $out"
   { printf '%s\n' "$instr"; build_context "$@"; } \
     | tee "$LOG_DIR/em-last.prompt" \
-    | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh em .opencode/prompts/em.md \
+    | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh em "$sys_prompt" \
         --schema "$schema" --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/em-last.raw" 2> "$LOG_DIR/em-last.err" \
     || { cat "$LOG_DIR/em-last.err" >&2
