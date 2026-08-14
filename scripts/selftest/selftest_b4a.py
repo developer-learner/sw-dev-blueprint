@@ -223,7 +223,7 @@ def test_b4a_tpm_pack_generator_failures_warn_and_ship_full_sources(
     assert "DISTINCT_ACCUMULATED_ARCHITECTURE" in result.stdout
     assert '"id": "route:old"' in result.stdout
     assert "standing summary generation failed" in result.stderr
-    assert "contracts slice generation failed" in result.stderr
+    assert "contracts index generation failed" in result.stderr
 DELTA_WITH_DECOMPOSITION = """\
 # ERD-DELTA M99
 
@@ -287,6 +287,55 @@ def _build_repo(tmp_path):
     return repo
 
 
+# A contracts.json exercising every family in both pinned and unpinned shapes
+# (D-141): the index must list ALL of it with pins; bodies must follow only
+# the requested owning files.
+CONTRACTS_FIXTURE = {
+    "files": ["src/api/chat.py", "src/static/app.js"],
+    "smoke_checks": [],
+    "test_mapping": {},
+    "entry_points": ["src.main:app", "src.api.chat:create_chat"],
+    "routes": [
+        {"id": "route:POST /api/v1/chat", "method": "POST",
+         "path": "/api/v1/chat", "file": "src/api/chat.py"},
+        {"id": "route:GET /", "method": "GET", "path": "/"},
+    ],
+    "schemas": [
+        {"id": "schema:ChatRequest",
+         "fields": {"message": "string",
+                    "history": "array of HistoryEntry, optional, default []"}},
+        {"id": "schema:Widget", "fields": {"label": "string", "count": "integer"},
+         "file": "src/static/app.js"},
+    ],
+    "errors": [
+        {"id": "error:422-validation", "status": 422, "file": "src/api/chat.py"},
+    ],
+    "ui": [
+        {"id": "ui:message-input", "testid": "message-input",
+         "file": "src/static/app.js"},
+        {"id": "ui:unpinned-testid", "testid": "unpinned"},
+    ],
+}
+
+
+def _build_contracts_repo(tmp_path):
+    """_build_repo plus the REAL contracts-delta.py and a two-file pinned spec
+    so both D-141 stages run against the actual producer."""
+    repo = _build_repo(tmp_path)
+    shutil.copy(SCRIPTS / "contracts-delta.py", repo / "scripts" / "contracts-delta.py")
+    (repo / "scripts" / ".approved" / "contracts.json").write_text(
+        json.dumps(CONTRACTS_FIXTURE))
+    return repo
+
+
+def _contracts_region(bundle: str) -> str:
+    """The contracts.json CONTEXT FILE block of the packed bundle."""
+    marker = "=== CONTEXT FILE: scripts/.approved/contracts.json"
+    start = bundle.index(marker)
+    end = bundle.index("=== END CONTEXT FILE ===", start)
+    return bundle[start:end]
+
+
 def _delta_region(bundle: str) -> str:
     """The ERD-DELTA CONTEXT FILE block of the packed bundle."""
     marker = "=== CONTEXT FILE: scripts/.approved/ERD-DELTA.md ==="
@@ -329,3 +378,82 @@ def test_tpm_pack_strip_is_pack_only_orchestrate_reads_full_delta():
     assert "generate_delta_slice" not in orch
     pack = (SCRIPTS / "tpm-pack.sh").read_text()
     assert "generate_delta_slice" in pack
+
+
+def test_tpm_pack_stage1_ships_complete_interface_index_not_bodies(tmp_path):
+    """D-141 stage 1: the contracts block is the COMPLETE interface index —
+    every family's ids with pins, schema field NAMES only, never bodies, and
+    never the standing inventory array."""
+    repo = _build_contracts_repo(tmp_path)
+    r = subprocess.run(
+        ["bash", "scripts/tpm-pack.sh"], cwd=str(repo),
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    region = _contracts_region(r.stdout)
+
+    # complete: every interface of every family is visible, pinned or not
+    for token in (
+        "src.main:app", "src.api.chat:create_chat",
+        "route:POST /api/v1/chat", "route:GET /",
+        "schema:ChatRequest", "schema:Widget",
+        "error:422-validation",
+        "ui:message-input", "ui:unpinned-testid",
+        '"file":"(unpinned)"', '"counts"', '"kind":"interface-index (D-141)"',
+    ):
+        assert token in region, token
+
+    # interface = names + pins: schema field names are listed, body types not
+    assert '"fields":["message","history"]' in region
+    assert "array of HistoryEntry, optional, default []" not in region
+    assert '"count":"integer"' not in region
+
+    # the standing accumulated inventory is not an interface — no files list
+    assert '"files":["src/api/chat.py"' not in region
+
+    # the bundle tells the TPM how to request stage-2 bodies
+    assert "tpm-pack.sh --contracts-for" in r.stdout
+
+
+def test_tpm_pack_contracts_for_ships_bodies_for_named_files_only(tmp_path):
+    """D-141 stage 2: --contracts-for delivers full bodies of exactly the
+    requested owning files plus the conservative unpinned carries — and never
+    bodies of unrequested owning files."""
+    repo = _build_contracts_repo(tmp_path)
+    r = subprocess.run(
+        ["bash", "scripts/tpm-pack.sh", "--contracts-for", "src/api/chat.py"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "stage 2 of 2" in r.stdout
+    region = _contracts_region(r.stdout)
+    assert "full bodies" in region
+    assert "array of HistoryEntry, optional, default []" in region  # unpinned carry
+    assert '"message":"string"' in region
+    assert "route:POST /api/v1/chat" in region  # pinned to chat.py
+    assert "src.api.chat:create_chat" in region  # self-pins to chat.py
+    assert "src.main:app" not in region          # self-pins to main.py — not requested
+    assert "schema:Widget" not in region        # pinned to app.js — not requested
+    assert "ui:message-input" not in region
+    assert "interface-index" not in region
+
+    r2 = subprocess.run(
+        ["bash", "scripts/tpm-pack.sh", "--contracts-for", "src/static/app.js"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert r2.returncode == 0, (r2.stdout, r2.stderr)
+    region2 = _contracts_region(r2.stdout)
+    assert '"count":"integer"' in region2       # Widget body present
+    assert "route:POST /api/v1/chat" not in region2  # pinned to chat.py
+    assert "error:422-validation" not in region2
+
+
+def test_tpm_pack_contracts_for_requires_named_files(tmp_path):
+    """--contracts-for without files is a usage error, not an empty slice."""
+    repo = _build_contracts_repo(tmp_path)
+    r = subprocess.run(
+        ["bash", "scripts/tpm-pack.sh", "--contracts-for"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert r.returncode != 0
+    assert "--contracts-for needs at least one file" in r.stderr
