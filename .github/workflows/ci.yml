@@ -25,7 +25,12 @@ jobs:
       - name: Lint control-plane Python
         run: ruff check --isolated --select E4,E7,E9,F scripts/
       - name: Gate-script self-tests
-        run: pytest scripts/selftest/selftest_gates.py scripts/selftest/selftest_b4a.py -q
+        # Glob every selftest_*.py — NOT the bare directory: pytest's default
+        # python_files is test_*.py, so `pytest scripts/selftest/` collects
+        # nothing here. The glob is drift-proof: a new selftest suite is picked
+        # up automatically instead of being silently omitted from CI (the
+        # milestone-trim/context-budget/mypy-cache suites were dark this way).
+        run: pytest scripts/selftest/selftest_*.py -q
 
   test:
     runs-on: ubuntu-latest
