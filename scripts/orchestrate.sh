@@ -552,53 +552,13 @@ bash scripts/phase-gate.sh manifest HEAD
 [ -f "$APPROVED/frozen-manifest" ] || die "no frozen TPM spec — install PRD/ERD/contracts/tests via scripts/refreeze.sh"
 [ -f "$APPROVED/VERSION" ]         || die "$APPROVED/VERSION missing — run scripts/refreeze.sh"
 FROZEN_V=$(cat "$APPROVED/VERSION")
-# D-85: the external verdict. Placed after every free local check and before
-# the smoke test, so a red CI costs one bounded API call instead of a cold
-# model load.
+# D-85: the external verdict. Placed after every free local check; a red CI
+# costs one bounded API call instead of anything heavier. The D-55 EM round-
+# trip smoke is NOT here — it is lazy: it fires only inside em_call, just
+# before the first real EM call of a run that actually needs the EM (P1e /
+# board finding 6). A run whose plan is mechanically synthesized (B3) never
+# calls the EM at all and therefore spends zero model calls on probing.
 check_ci_health
-# D-55 round-trip smoke test: a bug in the model-call path is invisible to
-# static review — only a real round-trip catches it (correction log 2026-07-03).
-# Runs last in pre-flight: all free checks (hooksPath, clean tree, manifest)
-# pass before we spend a model call. The budget must absorb a COLD model
-# start — LM Studio loads the mapped model on first request, and a large
-# model takes minutes, not seconds (testchat M6: 30s budget, 122B EM, false
-# pre-flight failure).
-SMOKE_MAX_TIME="${SMOKE_MAX_TIME:-240}"
-echo "  LLM round-trip smoke test (budget ${SMOKE_MAX_TIME}s — cold model start counts)..."
-_smoke_sys=$(mktemp)
-printf 'You are a test probe. Reply with exactly the text the user sends.' > "$_smoke_sys"
-# D-55/P1e: the smoke is seat-specific — resolve the model the EM seat is
-# mapped to (same resolution path as llm-call.sh: env, else models.env) and
-# pass --expect-model so the probe fails closed when the server answers with
-# a DIFFERENT model than the seat's mapping (model-reload drift, D-62 class).
-_em_model="${SWBP_EM_MODEL:-}"
-if [ -z "$_em_model" ] && [ -f "$HOME/.config/sw-dev-blueprint/models.env" ]; then
-  # shellcheck disable=SC1090
-  . "$HOME/.config/sw-dev-blueprint/models.env"
-  _em_model="${SWBP_EM_MODEL:-}"
-fi
-# An unresolvable mapping is llm-call's own hard halt (D-52); no flag then.
-[ -n "$_em_model" ] && echo "  EM seat: expect model '$_em_model'"
-if ! SMOKE_REPLY=$(printf 'SMOKE_OK' | scripts/llm-call.sh em "$_smoke_sys" --max-time "$SMOKE_MAX_TIME" ${_em_model:+--expect-model "$_em_model"} 2>/dev/null); then
-  rm -f "$_smoke_sys"
-  die "LLM smoke test failed — llm-call.sh could not complete the trivial probe within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised; a seat mismatch means the mapped model is not the one answering)"
-fi
-rm -f "$_smoke_sys"
-[ -n "$SMOKE_REPLY" ] \
-  || die "LLM smoke test failed — llm-call.sh returned empty output for a trivial prompt within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised)"
-# D-62: LM Studio drift probe — any model reload resets instance config
-# (context window, thinking toggle, chat_template_kwargs). A thinking model
-# puts output in reasoning_content and leaves content empty, which breaks
-# every downstream parser. Check the smoke reply for the thinking-model
-# signature: content is empty or absent while reasoning tokens are present.
-# Also warn if the reply looks nothing like the echo (model misconfigured).
-case "$SMOKE_REPLY" in
-  ""|THINKING_MODEL)
-    die "LM Studio drift: model returned empty content (likely in thinking mode). Open LM Studio → model settings → disable Reasoning toggle → save as default, then retry." ;;
-esac
-if ! printf '%s' "$SMOKE_REPLY" | grep -q 'SMOKE_OK'; then
-  echo "  WARNING: smoke reply did not echo 'SMOKE_OK' — got '$(printf '%s' "$SMOKE_REPLY" | head -c 80)'. Model may be misconfigured (thinking mode, wrong model, stale instance config). Proceeding, but verify behavior."
-fi
 echo "OK (frozen spec v$FROZEN_V)"
 mark "pre-flight done (spec v$FROZEN_V)"
 
@@ -721,6 +681,59 @@ build_context() {
   done
 }
 
+# em_smoke_probe — D-55 round-trip smoke test, made LAZY (P1e / board finding 6).
+# The D-55 property is unchanged: a bug in the model-call path is invisible to
+# static review — only a real round-trip catches it (correction log 2026-07-03).
+# What changed is WHEN the probe fires: em_call invokes it via a type-guard
+# right before the first real EM call of the run, so a run that never needs the
+# EM (e.g. a milestone whose plan is mechanically synthesized, B3) spends zero
+# model calls on probing, and a red CI or a failing pre-flight costs nothing.
+# Idempotent: probes at most once per run (EM_PROBED marker). The budget must
+# absorb a COLD model start — LM Studio loads the mapped model on first request,
+# and a large model takes minutes, not seconds (testchat M6: 30s budget, 122B
+# EM, false pre-flight failure).
+em_smoke_probe() {
+  [ "${EM_PROBED:-0}" = "1" ] && return 0
+  EM_PROBED=1
+  local SMOKE_MAX_TIME="${SMOKE_MAX_TIME:-240}"
+  echo "  LLM round-trip smoke test (budget ${SMOKE_MAX_TIME}s — cold model start counts)..."
+  local _smoke_sys _em_model SMOKE_REPLY
+  _smoke_sys=$(mktemp)
+  printf 'You are a test probe. Reply with exactly the text the user sends.' > "$_smoke_sys"
+  # D-55/P1e: the smoke is seat-specific — resolve the model the EM seat is
+  # mapped to (same resolution path as llm-call.sh: env, else models.env) and
+  # pass --expect-model so the probe fails closed when the server answers with
+  # a DIFFERENT model than the seat's mapping (model-reload drift, D-62 class).
+  _em_model="${SWBP_EM_MODEL:-}"
+  if [ -z "$_em_model" ] && [ -f "$HOME/.config/sw-dev-blueprint/models.env" ]; then
+    # shellcheck disable=SC1090
+    . "$HOME/.config/sw-dev-blueprint/models.env"
+    _em_model="${SWBP_EM_MODEL:-}"
+  fi
+  # An unresolvable mapping is llm-call's own hard halt (D-52); no flag then.
+  [ -n "$_em_model" ] && echo "  EM seat: expect model '$_em_model'"
+  if ! SMOKE_REPLY=$(printf 'SMOKE_OK' | scripts/llm-call.sh em "$_smoke_sys" --max-time "$SMOKE_MAX_TIME" ${_em_model:+--expect-model "$_em_model"} 2>/dev/null); then
+    rm -f "$_smoke_sys"
+    die "LLM smoke test failed — llm-call.sh could not complete the trivial probe within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised; a seat mismatch means the mapped model is not the one answering)"
+  fi
+  rm -f "$_smoke_sys"
+  [ -n "$SMOKE_REPLY" ] \
+    || die "LLM smoke test failed — llm-call.sh returned empty output for a trivial prompt within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised)"
+  # D-62: LM Studio drift probe — any model reload resets instance config
+  # (context window, thinking toggle, chat_template_kwargs). A thinking model
+  # puts output in reasoning_content and leaves content empty, which breaks
+  # every downstream parser. Check the smoke reply for the thinking-model
+  # signature: content is empty or absent while reasoning tokens are present.
+  # Also warn if the reply looks nothing like the echo (model misconfigured).
+  case "$SMOKE_REPLY" in
+    ""|THINKING_MODEL)
+      die "LM Studio drift: model returned empty content (likely in thinking mode). Open LM Studio → model settings → disable Reasoning toggle → save as default, then retry." ;;
+  esac
+  if ! printf '%s' "$SMOKE_REPLY" | grep -q 'SMOKE_OK'; then
+    echo "  WARNING: smoke reply did not echo 'SMOKE_OK' — got '$(printf '%s' "$SMOKE_REPLY" | head -c 80)'. Model may be misconfigured (thinking mode, wrong model, stale instance config). Proceeding, but verify behavior."
+  fi
+}
+
 # em_call <out-file> <schema> <instruction> <context "label:path" ...>
 # Calls the EM once, validates the reply is well-formed JSON (the *semantic*
 # validation — schema, coverage, DAG — is validate-plan.py's job, unchanged),
@@ -728,6 +741,10 @@ build_context() {
 # server supports it; either way validate-plan.py is the real gate.
 em_call() {
   local out="$1" schema="$2" instr="$3"; shift 3
+  # D-55 lazy smoke: fires here (type-guarded so extracted selftest shells and
+  # any consumer without em_smoke_probe defined skip it) just before the first
+  # real EM call — the failure mode it guards is the model-call path itself.
+  type em_smoke_probe &>/dev/null && em_smoke_probe || true
   local phase_start; phase_start=$(git rev-parse HEAD)
   # Plan emission ships em.md PLUS the em-plan.md block (the plan-emission
   # requirements live there since the prompt split); diagnosis calls ship
