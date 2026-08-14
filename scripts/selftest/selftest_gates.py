@@ -1103,6 +1103,93 @@ def test_contracts_delta_missing_input_fails(tmp_path):
     assert r.returncode == 1
 
 
+def _run_contracts_delta_in(sources, tmp_path, env=None):
+    """Run contracts-delta.py in a tree where the contracts file shares a
+    directory with the given DELTA snapshots (real repos keep DELTA-vN.json
+    beside contracts.json under scripts/.approved)."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    for name, payload in sources.items():
+        (cwd / name).write_text(json.dumps(payload))
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "contracts-delta.py"),
+         str(cwd / "contracts.json")],
+        cwd=cwd, capture_output=True, text=True, env=env,
+    )
+
+
+def _pinned_contracts(files):
+    return {
+        "files": list(files),
+        # any_pinned true (D-120): entry carries a file pin
+        "routes": [{"id": f"route:{i}", "path": f"/{i}", "method": "GET",
+                    "file": f} for i, f in enumerate(files)],
+        "errors": [
+            {"id": "carried", "status": 500},
+        ],
+        "entry_points": ["src.main:app"],
+    }
+
+
+def test_contracts_delta_default_uses_newest_active_inventory(tmp_path):
+    """D-140: with a modern DELTA snapshot beside the contracts file, the
+    standalone default slices against ITS inventory_files — never the standing
+    contracts.files array."""
+    sources = {
+        "contracts.json": _pinned_contracts(["src/a.py", "src/b.py", "src/c.py"]),
+        "DELTA-v1.json": {"version": 1, "inventory_files": ["src/a.py"]},
+    }
+    r = _run_contracts_delta_in(sources, tmp_path)
+    assert r.returncode == 0, r.stderr
+    kept = json.loads(r.stdout)
+    assert kept["files"] == ["src/a.py", "src/b.py", "src/c.py"]
+    assert [e["id"] for e in kept["routes"]] == ["route:0"]
+    assert "route:1" not in r.stdout and "route:2" not in r.stdout
+
+
+def test_contracts_delta_modern_empty_inventory_keeps_no_standing_pins(tmp_path):
+    """v105 class: a consolidation snapshot with inventory_files: [] keeps NO
+    standing pinned entry — the slice is not the accumulated surface no matter
+    what contracts.files says. Unpinned carries still pass (D-120 conservative
+    carry)."""
+    sources = {
+        "contracts.json": _pinned_contracts(["src/a.py", "src/b.py"]),
+        "DELTA-v3.json": {"version": 3, "inventory_files": []},
+    }
+    r = _run_contracts_delta_in(sources, tmp_path)
+    assert r.returncode == 0, r.stderr
+    kept = json.loads(r.stdout)
+    assert kept["files"] == ["src/a.py", "src/b.py"]
+    assert not kept["routes"]
+    assert [e["id"] for e in kept["errors"]] == ["carried"]  # unpinned carry
+    assert "route:0" not in r.stdout and "route:1" not in r.stdout
+
+
+def test_contracts_delta_malformed_inventory_fails_closed(tmp_path):
+    """A modern snapshot whose inventory_files is not an array of strings never
+    silently re-slices against standing surface — it fails closed."""
+    sources = {
+        "contracts.json": _pinned_contracts(["src/a.py"]),
+        "DELTA-v2.json": {"version": 2, "inventory_files": "src/a.py"},
+    }
+    r = _run_contracts_delta_in(sources, tmp_path)
+    assert r.returncode == 1
+
+
+def test_contracts_delta_all_legacy_keeps_standing_default(tmp_path):
+    """D-140 backward compat: with only legacy DELTAs (no inventory_files) or
+    none at all, the historical contracts.files behavior is preserved."""
+    sources = {
+        "contracts.json": _pinned_contracts(["src/a.py", "src/b.py"]),
+        "DELTA-v1.json": {"version": 1, "changed_files": ["src/a.py"],
+                          "changed_contract_ids": []},
+    }
+    r = _run_contracts_delta_in(sources, tmp_path)
+    assert r.returncode == 0, r.stderr
+    kept = json.loads(r.stdout)
+    assert [e["id"] for e in kept["routes"]] == ["route:0", "route:1"]
+
+
 def test_route_check_fails_open_on_dynamic_path(repo):
     """A dynamically-built path is invisible to the AST scan — no false fire."""
     route_repo(repo, (

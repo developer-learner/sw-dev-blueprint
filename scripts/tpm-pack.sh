@@ -17,6 +17,9 @@
 # nothing the accumulated spec holds is hidden by the previous milestone's
 # inventory), and full bodies arrive only for the files the TPM names after
 # hearing the new feature's intent (stage-2: tpm-pack.sh --contracts-for).
+# Stage 1 also notes the EXECUTOR's active build inventory (D-140) — distinct
+# from the complete index — so the next feature is authored against active
+# scope, not the standing file list (a consolidation shows none).
 # Every missing or failed slice falls back to its full artifact with a stderr
 # warning — never a silent context loss.
 #
@@ -308,11 +311,43 @@ HDR
     contracts_slice="$(mktemp "${TMPDIR:-/tmp}/contracts-delta.XXXXXX")"
     if [ -f "$APPROVED/contracts.json" ] \
       && python3 scripts/contracts-delta.py --index "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null; then
+      active_inv="$(python3 - "$APPROVED" <<'PY'
+"""D-140 informational line: the EXECUTOR's active build inventory for the
+next feature's delta, distinct from the COMPLETE interface index above
+(D-141). Newest modern DELTA snapshot is authoritative; a consolidation is
+shown as none. All-legacy or absent -> print nothing (standing default)."""
+import json
+import sys
+from pathlib import Path
+approved = Path(sys.argv[1])
+newest = None
+for delta in sorted(approved.glob("DELTA-v*.json")):
+    newest = delta
+if newest is None:
+    sys.exit(0)
+try:
+    snap = json.loads(newest.read_text())
+except (OSError, json.JSONDecodeError):
+    sys.exit(0)
+if not isinstance(snap, dict) or "inventory_files" not in snap:
+    sys.exit(0)
+inv = snap.get("inventory_files")
+if not isinstance(inv, list) or not all(isinstance(s, str) for s in inv):
+    sys.exit(0)
+label = newest.name
+if not inv:
+    print(f"Active build inventory (D-140): none — {label} is a consolidation"
+          " carrying no build work; the next feature's delta declares its own files.")
+else:
+    print(f"Active build inventory (D-140): {', '.join(inv)} (from {label}).")
+PY
+)"
       emit "$contracts_slice" "$APPROVED/contracts.json — COMPLETE interface index (D-141: names + owning files only)"
       echo "The block above is the COMPLETE interface index (D-141): every interface in the accumulated"
       echo "spec, with its owning file (no bodies). If the next feature needs full bodies of specific"
       echo "files, reply naming them; the CEO will relay \`tpm-pack.sh --contracts-for <files>\` as a"
       echo "small stage-2 follow-up bundle."
+      [ -n "$active_inv" ] && echo && echo "$active_inv"
       echo
     else
       [ -f "$APPROVED/contracts.json" ] && emit "$APPROVED/contracts.json"

@@ -28,10 +28,14 @@ the TPM names after hearing the new feature's intent (tpm-pack.sh
 is D-120's no-silent-drop applied to the whole surface.
 
 Usage: contracts-delta.py [--index] [path-to-contracts.json] > slice.json
-SWBP_CONTRACT_FILES, when present, is the newline-delimited active inventory;
-otherwise contracts.files is the backward-compatible inventory source.
+SWBP_CONTRACT_FILES, when present, is the newline-delimited active inventory.
+Otherwise the default inventory source is D-140-driven: the newest modern
+DELTA snapshot (inventory_files-bearing) beside the contracts file is
+authoritative and may be empty (a consolidation keeps no standing pin);
+an all-legacy range falls back to the historical contracts.files.
 Exit 0 with the slice; exit 1 when the contracts file is missing, unreadable,
-or not the expected shape (the shell falls back to the full contracts file).
+not the expected shape, or the active-inventory snapshot is malformed (the
+shell falls back to the full contracts file — never a silent standing slice).
 """
 import json
 import os
@@ -121,6 +125,33 @@ def interface_index(contracts: dict) -> dict:
     return index
 
 
+def default_inventory(contracts_dir: Path, contracts: dict) -> list[str]:
+    """Standalone (no SWBP_CONTRACT_FILES) inventory source (D-140).
+
+    The newest DELTA-vN.json snapshot in the contracts' directory is
+    authoritative when it is modern (carries inventory_files); its exact list
+    is returned (possibly empty — a consolidation). If every retained delta is
+    legacy or none exists, fall back to the standing contracts.files, the
+    historical D-120 behavior. A malformed snapshot raises so the caller fails
+    closed instead of silently re-slicing against standing surface.
+    """
+    newest: Path | None = None
+    if contracts_dir.is_dir():
+        for delta in contracts_dir.glob("DELTA-v*.json"):
+            newest = delta
+    if newest is None:
+        return list(contracts.get("files", []))
+    snapshot = json.loads(newest.read_text())
+    if not isinstance(snapshot, dict) or "inventory_files" not in snapshot:
+        return list(contracts.get("files", []))
+    inventory = snapshot.get("inventory_files")
+    if not isinstance(inventory, list) or not all(
+        isinstance(item, str) for item in inventory
+    ):
+        raise ValueError(f"{newest.name}: inventory_files is not an array of strings")
+    return list(inventory)
+
+
 if INDEX_MODE:
     sys.stdout.write(
         json.dumps(interface_index(contracts), separators=(",", ":"), ensure_ascii=False) + "\n"
@@ -140,7 +171,18 @@ if "SWBP_CONTRACT_FILES" in os.environ:
         if line.strip()
     }
 else:
-    files = set(contracts.get("files", []))
+    # D-140: never slice against the standing accumulated contracts.files when
+    # the active inventory is available. A modern DELTA snapshot
+    # (inventory_files-bearing) beside the contracts file is authoritative for
+    # the standalone default — it may be empty (a consolidation carries no
+    # build work), in which case no standing pin is kept. All-legacy ranges
+    # (no modern snapshot anywhere) retain the historical contracts.files
+    # behavior. A malformed snapshot fails closed rather than silently
+    # reapplying the standing slice.
+    try:
+        files = set(default_inventory(path.parent, contracts))
+    except (OSError, json.JSONDecodeError, ValueError):
+        sys.exit(1)
 sliced = dict(contracts)
 for key in PINNED_KEYS:
     kept = []

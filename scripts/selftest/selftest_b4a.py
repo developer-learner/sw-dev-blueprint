@@ -457,3 +457,34 @@ def test_tpm_pack_contracts_for_requires_named_files(tmp_path):
     )
     assert r.returncode != 0
     assert "--contracts-for needs at least one file" in r.stderr
+
+
+def test_tpm_pack_stage1_reports_active_inventory(tmp_path):
+    """D-140: stage 1 notes the EXECUTOR's active build inventory distinct
+    from the COMPLETE interface index — a consolidation shows none, so the
+    next feature is authored against active scope, not the standing list."""
+    repo = _build_contracts_repo(tmp_path)
+
+    # consolidation snapshot: inventory_files empty -> pack says none
+    (repo / "scripts" / ".approved" / "DELTA-v105.json").write_text(
+        json.dumps({"version": 105, "inventory_files": []}))
+    r = subprocess.run(
+        ["bash", "scripts/tpm-pack.sh"], cwd=str(repo),
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "Active build inventory (D-140): none" in r.stdout
+    assert "DELTA-v105.json is a consolidation" in r.stdout
+    # the index stays COMPLETE regardless of the (empty) active inventory
+    assert '"kind":"interface-index (D-141)"' in _contracts_region(r.stdout)
+
+    # active snapshot with files -> names them, still no standing reintroduction
+    (repo / "scripts" / ".approved" / "DELTA-v106.json").write_text(
+        json.dumps({"version": 106,
+                    "inventory_files": ["src/api/chat.py"]}))
+    r2 = subprocess.run(
+        ["bash", "scripts/tpm-pack.sh"], cwd=str(repo),
+        capture_output=True, text=True,
+    )
+    assert r2.returncode == 0, (r2.stdout, r2.stderr)
+    assert "Active build inventory (D-140): src/api/chat.py" in r2.stdout
