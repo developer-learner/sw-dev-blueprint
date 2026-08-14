@@ -5,8 +5,8 @@ contracts.json accumulates every milestone's routes, schemas, and errors.
 The EM plans deltas against the current ERD-DELTA.md (authoritative, D-107);
 it needs contract bodies for the files this milestone touches, not the full
 accumulated load. Entries pin their owning file (schema "file" field, D-120):
-this generator ships pinned entries whose file is in this milestone's
-contracts.files inventory in full and carries every unpinned entry in full
+this generator ships pinned entries whose file is in this milestone's exact
+active inventory in full and carries every unpinned entry in full
 (a missing pin is a conservative carry, never a silent drop). Pinned entries
 outside the inventory are omitted entirely: this artifact is the in-scope
 contract body, not an index of accumulated interfaces. Entry points are
@@ -18,10 +18,13 @@ output is byte-identical to the input — the slice activates inertly the
 moment pins land.
 
 Usage: contracts-delta.py [path-to-contracts.json] > contracts-delta.json
+SWBP_CONTRACT_FILES, when present, is the newline-delimited active inventory;
+otherwise contracts.files is the backward-compatible inventory source.
 Exit 0 with the slice; exit 1 when the contracts file is missing, unreadable,
 or not the expected shape (the shell falls back to the full contracts file).
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -57,7 +60,13 @@ if not any_pinned:
     sys.stdout.write(raw)
     sys.exit(0)
 
-files = set(contracts.get("files", []))
+if "SWBP_CONTRACT_FILES" in os.environ:
+    files = {
+        line.strip() for line in os.environ["SWBP_CONTRACT_FILES"].splitlines()
+        if line.strip()
+    }
+else:
+    files = set(contracts.get("files", []))
 sliced = dict(contracts)
 for key in PINNED_KEYS:
     kept = []

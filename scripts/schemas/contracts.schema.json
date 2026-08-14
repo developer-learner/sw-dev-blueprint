@@ -17,11 +17,10 @@
   },
   "files": {
    "type": "array",
-   "minItems": 1,
    "items": {
     "type": "string"
    },
-   "description": "The ERD build inventory: every source file the feature requires, relative to repo root. The plan gate requires exactly one task per listed file \u2014 coverage failures surface at validation, not integration."
+   "description": "The exact current-freeze build inventory: every source file this behavioral change requires, relative to repo root. Empty means the freeze carries no behavioral build work and produces a zero-task plan."
   },
   "entry_points": {
    "type": "array",

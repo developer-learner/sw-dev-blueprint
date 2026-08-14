@@ -63,8 +63,8 @@ def load_plan(plan_path):
     except (OSError, json.JSONDecodeError) as exc:
         raise LedgerError(f"cannot read validated plan: {exc}") from exc
     tasks = plan.get("tasks") if isinstance(plan, dict) else None
-    if not isinstance(tasks, list) or not tasks:
-        raise LedgerError("validated plan has no tasks")
+    if not isinstance(tasks, list):
+        raise LedgerError("validated plan tasks is not an array")
     for task in tasks:
         task_id = task.get("id") if isinstance(task, dict) else None
         if not isinstance(task_id, str) or not SAFE_TASK_ID.fullmatch(task_id):

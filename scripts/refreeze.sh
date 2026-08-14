@@ -39,9 +39,9 @@
 #   PRD.md  ERD.md  ERD-DELTA.md  contracts.json
 #                                           -> installed to scripts/.approved/
 #                                              (ERD-DELTA.md is required for
-#                                              every behavioral re-freeze and
-#                                              carries the current milestone;
-#                                              ERD.md is standing architecture.)
+#                                              every behavioral re-freeze;
+#                                              apply also preserves its exact
+#                                              ERD-DELTA-vN.md snapshot.)
 #   tests/<file>.py ...                     -> installed to tests/
 #   REMOVED                                 -> repo paths to retire (one per
 #                                              line, tests/*.py only), deleted
@@ -283,8 +283,8 @@ try:
 except json.JSONDecodeError as e:
     sys.exit(f"REFREEZE FAIL: contracts.json is not valid JSON: {e}")
 errs = []
-if not isinstance(c.get("files"), list) or not c["files"]:
-    errs.append("contracts.files must be a non-empty array (the ERD build inventory)")
+if not isinstance(c.get("files"), list):
+    errs.append("contracts.files must be an array (empty means no behavioral build work)")
 if not isinstance(c.get("entry_points"), list):
     errs.append("contracts.entry_points must be an array")
 if c.get("erd_version") != new_v:
@@ -618,6 +618,7 @@ for f in $CHANGED_TEST_FILES; do
 done
 
 # --- Apply ---
+VERSIONED_ERD_DELTA=""
 for f in $CHANGED_DOCS; do
   if [ "$f" = "contracts.json" ]; then
     cp "$MERGED_CONTRACTS" "$APPROVED/$f"   # D-136: install the merged full file
@@ -625,6 +626,10 @@ for f in $CHANGED_DOCS; do
     cp "$IN/$f" "$APPROVED/$f"
   fi
 done
+if [ -f "$IN/ERD-DELTA.md" ]; then
+  VERSIONED_ERD_DELTA="$APPROVED/ERD-DELTA-v$NEW.md"
+  cp "$IN/ERD-DELTA.md" "$VERSIONED_ERD_DELTA"
+fi
 if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then
   rm -f "$APPROVED/ERD-DELTA.md"
 fi
@@ -725,8 +730,8 @@ rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-r
 # green-suite/broken-app family (v6/M5 imagined mocks; M16's hit-counter
 # counting hidden DOM text). Legitimate early passes exist (no_edit_files
 # acceptance per D-65, carried-forward behavior), so this surfaces a claim
-# for the human, never a halt. changed_tests includes REMOVED node-ids —
-# filter to ids that exist in the new frozen set before running.
+# for the human, never a halt. changed_tests is the runnable channel; the
+# frozen-set filter remains a defensive backstop for legacy artifacts.
 rm -f .cache/redcheck-already-green
 RED_IDS=$(python3 - "$NEW" "$APPROVED/test-nodeids" <<'PYEOF'
 import json, sys
@@ -825,6 +830,11 @@ fi
   for f in $(python3 scripts/spec_artifacts.py documents) test-nodeids; do
     [ -f "$APPROVED/$f" ] && sha256sum "$APPROVED/$f"
   done
+  # D-140: an active milestone may span skipped freezes. Keep every immutable
+  # per-freeze instruction slice hash-pinned so later planning never receives
+  # only the newest ERD-DELTA.md and silently loses earlier work.
+  find "$APPROVED" -maxdepth 1 -type f -name 'ERD-DELTA-v*.md' \
+    | sort | while read -r f; do sha256sum "$f"; done
   # Pin every file under tests/ (not only .py): non-.py fixtures a TPM
   # could stage would otherwise install unpinned, and the phase-gate
   # cross-check (INV-1 addition coverage) requires the disk set and
@@ -846,6 +856,7 @@ echo "$NEW" > "$APPROVED/VERSION"
 git add tests/ "$APPROVED/frozen-manifest" "$APPROVED/VERSION" \
   "$APPROVED/test-nodeids" "$APPROVED/DELTA-v$NEW.json"
 for f in $CHANGED_DOCS; do git add "$APPROVED/$f"; done
+[ -n "$VERSIONED_ERD_DELTA" ] && git add "$VERSIONED_ERD_DELTA"
 if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then git add "$APPROVED/ERD-DELTA.md"; fi
 for f in $CHANGED_CAPTURES; do git add "$APPROVED/$f"; done
 git commit -m "[refreeze v$NEW]"

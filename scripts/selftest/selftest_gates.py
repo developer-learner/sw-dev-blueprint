@@ -96,11 +96,15 @@ def repo(tmp_path):
     return tmp_path
 
 
-def run_validate(repo, plan, *args):
+def run_validate(repo, plan, *args, env=None):
     (repo / "tasks" / "plan.json").write_text(json.dumps(plan))
+    run_env = os.environ.copy()
+    run_env.pop("SWBP_ACTIVE_DELTA_FILES", None)
+    if env:
+        run_env.update(env)
     return subprocess.run(
         [sys.executable, str(VALIDATE_PLAN), *args],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo, capture_output=True, text=True, env=run_env,
     )
 
 
@@ -211,7 +215,53 @@ def test_unchanged_self_owned_contract_claim_rejected(repo):
     r = run_validate(repo, plan)
     assert r.returncode == 1
     assert "route-items" in r.stderr
-    assert "unchanged in every delta" in r.stderr
+    assert "unchanged in the active milestone delta range" in r.stderr
+
+
+def test_historical_contract_change_is_not_current_claim_authority(repo):
+    """A historical self-owned change cannot ride the current milestone."""
+    approved = repo / "scripts" / ".approved"
+    _repo_with_changed_contract(repo, ["route-items"])
+    (approved / "VERSION").write_text("2\n")
+    (approved / "DELTA-v2.json").write_text(json.dumps({
+        "changed_contract_ids": ["route-item"],
+        "changed_tests": [],
+        "changed_files": ["src/b.py"],
+    }))
+    plan = good_plan()
+    plan["erd_version"] = 2
+    plan["tasks"][0]["contracts"] = []
+    plan["tasks"][1]["contracts"] = ["route-items", "route-item"]
+    r = run_validate(repo, plan)
+    assert r.returncode == 1
+    assert "claims contract(s) ['route-items']" in r.stderr
+
+
+def test_skipped_freeze_contract_claim_uses_full_active_range(repo):
+    """Every delta since the last success remains current claim authority."""
+    approved = repo / "scripts" / ".approved"
+    _repo_with_changed_contract(repo, [])
+    (approved / "VERSION").write_text("3\n")
+    v2 = approved / "DELTA-v2.json"
+    v3 = approved / "DELTA-v3.json"
+    v2.write_text(json.dumps({
+        "changed_contract_ids": ["route-items"],
+        "changed_tests": [],
+        "changed_files": ["src/b.py"],
+    }))
+    v3.write_text(json.dumps({
+        "changed_contract_ids": ["route-item"],
+        "changed_tests": [],
+        "changed_files": ["src/b.py"],
+    }))
+    plan = good_plan()
+    plan["erd_version"] = 3
+    plan["tasks"][0]["contracts"] = []
+    plan["tasks"][1]["contracts"] = ["route-items", "route-item"]
+    r = run_validate(repo, plan, env={
+        "SWBP_ACTIVE_DELTA_FILES": f"{v2}\n{v3}\n",
+    })
+    assert r.returncode == 0, r.stderr
 
 
 def test_changed_contract_claim_allowed(repo):
@@ -3474,7 +3524,7 @@ def test_orchestrate_em_context_fallbacks_are_loud(tmp_path):
     assert ("WARNING: standing summary generation failed — EM context "
             "falls back to the full standing ERD" in src), src
     # success echo for contracts slice
-    assert ("echo \"  contracts context: generated milestone slice" in src), src
+    assert ("echo \"  contracts context: generated active-milestone slice" in src), src
     assert ("CONTRACTS_DELTA=\"$APPROVED/contracts.json\"" in src), src
     assert ("WARNING: contracts slice generation failed — EM context falls "
             "back to the full contracts.json" in src), src
@@ -3500,6 +3550,12 @@ def test_contract_id_rule_present_at_all_plan_sites():
         "verbatim id list must be injected at all 4 plan-emission sites"
     )
     assert "never convert a file path to dotted form" in orch
+    assert 'os.environ.get("SWBP_CONTRACT_FILES")' in orch, (
+        "contract ids must use the exact active inventory, not standing files"
+    )
+    assert '"${ACTIVE_ERD_CONTEXT:-$APPROVED/ERD-DELTA.md}"' in orch, (
+        "contract ids must recognize every active freeze's instruction packet"
+    )
 
 
 def test_contracts_delta_wired_at_plan_sites():
@@ -4634,6 +4690,8 @@ def _run_active_delta_resolution(
 die() {{ echo "FAIL: $*" >&2; exit 1; }}
 {block}
 printf 'DELTA=%s\n' "${{ACTIVE_DELTA_FILES[@]}}"
+python3 -c 'import os; print("ACTIVE_ENV=" + os.environ.get(
+    "SWBP_ACTIVE_DELTA_FILES", "").replace("\\n", "|"))'
 """
     return subprocess.run(
         ["bash", "-c", script], cwd=tmp_path,
@@ -4821,6 +4879,9 @@ def test_active_delta_range_spans_every_freeze_since_success(tmp_path):
     assert "DELTA=" in resolved.stdout
     assert "DELTA-v2.json" in resolved.stdout
     assert "DELTA-v3.json" in resolved.stdout
+    active_env = resolved.stdout.split("ACTIVE_ENV=", 1)[1].strip()
+    assert "DELTA-v2.json|" in active_env
+    assert "DELTA-v3.json|" in active_env
 
 
 def test_active_delta_range_fails_closed_when_history_is_missing(tmp_path):
@@ -5635,6 +5696,7 @@ def test_refreeze_ui_change_reaches_delta(freezable_repo):
     delta = json.loads((freezable_repo / "scripts" / ".approved"
                         / "DELTA-v2.json").read_text())
     assert "ui:new-badge" in delta["changed_contract_ids"], delta
+    assert delta["inventory_files"] == ["src/app.py"], delta
 
 
 # --- D-136: staged contracts merge + PRD additive guard ----------------------
@@ -6777,8 +6839,18 @@ def test_refreeze_accepts_and_pins_erd_delta(freezable_repo):
     approved = freezable_repo / "scripts" / ".approved"
     assert (approved / "ERD-DELTA.md").read_text().startswith("# Current milestone"), \
         "ERD-DELTA.md must install to scripts/.approved/"
+    assert (approved / "ERD-DELTA-v2.md").read_text() == \
+        (approved / "ERD-DELTA.md").read_text(), \
+        "each freeze must preserve its immutable active-range instruction slice"
     manifest = (approved / "frozen-manifest").read_text()
     assert "scripts/.approved/ERD-DELTA.md" in manifest, manifest
+    assert "scripts/.approved/ERD-DELTA-v2.md" in manifest, manifest
+    delta = json.loads((approved / "DELTA-v2.json").read_text())
+    assert delta["inventory_files"] == [], (
+        "a freeze without a contracts scope declaration must not inherit "
+        "the prior freeze's standing inventory"
+    )
+    assert delta["retired_tests"] == []
 
 
 def test_refreeze_rejects_unexpected_staging_path(freezable_repo):

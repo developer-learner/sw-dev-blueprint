@@ -7,7 +7,7 @@ integration:
 
   - structural: schema shape, no unknown keys, no status field, id format
   - atomicity:  exactly one file per task, unique, under the build lane
-  - coverage:   every file in the frozen ERD inventory has exactly one task
+  - coverage:   every file in the exact active milestone inventory has one task
   - oracle:     every frozen TPM test node-id that observably exercises this
                 delta's inventory (module-level import of a task-owned module,
                 or an AST-visible call to a route a task claims) is mapped to
@@ -42,6 +42,14 @@ Modes:
                                             prompt (D-130). Raw changed_tests are
                                             file-granular; the frozen test_mapping
                                             pins which tests the milestone owns.
+  validate-plan.py --active-inventory DELTA.json [DELTA.json ...]
+                                            print the exact ordered active build
+                                            inventory, including skipped freezes
+                                            and a legitimate empty inventory.
+  validate-plan.py --active-erd-context DELTA.json [DELTA.json ...]
+                                            print every active freeze's immutable
+                                            ERD instruction slice, minimally and
+                                            in version order.
   validate-plan.py --synthesize-plan DELTA.json [DELTA.json ...]
                                             mechanical plan synthesis (B3-fast
                                             path): print the full plan JSON when
@@ -119,6 +127,7 @@ Modes:
 import ast
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -280,35 +289,142 @@ def contract_file_pins(contracts):
     return pins
 
 
-def delta_changed_contract_ids():
-    """Union of changed_contract_ids across the DELTA-vN.json stack under
-    scripts/.approved (every delta up to the frozen VERSION). Over-approximates
-    the active range on purpose: an id the TPM declared changed in ANY delta
-    is claimable by any task, while an id never declared changed anywhere is
-    provably a ride-along claim. Greenfield (no deltas yet) yields an empty
-    set and the claim check is inert — the first freeze's contracts are all
-    new."""
+def active_delta_paths() -> list[Path]:
+    """Return the current milestone's delta range (D-138)."""
+    raw = os.environ.get("SWBP_ACTIVE_DELTA_FILES")
+    if raw is not None:
+        return [Path(line) for line in raw.splitlines() if line.strip()]
+    if not VERSION.exists():
+        return []
+    try:
+        frozen_v = int(VERSION.read_text().strip())
+    except (OSError, ValueError):
+        return []
+    latest = APPROVED / f"DELTA-v{frozen_v}.json"
+    return [latest] if latest.is_file() else []
+
+
+def delta_changed_contract_ids(delta_paths: list[Path]) -> set[str]:
+    """Union changed contract ids across only the active range (D-138)."""
     ids = set()
-    if not APPROVED.is_dir():
-        return ids
-    frozen_v = None
-    if VERSION.exists():
-        try:
-            frozen_v = int(VERSION.read_text().strip())
-        except ValueError:
-            pass
-    for p in sorted(APPROVED.glob("DELTA-v*.json")):
-        m = re.match(r"DELTA-v(\d+)\.json$", p.name)
-        if not m:
-            continue
-        if frozen_v is not None and int(m.group(1)) > frozen_v:
-            continue
-        try:
-            d = json.loads(p.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        ids |= set(d.get("changed_contract_ids", []))
+    for path in delta_paths:
+        delta = load_json(path, "active milestone delta")
+        changed = delta.get("changed_contract_ids", []) \
+            if isinstance(delta, dict) else None
+        if not isinstance(changed, list) or not all(
+            isinstance(contract_id, str) for contract_id in changed
+        ):
+            fail([f"active milestone delta {path} has invalid "
+                  "changed_contract_ids — expected an array of strings"])
+        ids.update(changed)
     return ids
+
+
+def active_inventory_files(
+    delta_paths: list[Path], contracts: dict,
+) -> list[str]:
+    """Exact ordered build inventory for the active milestone (D-140).
+
+    New freezes snapshot contracts.files in each DELTA.  A skipped-freeze
+    milestone is the ordered union of those snapshots, including a genuinely
+    empty snapshot.  If every delta predates the field, retain the historical
+    contracts.files behavior.  During a mixed-format migration, legacy
+    entries contribute only their explicit changed_files and changed-contract
+    owners; accumulated standing inventory is never reintroduced.
+    """
+    deltas = [load_json(path, "active milestone delta") for path in delta_paths]
+    if not deltas or not any("inventory_files" in d for d in deltas):
+        return list(contracts.get("files", []))
+    pins = contract_file_pins(contracts)
+    ordered: list[str] = []
+    for path, delta in zip(delta_paths, deltas):
+        if "inventory_files" in delta:
+            files = delta.get("inventory_files")
+            if not isinstance(files, list) or not all(
+                isinstance(item, str) for item in files
+            ):
+                fail([f"active milestone delta {path} has invalid "
+                      "inventory_files — expected an array of strings"])
+        else:
+            files = list(delta.get("changed_files", []))
+            files += [
+                pins[contract_id]
+                for contract_id in delta.get("changed_contract_ids", [])
+                if contract_id in pins
+            ]
+        for file_path in files:
+            if file_path not in ordered:
+                ordered.append(file_path)
+    return ordered
+
+
+def _delta_version(path: Path) -> int | None:
+    match = re.search(r"DELTA-v(\d+)\.json$", path.name)
+    return int(match.group(1)) if match else None
+
+
+def _git_erd_delta_at_freeze(delta_path: Path) -> str | None:
+    """Recover a pre-D-140 instruction slice from its freeze commit."""
+    try:
+        try:
+            git_path = delta_path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except ValueError:
+            git_path = delta_path.as_posix()
+        commit = subprocess.run(
+            ["git", "log", "-1", "--format=%H", "--diff-filter=A", "--",
+             git_path],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        if not commit:
+            return None
+        return subprocess.run(
+            ["git", "show", f"{commit}:{ERD_DELTA_PATH.as_posix()}"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def active_erd_delta_texts(
+    delta_paths: list[Path],
+) -> list[tuple[int | None, str]]:
+    """Per-freeze instruction slices for the active range (D-140).
+
+    Modern freezes carry immutable ERD-DELTA-vN.md files.  Historical Git
+    freezes are recovered from the commit that introduced DELTA-vN.json.
+    Synthetic/pre-Git legacy fixtures retain the old current-file fallback;
+    a modern delta missing its immutable snapshot fails closed.
+    """
+    out: list[tuple[int | None, str]] = []
+    legacy_fallback = False
+    for delta_path in delta_paths:
+        delta = load_json(delta_path, "active milestone delta")
+        version = _delta_version(delta_path)
+        versioned = APPROVED / f"ERD-DELTA-v{version}.md" \
+            if version is not None else None
+        if versioned is not None and versioned.is_file():
+            out.append((version, versioned.read_text()))
+            continue
+        recovered = _git_erd_delta_at_freeze(delta_path)
+        if recovered is not None:
+            out.append((version, recovered))
+            continue
+        if "inventory_files" in delta:
+            if not (
+                delta.get("inventory_files")
+                or delta.get("changed_contract_ids")
+                or delta.get("changed_tests")
+            ):
+                continue
+            fail([f"active milestone instruction snapshot missing for "
+                  f"{delta_path}: expected {versioned}; cannot safely plan "
+                  "a range after losing one freeze's ERD-DELTA"])
+        legacy_fallback = True
+    if legacy_fallback:
+        if not ERD_DELTA_PATH.is_file():
+            return out
+        out.append((_delta_version(delta_paths[-1]), ERD_DELTA_PATH.read_text()))
+    return out
 
 
 def toposort(tasks):
@@ -360,8 +476,8 @@ def validate():
         if not isinstance(plan.get(key), int) or plan.get(key, 0) < 1:
             errs.append(f"plan.{key} must be an integer >= 1")
     tasks = plan.get("tasks")
-    if not isinstance(tasks, list) or not tasks:
-        fail(errs + ["plan.tasks must be a non-empty array"])
+    if not isinstance(tasks, list):
+        fail(errs + ["plan.tasks must be an array"])
 
     # freshness — a plan derived from a superseded ERD is stale
     if VERSION.exists():
@@ -371,6 +487,34 @@ def validate():
                 f"plan is stale: erd_version={plan['erd_version']} but frozen "
                 f"VERSION={frozen_v} — the EM must re-derive from the current ERD"
             )
+
+    delta_paths = active_delta_paths()
+    inventory = active_inventory_files(delta_paths, contracts)
+    if not tasks:
+        changed_contracts = delta_changed_contract_ids(delta_paths)
+        runnable = set()
+        mapping = contracts.get("test_mapping") or {}
+        frozen_set = set(frozen_nodeids)
+        for path in delta_paths:
+            delta = load_json(path, "active milestone delta")
+            runnable.update(milestone_scope_ids(
+                mapping, delta.get("changed_files", []),
+                delta.get("changed_tests", []),
+                delta.get("changed_tests_granularity", "file"), frozen_set,
+            ))
+        if inventory or changed_contracts or runnable:
+            fail(errs + [
+                "plan.tasks may be empty only when the active milestone has "
+                "no inventory files, changed contracts, or runnable changed "
+                f"tests; found inventory={inventory}, "
+                f"contracts={sorted(changed_contracts)}, "
+                f"tests={sorted(runnable)}"
+            ])
+        if errs:
+            fail(errs)
+        AUTO_PLACED.clear()
+        AUTO_REGRESSION.clear()
+        return plan, []
 
     lane = build_dir()
     ids, files = [], []
@@ -456,7 +600,6 @@ def validate():
                 errs.append(f"task {t['id']} depends on unknown task {d}")
 
     # ERD inventory coverage — exact bijection with contracts.files
-    inventory = contracts.get("files", [])
     missing_tasks = sorted(set(inventory) - set(files))
     extra_files = sorted(set(files) - set(inventory))
     if missing_tasks:
@@ -467,7 +610,9 @@ def validate():
     # D-65: no_edit_files must be inventory members — a no-edit declaration
     # for a file outside the inventory is a spec typo the freeze should have
     # caught; fail loudly here as the backstop.
-    stray_no_edit = sorted(set(contracts.get("no_edit_files", [])) - set(inventory))
+    standing_inventory = set(contracts.get("files", []))
+    stray_no_edit = sorted(
+        set(contracts.get("no_edit_files", [])) - standing_inventory)
     if stray_no_edit:
         errs.append(
             f"contracts.no_edit_files entries not in the ERD inventory "
@@ -479,7 +624,7 @@ def validate():
     # syntactically valid), so we also verify the first token resolves to an
     # executable via `command -v`.
     for sc_file, sc_cmd in contracts.get("smoke_checks", {}).items():
-        if sc_file not in inventory:
+        if sc_file not in standing_inventory:
             errs.append(
                 f"smoke_checks key '{sc_file}' is not in contracts.files"
             )
@@ -527,12 +672,11 @@ def validate():
     # schema of its file, dragging unchanged behavior into the milestone's
     # acceptance and over-invalidating later freezes (one task re-ran 20
     # node-ids repeatedly). The TPM's changed_contract_ids declaration is the
-    # authority: an id never declared changed in any active delta cannot be
-    # claimed by the task owning its file. Greenfield (no DELTA stack yet)
-    # leaves the check inert — the first freeze's contracts are all new.
-    changed_contracts = delta_changed_contract_ids()
-    any_delta = any(APPROVED.glob("DELTA-v*.json")) if APPROVED.is_dir() else False
-    if any_delta:
+    # authority: an id never declared changed in the active D-113 range cannot
+    # be claimed by the task owning its file. Greenfield leaves the check inert.
+    claim_delta_paths = active_delta_paths()
+    changed_contracts = delta_changed_contract_ids(claim_delta_paths)
+    if claim_delta_paths:
         pins = contract_file_pins(contracts)
         for t in tasks:
             ride = sorted(
@@ -542,7 +686,8 @@ def validate():
             if ride:
                 errs.append(
                     f"task {t['id']} claims contract(s) {ride} that are "
-                    f"unchanged in every delta and pinned to its own file "
+                    f"unchanged in the active milestone delta range and "
+                    f"pinned to its own file "
                     f"{t['file']!r} — a task claims only contracts this "
                     f"milestone changed and interfaces it directly depends "
                     f"on; unchanged self-owned contracts must not ride "
@@ -620,11 +765,14 @@ def validate():
     # boundary. Fires only when the TPM's ERD-DELTA gives an authoritative delta
     # description to diverge from; grandfathers verbatim TPM briefs, new files,
     # and every symbol the TPM's own delta doc names.
-    if ERD_DELTA_PATH.exists():
-        try:
-            delta_text = ERD_DELTA_PATH.read_text()
-        except OSError:
-            delta_text = ""
+    if ERD_DELTA_PATH.exists() or delta_paths:
+        delta_text = (
+            "\n\n".join(
+                text for _, text in active_erd_delta_texts(delta_paths)
+            )
+            if delta_paths
+            else ERD_DELTA_PATH.read_text()
+        )
         if delta_text:
             tpm_briefs = _parse_brief_blocks(delta_text)  # {file: (tid, brief)}
             authorized = set(_SYMBOL_RE.findall(delta_text))
@@ -1537,7 +1685,7 @@ def _id_family(node_id):
 
 
 def milestone_scope_ids(mapping, changed_files, changed_tests,
-                        granularity="file"):
+                        granularity="file", current_ids=None):
     """The authoritative milestone node-id set for ONE delta: which of its
     changed_tests the milestone actually owns. Raw legacy deltas carry
     changed_tests at FILE granularity — orchestrate-testchat v87: a
@@ -1562,13 +1710,15 @@ def milestone_scope_ids(mapping, changed_files, changed_tests,
     remaining role here is the D-124 completeness repair: a pinned id whose
     owner file the delta staged rides even if the producer dropped it.
     """
-    scope = {n for n in changed_tests}
+    current = set(current_ids) if current_ids is not None else None
+    scope = {n for n in changed_tests if current is None or n in current}
     if mapping:
         pinned = {_id_family(k) for k in mapping}
         if granularity != "function":
             scope = {n for n in scope if _id_family(n) in pinned}
         scope |= {n for n, owner in mapping.items()
-                  if owner in set(changed_files)}
+                  if owner in set(changed_files)
+                  and (current is None or n in current)}
     return sorted(scope)
 
 
@@ -1609,6 +1759,10 @@ def cmd_affected(delta_paths):
     plan, _ = validate()
     contracts = load_json(CONTRACTS, "frozen contracts")
     mapping = contracts.get("test_mapping") or {}
+    current_ids = {
+        line.strip() for line in NODEIDS.read_text().splitlines()
+        if line.strip()
+    }
     hit = set()
     for delta_path in delta_paths:
         delta = load_json(Path(delta_path), "delta")
@@ -1618,8 +1772,12 @@ def cmd_affected(delta_paths):
         slice_ids = milestone_scope_ids(
             mapping, delta.get("changed_files", []),
             delta.get("changed_tests", []),
-            delta.get("changed_tests_granularity", "file"))
-        hit.update(_hit_task_ids(plan["tasks"], delta, slice_ids))
+            delta.get("changed_tests_granularity", "file"), current_ids)
+        invalidation_ids = set(slice_ids) | set(delta.get("retired_tests", []))
+        if "retired_tests" not in delta:
+            invalidation_ids |= set(delta.get("changed_tests", [])) - current_ids
+        hit.update(_hit_task_ids(
+            plan["tasks"], delta, sorted(invalidation_ids)))
     for tid in sorted(hit):
         print(tid)
 
@@ -1633,13 +1791,40 @@ def cmd_milestone_scope(delta_paths):
     tiny-diff/big-file trim (58 -> 6 for orchestrate-testchat v87)."""
     contracts = load_json(CONTRACTS, "frozen contracts")
     mapping = contracts.get("test_mapping") or {}
+    current_ids = ({
+        line.strip() for line in NODEIDS.read_text().splitlines()
+        if line.strip()
+    } if NODEIDS.exists() else None)
     ids = []
     for p in delta_paths:
         d = load_json(Path(p), f"delta {p}")
         ids += milestone_scope_ids(mapping, d.get("changed_files", []),
                                    d.get("changed_tests", []),
-                                   d.get("changed_tests_granularity", "file"))
+                                   d.get("changed_tests_granularity", "file"),
+                                   current_ids)
     print("\n".join(sorted(set(ids))))
+
+
+def cmd_active_erd_context(delta_paths):
+    """Emit the minimal, complete per-freeze ERD instruction packet."""
+    paths = [Path(path) for path in delta_paths]
+    contracts = load_json(CONTRACTS, "frozen contracts")
+    if not active_inventory_files(paths, contracts):
+        print("(active milestone has no behavioral build inventory)")
+        return
+    for index, (version, body) in enumerate(active_erd_delta_texts(paths)):
+        if index:
+            print()
+        label = f"v{version}" if version is not None else "unversioned"
+        print(f"## Active freeze instructions — {label}")
+        print(body.rstrip())
+
+
+def cmd_active_inventory(delta_paths):
+    """Print the exact active build inventory, one file per line."""
+    contracts = load_json(CONTRACTS, "frozen contracts")
+    print("\n".join(active_inventory_files(
+        [Path(path) for path in delta_paths], contracts)))
 
 
 _BRIEF_RE = re.compile(r"^###\s+(T\d+)\s*[—-]\s*(\S+?)\s*(?:\s*\([^)]*\))?\s*$")
@@ -1755,22 +1940,48 @@ def cmd_synthesize_plan(delta_paths):
       - depends_on = the delta's DAG prose (`A` depends on `B` statements and
         Task-order chains), resolved to brief-file tasks
     """
-    delta_texts = []
-    for p in delta_paths:
-        try:
-            delta_texts.append(Path(p).read_text())
-        except OSError:
-            fail([f"--synthesize-plan: cannot read delta {p}"])
-    erd_delta = APPROVED / "ERD-DELTA.md"
-    if not erd_delta.exists():
-        fail(["--synthesize-plan: ERD-DELTA.md missing — no TPM brief/DAG/pins "
-              "to synthesize from; the EM must emit the full plan"])
-    text = erd_delta.read_text()
+    paths = [Path(p) for p in delta_paths]
+    deltas = [load_json(path, f"delta {path}") for path in paths]
     contracts = load_json(CONTRACTS, "frozen contracts")
-    files = contracts.get("files") or []
+    files = active_inventory_files(paths, contracts)
+    current_ids = ({
+        line.strip() for line in NODEIDS.read_text().splitlines()
+        if line.strip()
+    } if NODEIDS.exists() else None)
     if not files:
-        fail(["--synthesize-plan: contracts.files is empty"])
-    briefs = _parse_brief_blocks(text)
+        scope = set()
+        for delta in deltas:
+            scope.update(milestone_scope_ids(
+                contracts.get("test_mapping") or {},
+                delta.get("changed_files", []),
+                delta.get("changed_tests", []),
+                delta.get("changed_tests_granularity", "file"), current_ids,
+            ))
+        changed_contracts = {
+            contract_id for delta in deltas
+            for contract_id in delta.get("changed_contract_ids", [])
+        }
+        if scope or changed_contracts:
+            fail(["--synthesize-plan: empty active inventory conflicts with "
+                  f"runnable tests {sorted(scope)} or changed contracts "
+                  f"{sorted(changed_contracts)}"])
+        frozen_v = int(VERSION.read_text().strip()) if VERSION.exists() else 1
+        print(json.dumps({
+            "version": 1, "erd_version": frozen_v, "tasks": [],
+        }, indent=2))
+        return
+    erd_texts = active_erd_delta_texts(paths)
+    briefs = {}
+    for _, body in erd_texts:
+        for file_path, (task_id, brief) in _parse_brief_blocks(body).items():
+            if file_path in briefs:
+                prior_id, prior_brief = briefs[file_path]
+                briefs[file_path] = (
+                    prior_id,
+                    f"{prior_brief.rstrip()}\n\n{brief.lstrip()}",
+                )
+            else:
+                briefs[file_path] = (task_id, brief)
     missing = [f for f in files if f not in briefs]
     if missing:
         fail(["--synthesize-plan: no verbatim coder brief for "
@@ -1779,11 +1990,16 @@ def cmd_synthesize_plan(delta_paths):
               "the EM must emit the full plan"])
     ids = [briefs[f][0] for f in files]
     if len(set(ids)) != len(ids):
-        fail(["--synthesize-plan: brief-task ids repeat or collide "
-              f"({sorted(ids)}) — renumber and sync the DAG prose"])
+        ids = [f"T{i}" for i in range(1, len(files) + 1)]
     task_ids = {f: ids[i] for i, f in enumerate(files)}
 
-    edges = _parse_delta_dag(text, briefs)
+    edges = {}
+    for _, body in erd_texts:
+        local_briefs = _parse_brief_blocks(body)
+        for file_path, deps_for_file in _parse_delta_dag(
+            body, local_briefs,
+        ).items():
+            edges.setdefault(file_path, []).extend(deps_for_file)
     unknown = sorted(set(edges) - set(files))
     if unknown:
         fail(["--synthesize-plan: DAG prose references non-inventory file(s) "
@@ -1804,15 +2020,15 @@ def cmd_synthesize_plan(delta_paths):
             fail([f"--synthesize-plan: self-dependency in DAG prose for {f}"])
 
     scope = []
-    for p in delta_paths:
-        d = json.loads(Path(p).read_text())
+    for d in deltas:
         scope += milestone_scope_ids(
             contracts.get("test_mapping") or {},
             d.get("changed_files", []),
             d.get("changed_tests", []),
-            d.get("changed_tests_granularity", "file"))
+            d.get("changed_tests_granularity", "file"), current_ids)
     pins = dict(contracts.get("test_mapping") or {})
-    pins.update(_parse_mapping_pins(text))
+    for _, body in erd_texts:
+        pins.update(_parse_mapping_pins(body))
     unpinned = sorted(set(scope) - set(pins))
     if unpinned:
         fail(["--synthesize-plan: milestone node-id(s) with no ownership pin "
@@ -1820,8 +2036,7 @@ def cmd_synthesize_plan(delta_paths):
               f"{unpinned} — the EM must place them"])
 
     changed_contracts = set()
-    for p in delta_paths:
-        d = json.loads(Path(p).read_text())
+    for d in deltas:
         changed_contracts |= set(d.get("changed_contract_ids", []))
     cpins = contract_file_pins(contracts)
 
@@ -1834,7 +2049,8 @@ def cmd_synthesize_plan(delta_paths):
             "brief": briefs[f][1],
             "contracts": sorted(c for c in changed_contracts
                                 if cpins.get(c) == f),
-            "tests": sorted(n for n, owner in pins.items() if owner == f),
+            "tests": sorted(n for n, owner in pins.items()
+                            if owner == f and n in set(scope)),
         })
     frozen_v = 1
     if VERSION.exists():
@@ -1894,7 +2110,7 @@ def cmd_subtree_scope(prior_path, delta_paths):
     current_ids = {
         line.strip() for line in NODEIDS.read_text().splitlines() if line.strip()
     }
-    inventory = list(contracts.get("files", []))
+    inventory = active_inventory_files([Path(p) for p in delta_paths], contracts)
     tasks = prior["tasks"]
     prior_files = {t["file"] for t in tasks}
     removed = sorted(prior_files - set(inventory))
@@ -1918,8 +2134,11 @@ def cmd_subtree_scope(prior_path, delta_paths):
         # 52 relabeled; the run re-emitted and re-mapped all 58).
         slice_ids = milestone_scope_ids(
             mapping, d.get("changed_files", []), d.get("changed_tests", []),
-            d.get("changed_tests_granularity", "file"))
-        hit |= _hit_task_ids(tasks, d, slice_ids)
+            d.get("changed_tests_granularity", "file"), current_ids)
+        invalidation_ids = set(slice_ids) | set(d.get("retired_tests", []))
+        if "retired_tests" not in d:
+            invalidation_ids |= set(d.get("changed_tests", [])) - current_ids
+        hit |= _hit_task_ids(tasks, d, sorted(invalidation_ids))
         changed_tests |= set(slice_ids)
         if d.get("changed_contract_ids"):
             contract_changed = True
@@ -2400,6 +2619,12 @@ def main(argv):
         return
     if argv[0] == "--milestone-scope" and len(argv) >= 2:
         cmd_milestone_scope(argv[1:])
+        return
+    if argv[0] == "--active-erd-context" and len(argv) >= 2:
+        cmd_active_erd_context(argv[1:])
+        return
+    if argv[0] == "--active-inventory" and len(argv) >= 2:
+        cmd_active_inventory(argv[1:])
         return
     if argv[0] == "--synthesize-plan" and len(argv) >= 2:
         cmd_synthesize_plan(argv[1:])

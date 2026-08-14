@@ -18,7 +18,7 @@
     },
     "tasks": {
       "type": "array",
-      "minItems": 1,
+      "description": "One task per exact active-inventory file. Empty is valid only when the active milestone has no build inventory, changed contracts, or runnable changed tests.",
       "items": {
         "type": "object",
         "additionalProperties": false,
