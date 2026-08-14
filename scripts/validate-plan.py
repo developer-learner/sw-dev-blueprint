@@ -119,6 +119,7 @@ Modes:
 import ast
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -280,34 +281,43 @@ def contract_file_pins(contracts):
     return pins
 
 
-def delta_changed_contract_ids():
-    """Union of changed_contract_ids across the DELTA-vN.json stack under
-    scripts/.approved (every delta up to the frozen VERSION). Over-approximates
-    the active range on purpose: an id the TPM declared changed in ANY delta
-    is claimable by any task, while an id never declared changed anywhere is
-    provably a ride-along claim. Greenfield (no deltas yet) yields an empty
-    set and the claim check is inert — the first freeze's contracts are all
-    new."""
+def active_delta_paths() -> list[Path]:
+    """Return the current milestone's delta range (D-138).
+
+    Orchestration exports D-113's exact range since the last successful spec,
+    one path per line. Standalone validation falls back to the newest frozen
+    delta; this is fail-closed for a skipped-freeze plan, while avoiding the
+    old unsafe default that treated every historical delta as current scope.
+    Greenfield validation has no delta and leaves claim minimality inert.
+    """
+    raw = os.environ.get("SWBP_ACTIVE_DELTA_FILES")
+    if raw is not None:
+        return [Path(line) for line in raw.splitlines() if line.strip()]
+    if not VERSION.exists():
+        return []
+    try:
+        frozen_v = int(VERSION.read_text().strip())
+    except (OSError, ValueError):
+        return []
+    latest = APPROVED / f"DELTA-v{frozen_v}.json"
+    return [latest] if latest.is_file() else []
+
+
+def delta_changed_contract_ids(delta_paths: list[Path]) -> set[str]:
+    """Union changed contract ids across only the active delta range (D-138)."""
     ids = set()
-    if not APPROVED.is_dir():
-        return ids
-    frozen_v = None
-    if VERSION.exists():
-        try:
-            frozen_v = int(VERSION.read_text().strip())
-        except ValueError:
-            pass
-    for p in sorted(APPROVED.glob("DELTA-v*.json")):
-        m = re.match(r"DELTA-v(\d+)\.json$", p.name)
-        if not m:
-            continue
-        if frozen_v is not None and int(m.group(1)) > frozen_v:
-            continue
-        try:
-            d = json.loads(p.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        ids |= set(d.get("changed_contract_ids", []))
+    for path in delta_paths:
+        delta = load_json(path, "active milestone delta")
+        changed = delta.get("changed_contract_ids", []) \
+            if isinstance(delta, dict) else None
+        if not isinstance(changed, list) or not all(
+            isinstance(contract_id, str) for contract_id in changed
+        ):
+            fail([
+                f"active milestone delta {path} has invalid "
+                "changed_contract_ids — expected an array of strings"
+            ])
+        ids.update(changed)
     return ids
 
 
@@ -527,12 +537,13 @@ def validate():
     # schema of its file, dragging unchanged behavior into the milestone's
     # acceptance and over-invalidating later freezes (one task re-ran 20
     # node-ids repeatedly). The TPM's changed_contract_ids declaration is the
-    # authority: an id never declared changed in any active delta cannot be
-    # claimed by the task owning its file. Greenfield (no DELTA stack yet)
-    # leaves the check inert — the first freeze's contracts are all new.
-    changed_contracts = delta_changed_contract_ids()
-    any_delta = any(APPROVED.glob("DELTA-v*.json")) if APPROVED.is_dir() else False
-    if any_delta:
+    # authority: an id never declared changed in the ACTIVE milestone range
+    # cannot be claimed by the task owning its file. D-113 supplies every
+    # skipped freeze since the last success, so this is exact rather than the
+    # old all-history over-approximation. Greenfield leaves the check inert.
+    claim_delta_paths = active_delta_paths()
+    changed_contracts = delta_changed_contract_ids(claim_delta_paths)
+    if claim_delta_paths:
         pins = contract_file_pins(contracts)
         for t in tasks:
             ride = sorted(
@@ -542,7 +553,8 @@ def validate():
             if ride:
                 errs.append(
                     f"task {t['id']} claims contract(s) {ride} that are "
-                    f"unchanged in every delta and pinned to its own file "
+                    f"unchanged in the active milestone delta range and "
+                    f"pinned to its own file "
                     f"{t['file']!r} — a task claims only contracts this "
                     f"milestone changed and interfaces it directly depends "
                     f"on; unchanged self-owned contracts must not ride "
