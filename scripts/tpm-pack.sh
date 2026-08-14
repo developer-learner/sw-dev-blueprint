@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # tpm-pack.sh — assemble the TPM chat bundle (D-38).
 #
-# The TPM is a CEO-assigned seat (D-139); this pack serves the web-chat
-# variant: an LLM with NO repo access (docs/TPM-ROLE.md — the air gap is the
-# design, not a limitation). Who holds the seat for a session is the CEO's
-# call; run this only after the CEO names the TPM holder and asks for the
-# briefing. This script removes the operator's courier burden: one command
-# packs the small milestone slice a TPM session needs into a single
-# copy-pasteable blob.
+# The TPM seat is an LLM the CEO assigns per session (D-139): by default a
+# frontier LLM in a human-operated web chat with NO repo access
+# (docs/TPM-ROLE.md — the air gap is the design, not a limitation), but it
+# may also be a scoped repo agent (`scripts/tpm-agent.sh`) or the same LLM
+# already on the job. This
+# script removes the operator's courier burden: one command packs the small
+# milestone slice a TPM session needs into a single copy-pasteable blob.
 #
 # Milestone relevance (D-116/D-117/D-120): the product context is a capsule
 # plus the current changed-acceptance slice; the standing architecture is
