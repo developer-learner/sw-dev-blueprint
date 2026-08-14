@@ -6028,7 +6028,10 @@ def test_contracts_merge_rejects_malformed_remove_directive(tmp_path):
 
 _PRD_STANDING = (
     "# What\n\nAcme tracks widgets for teams.\n\n"
-    "## Acceptance criteria\n\n- AC-1: login works\n- AC-2: logout works\n"
+    "## Acceptance criteria\n\n"
+    "- **AC-1:** WHEN a user logs in, THE SYSTEM SHALL open the workspace.\n"
+    "  The session remains active after navigation.\n\n"
+    "- **AC-2:** WHEN a user logs out, THE SYSTEM SHALL end the session.\n"
 )
 
 
@@ -6046,16 +6049,64 @@ def test_prd_additive_guard_rejects_silent_removal(tmp_path):
     """An additive PRD (adds AC-3, keeps the capsule + AC-1/AC-2) passes; a PRD
     that silently drops a historical AC id fails closed naming it (supersessions
     go through ERD-DELTA, D-136)."""
-    additive = _PRD_STANDING + "- AC-3: reset works\n"
+    additive = _PRD_STANDING + (
+        "\n- **AC-3:** WHEN reset is requested, THE SYSTEM SHALL reset.\n"
+    )
     ok = _run_prd_guard(tmp_path, _PRD_STANDING, additive)
     assert ok.returncode == 0, (ok.stdout, ok.stderr)
     dropped = (
         "# What\n\nAcme tracks widgets for teams.\n\n"
-        "## Acceptance criteria\n\n- AC-1: login works\n"
+        "## Acceptance criteria\n\n"
+        "- **AC-1:** WHEN a user logs in, THE SYSTEM SHALL open the workspace.\n"
+        "  The session remains active after navigation.\n"
     )
     bad = _run_prd_guard(tmp_path, _PRD_STANDING, dropped)
     assert bad.returncode != 0, (bad.stdout, bad.stderr)
     assert "AC-2" in bad.stderr, bad.stderr
+
+
+def test_prd_additive_guard_rejects_historical_body_rewrite(tmp_path):
+    """D-148: retaining an AC id does not authorize rewriting its behavior."""
+    rewritten = _PRD_STANDING.replace(
+        "end the session", "leave the session active")
+    bad = _run_prd_guard(tmp_path, _PRD_STANDING, rewritten)
+    assert bad.returncode != 0, (bad.stdout, bad.stderr)
+    assert "altered or split" in bad.stderr, bad.stderr
+    assert "AC-2" in bad.stderr, bad.stderr
+
+
+def test_prd_additive_guard_rejects_interleaved_historical_blocks(tmp_path):
+    """D-148: a new AC inserted inside an old body cannot split the old block."""
+    interleaved = _PRD_STANDING.replace(
+        "  The session remains active after navigation.\n",
+        "- **AC-3:** WHEN reset is requested, THE SYSTEM SHALL reset.\n\n"
+        "  The session remains active after navigation.\n",
+    )
+    bad = _run_prd_guard(tmp_path, _PRD_STANDING, interleaved)
+    assert bad.returncode != 0, (bad.stdout, bad.stderr)
+    assert "altered or split" in bad.stderr, bad.stderr
+    assert "AC-1" in bad.stderr, bad.stderr
+
+
+def test_prd_additive_guard_rejects_duplicate_ac_id(tmp_path):
+    """D-148: duplicate AC starts are ambiguous even when one block is intact."""
+    duplicated = _PRD_STANDING + (
+        "\n- **AC-2:** WHEN duplicated, THE SYSTEM SHALL fail review.\n"
+    )
+    bad = _run_prd_guard(tmp_path, _PRD_STANDING, duplicated)
+    assert bad.returncode != 0, (bad.stdout, bad.stderr)
+    assert "duplicated" in bad.stderr, bad.stderr
+    assert "AC-2" in bad.stderr, bad.stderr
+
+
+def test_prd_additive_guard_allows_historical_block_reflow(tmp_path):
+    """D-148 compares normalized text, so harmless Markdown wrapping remains valid."""
+    reflowed = _PRD_STANDING.replace(
+        "THE SYSTEM SHALL open the workspace.\n  The session remains active",
+        "THE SYSTEM SHALL open the\n  workspace. The session remains active",
+    )
+    ok = _run_prd_guard(tmp_path, _PRD_STANDING, reflowed)
+    assert ok.returncode == 0, (ok.stdout, ok.stderr)
 
 
 def _seed_standing_route(approved):

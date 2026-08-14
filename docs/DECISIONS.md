@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-148 — 2026-08-14 — Historical PRD acceptance-criterion blocks are immutable and contiguous
+
+**Decision:** The D-136 PRD additive guard preserves each historical acceptance criterion as a complete Markdown block, not merely as an identifier. `check-prd-additive.py` recognizes AC bullet/heading starts, delimits each block at the next AC or section heading, normalizes whitespace so harmless line wrapping remains possible, and fails closed when a historical block is missing, duplicated, altered, or split by an interleaved criterion. New AC blocks remain additive and may be placed between existing complete blocks. Supersession remains an ERD-DELTA operation that retains the historical PRD block.
+
+**Alternatives considered:** (a) Continue checking only the set of AC ids — rejected because a staged PRD can retain every id while rewriting behavior or inserting a new criterion inside an old body. (b) Require raw byte identity — rejected because Markdown line wrapping does not change the criterion and full-file TPM returns may reflow prose. (c) Repair malformed records without strengthening the gate — rejected because the next full-file return could recreate the same corruption undetected.
+
+**Reason:** Testchat's standing PRD retained the names AC-160, AC-166, and AC-167 but interleaved their bodies: two new AC starts split AC-160, while the trailing bodies of AC-166 and AC-160 became part of AC-167's apparent block. The id-set guard returned green because all three names survived. D-147 now sends this complete accumulated PRD to every TPM intake, so structural corruption can directly misstate historical product behavior. Block-level preservation closes the exact seam while retaining additive authoring and whitespace-only reflow.
+
+**Do not suggest:** weakening preservation back to id presence; allowing historical body edits because the id remains; treating duplicate AC starts as harmless; making whitespace layout byte-identical; silently repairing a malformed frozen PRD outside `refreeze.sh`. Cross-repo: derived projects receive the guard and selftests through template sync, but an already-malformed project PRD must be repaired through one legitimate refreeze before installing this stricter guard.
+
 ## D-147 — 2026-08-14 — Trim no-delta ERD context, but always ship the full PRD (amends D-117; corrected same day)
 
 **Decision:** `tpm-pack.sh` always emits the complete frozen `PRD.md`, whether or not an `ERD-DELTA.md` is active. A staged PRD is a complete additive replacement under D-136, and the chat TPM must see every historical AC id it is required to preserve or supersede. The no-delta optimization applies only to the standing ERD: the generated standing summary replaces full `ERD.md`, while the complete interface index and TPM-requested stage-2 contract bodies remain available. Missing summary generation or relative expansion retains D-117/D-145's loud full-ERD fallback.
