@@ -9,8 +9,10 @@ ships unnoticed) and forces the TPM to reproduce content it never saw.
 
 Instead the TPM stages ONLY the changed/new entries — each carrying its `file`
 pin (D-120/D-124) — in scripts/.approved/incoming/contracts.json, omitting any
-id-array whose entries are all carried. This producer merges that delta onto
-the standing contracts.json and verifies the merge MECHANICALLY, fail-closed:
+id-array whose entries are all carried. D-137 adds explicit, family-scoped
+tombstones under the staged-only `remove` object; omission still means carry.
+This producer merges that delta onto the standing contracts.json and verifies
+the merge MECHANICALLY, fail-closed:
 
   * The id-bearing arrays (routes/schemas/errors/ui) merge by id. The delta's
     changed set is the ids it names (the entries it stages). A staged entry
@@ -26,9 +28,14 @@ the standing contracts.json and verifies the merge MECHANICALLY, fail-closed:
     its carried entries are all identical to standing).
   * G3 — new ids: any id in the merged file absent from standing must be one
     the delta named (present in the staged arrays).
-  * entry_points are unioned onto standing (carried surface preserved, new
-    symbols appended) so INV-4 still covers carried tests; the merged file's
-    entry_points then face the existing deterministic slice rule (D-120).
+  * G4 — explicit removals: every tombstone must name an existing item in the
+    stated family, may appear only once, and may not also be staged as an
+    update. Unknown, cross-family, duplicate, and update+remove directives die
+    with the offending name. The transient `remove` object is never emitted.
+  * entry_points apply the same exact-name tombstones, then union onto standing
+    (unremoved surface preserved, new symbols appended) so INV-4 still covers
+    carried tests; the merged file's entry_points then face the existing
+    deterministic slice rule (D-120).
 
 Everything else splits by kind: files/erd_version are required restatements
 (the refreeze sanity check dies if omitted) and changed_files is a transient
@@ -53,6 +60,7 @@ from pathlib import Path
 
 # The id-bearing arrays that accumulate across milestones and therefore merge.
 MERGE_KEYS = ("routes", "schemas", "errors", "ui")
+REMOVE_KEYS = ("entry_points",) + MERGE_KEYS
 
 
 def die(msg: str) -> None:
@@ -74,6 +82,31 @@ def canon(entry: object) -> str:
     return json.dumps(entry, sort_keys=True, ensure_ascii=False)
 
 
+def removal_directives(staged: dict) -> dict[str, set[str]]:
+    """Parse D-137's staged-only, family-scoped tombstones fail-closed."""
+    raw = staged.get("remove", {})
+    if not isinstance(raw, dict):
+        die("staged remove directive must be an object")
+    unknown = sorted(set(raw) - set(REMOVE_KEYS))
+    if unknown:
+        die("staged remove directive names unknown family/families: "
+            + ", ".join(unknown))
+    parsed: dict[str, set[str]] = {}
+    for key in REMOVE_KEYS:
+        values = raw.get(key, [])
+        if not isinstance(values, list):
+            die(f"staged remove.{key} must be an array")
+        seen: set[str] = set()
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                die(f"staged remove.{key} entries must be non-empty strings")
+            if value in seen:
+                die(f"staged remove.{key} names {value} twice")
+            seen.add(value)
+        parsed[key] = seen
+    return parsed
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: contracts-merge.py <standing.json> <staged-partial.json>",
@@ -81,6 +114,7 @@ def main() -> int:
         return 2
     standing = load(sys.argv[1])
     staged = load(sys.argv[2])
+    removals = removal_directives(staged)
 
     # Scalar keys split two ways:
     #   * required restatements — files and erd_version: the refreeze sanity
@@ -94,7 +128,7 @@ def main() -> int:
     #     silent omission must not strip the frozen spec of its coder
     #     protections, external captures, test pins, or smoke checks just
     #     because a behavioural freeze forgot to restate them.
-    merged = dict(staged)
+    merged = {key: value for key, value in staged.items() if key != "remove"}
     for key in ("no_edit_files", "externals", "test_mapping", "smoke_checks"):
         if key not in merged and key in standing:
             merged[key] = standing[key]
@@ -120,6 +154,12 @@ def main() -> int:
             standing_by_id[eid] = entry
             standing_order.append(eid)
 
+        removed_set = removals[key]
+        for eid in sorted(removed_set):
+            if eid not in standing_by_id:
+                die(f"remove.{key} names {eid}, which is not present in "
+                    f"standing contracts.{key}")
+
         # The delta's changed set for this array is the ids it stages.
         staged_by_id: dict[str, object] = {}
         staged_order: list[str] = []
@@ -129,6 +169,8 @@ def main() -> int:
             eid = entry["id"]
             if eid in staged_by_id:
                 die(f"staged contracts.{key} names {eid} twice")
+            if eid in removed_set:
+                die(f"contracts.{key} entry {eid} is both staged and removed")
             # G2: a staged entry identical to standing changed nothing.
             if eid in standing_by_id and canon(entry) == canon(standing_by_id[eid]):
                 die(f"{key} entry {eid} is staged but byte-identical to "
@@ -136,13 +178,17 @@ def main() -> int:
                     f"entries (drop it, or it is a no-op)")
             staged_by_id[eid] = entry
             staged_order.append(eid)
-        changed_set = set(staged_order)
+        changed_set = set(staged_order) | removed_set
 
         # Produce the merged array: carried/updated entries in standing order,
         # then genuinely new entries in the delta's order.
         out: list[object] = []
         for eid in standing_order:
-            out.append(staged_by_id[eid] if eid in staged_by_id else standing_by_id[eid])
+            if eid not in removed_set:
+                out.append(
+                    staged_by_id[eid]
+                    if eid in staged_by_id else standing_by_id[eid]
+                )
         for eid in staged_order:
             if eid not in standing_by_id:
                 out.append(staged_by_id[eid])
@@ -164,13 +210,22 @@ def main() -> int:
         if key in standing or key in staged:
             merged[key] = out
 
-    # entry_points: union standing then delta, order-stable, de-duplicated.
+    # entry_points: explicit D-137 removals, then the standing+delta union.
     standing_eps = standing.get("entry_points") or []
     staged_eps = staged.get("entry_points") or []
+    if not isinstance(standing_eps, list) or not isinstance(staged_eps, list):
+        die("contracts.entry_points must be an array in both files")
+    removed_eps = removals["entry_points"]
+    for ep in sorted(removed_eps):
+        if ep not in standing_eps:
+            die(f"remove.entry_points names {ep}, which is not present in "
+                "standing contracts.entry_points")
+        if ep in staged_eps:
+            die(f"entry point {ep} is both staged and removed")
     seen: set[str] = set()
     eps: list[str] = []
     for ep in list(standing_eps) + list(staged_eps):
-        if ep not in seen:
+        if ep not in removed_eps and ep not in seen:
             eps.append(ep)
             seen.add(ep)
     merged["entry_points"] = eps

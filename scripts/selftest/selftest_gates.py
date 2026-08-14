@@ -5633,10 +5633,10 @@ def test_refreeze_ui_change_reaches_delta(freezable_repo):
 # --- D-136: staged contracts merge + PRD additive guard ----------------------
 # contracts.json enters refreeze as a staged merge artifact (only changed/new
 # id-array entries), reconstructed onto the standing file by contracts-merge.py
-# and proved to touch nothing it did not name. The four unit pins below are the
-# producer's contract; the two end-to-end pins arm it inside the real refreeze
-# path (Rule 6: a fixture-green producer and a suite-armed gate are separate
-# claims).
+# and proved to touch nothing it did not name. D-137 adds explicit removals
+# while omission remains carry. Unit pins cover the producer contract; the
+# end-to-end pins arm it inside the real refreeze path (Rule 6: a fixture-green
+# producer and a suite-armed gate are separate claims).
 
 _MERGE_STANDING = {
     "erd_version": 1, "files": ["src/app.py"],
@@ -5749,6 +5749,76 @@ def test_contracts_merge_explicit_empty_clears_scalar(tmp_path):
     assert merged["smoke_checks"] == {}
 
 
+def test_contracts_merge_explicit_removals(tmp_path):
+    """D-137 removes only exact family-scoped tombstones; omitted siblings
+    remain byte-identical, entry points use the same explicit operation, and
+    the transient directive never reaches the installed artifact."""
+    staged = {
+        "erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+        "remove": {
+            "routes": ["route:GET /a"],
+            "ui": ["ui:x"],
+            "entry_points": ["src.app:app"],
+        },
+    }
+    r = _run_merge(tmp_path, _MERGE_STANDING, staged)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    merged = json.loads(r.stdout)
+    assert [e["id"] for e in merged["routes"]] == ["route:GET /b"]
+    assert [e["id"] for e in merged["ui"]] == ["ui:y"]
+    assert merged["entry_points"] == []
+    assert "remove" not in merged
+
+
+def test_contracts_merge_unknown_removal_fails_closed(tmp_path):
+    """A misspelled or wrong-family tombstone is not an idempotent no-op:
+    it fails named, otherwise the obsolete standing contract would survive
+    while the freeze falsely appeared to retire it."""
+    staged = {
+        "erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+        "remove": {"routes": ["route:GET /missing"]},
+    }
+    r = _run_merge(tmp_path, _MERGE_STANDING, staged)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "route:GET /missing" in r.stderr, r.stderr
+    assert "not present" in r.stderr, r.stderr
+
+
+def test_contracts_merge_rejects_update_and_remove_conflict(tmp_path):
+    """One id cannot be changed and retired in the same staged delta."""
+    staged = {
+        "erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+        "routes": [
+            {"id": "route:GET /a", "method": "POST", "path": "/a",
+             "file": "src/app.py"}],
+        "remove": {"routes": ["route:GET /a"]},
+    }
+    r = _run_merge(tmp_path, _MERGE_STANDING, staged)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "route:GET /a" in r.stderr, r.stderr
+    assert "both staged and removed" in r.stderr, r.stderr
+
+
+def test_contracts_merge_rejects_malformed_remove_directive(tmp_path):
+    """The transient instruction is closed over known families and unique
+    string arrays; procedural typos never leak into the merged full schema."""
+    cases = [
+        ({"route": ["route:GET /a"]}, "unknown family"),
+        ({"routes": ["route:GET /a", "route:GET /a"]}, "names route:GET /a twice"),
+        ({"routes": "route:GET /a"}, "must be an array"),
+    ]
+    for i, (directive, expected) in enumerate(cases):
+        case_dir = tmp_path / str(i)
+        case_dir.mkdir()
+        staged = {
+            "erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+            "remove": directive,
+        }
+        r = _run_merge(case_dir, _MERGE_STANDING, staged)
+        assert r.returncode != 0, (r.stdout, r.stderr)
+        assert expected in r.stderr, r.stderr
+
+
 _PRD_STANDING = (
     "# What\n\nAcme tracks widgets for teams.\n\n"
     "## Acceptance criteria\n\n- AC-1: login works\n- AC-2: logout works\n"
@@ -5826,6 +5896,45 @@ def test_refreeze_rejects_touched_unchanged_contract(freezable_repo):
     combined = r.stdout + r.stderr
     assert "D-136" in combined, combined
     assert "route:GET /a" in combined, combined
+
+
+def test_refreeze_applies_contract_removal_and_records_delta(freezable_repo):
+    """End-to-end D-137: refreeze installs the merged artifact without the
+    retired route or transient tombstone, and DELTA-v2 records the removed id
+    through the existing changed_contract_ids channel."""
+    approved = freezable_repo / "scripts" / ".approved"
+    _seed_standing_route(approved)
+    standing = json.loads((approved / "contracts.json").read_text())
+    standing["entry_points"] = ["src.app:app"]
+    (approved / "contracts.json").write_text(json.dumps(standing))
+    (approved / "incoming" / "contracts.json").write_text(json.dumps({
+        "files": ["src/app.py"], "entry_points": [], "erd_version": 2,
+        "changed_files": ["src/app.py"],
+        "remove": {
+            "routes": ["route:GET /a"],
+            "entry_points": ["src.app:app"],
+        },
+    }))
+    r = _run_refreeze_install(freezable_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    merged = json.loads((approved / "contracts.json").read_text())
+    assert merged["routes"] == []
+    assert merged["entry_points"] == []
+    assert "remove" not in merged
+    delta = json.loads((approved / "DELTA-v2.json").read_text())
+    assert "route:GET /a" in delta["changed_contract_ids"], delta
+    assert "src.app:app" in delta["changed_contract_ids"], delta
+
+
+def test_contract_removal_docs_match_staged_directive():
+    """Code, TPM instructions, and decision ledger travel together (D-137)."""
+    role = (SCRIPTS.parent / "docs" / "TPM-ROLE.md").read_text()
+    decisions = (SCRIPTS.parent / "docs" / "DECISIONS.md").read_text()
+    compact_role = " ".join(role.split())
+    assert '"remove"' in compact_role
+    assert "`routes`, `schemas`, `errors`, `ui`, and `entry_points`" in compact_role
+    assert "D-137" in compact_role
+    assert "D-137" in decisions
 
 
 def test_check_spec_delta_validates_merged_not_partial_contracts(tmp_path):

@@ -210,11 +210,12 @@ fi
 # consolidation point, and the next EM cannot mistake the old slice for new.
 # --- D-136: staged contracts merge (PRODUCER, never authority) ---------------
 # contracts.json enters as a STAGED MERGE ARTIFACT, not a full-file
-# replacement: the TPM stages only the changed/new id-array entries (each
-# `file`-pinned) and contracts-merge.py reconstructs the full contracts.json by
-# overlaying them onto the standing file, proving mechanically that it touched
-# nothing it did not name (byte-identical carried remainder; a staged entry
-# identical to standing fails closed). The merge runs BEFORE every
+# replacement: the TPM stages only changed/new id-array entries (each
+# `file`-pinned) plus D-137's explicit family-scoped `remove` tombstones;
+# contracts-merge.py reconstructs the full contracts.json by overlaying them
+# onto the standing file, proving mechanically that it touched nothing it did
+# not name (byte-identical carried remainder; a staged entry identical to
+# standing fails closed; omission never deletes). The merge runs BEFORE every
 # contracts-consuming gate so each sees the MERGED file, never the raw partial:
 # check-spec-delta (D-107/D-122 — a partial would read every omitted id-array
 # as changed and defeat the invisible-change guard), D-56, INV-4, the D-78
@@ -228,7 +229,7 @@ if [ -f "$IN/contracts.json" ] && [ "$V" -gt 0 ] && [ -f "$APPROVED/contracts.js
   MERGED_CONTRACTS=".pipeline-state/refreeze-merged-contracts.json"
   python3 scripts/contracts-merge.py "$APPROVED/contracts.json" "$IN/contracts.json" \
     > "$MERGED_CONTRACTS" \
-    || die "staged contracts merge rejected (D-136) — see the id named above; the TPM stages only changed/new entries onto the standing contracts.json"
+    || die "staged contracts merge rejected (D-136/D-137) — see the id named above; the TPM stages only changed/new entries or explicit removals onto the standing contracts.json"
 fi
 
 if ! SPEC_DELTA_KIND=$(python3 scripts/check-spec-delta.py \

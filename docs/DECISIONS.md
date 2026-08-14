@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-137 — 2026-08-13 — Contract retirement uses explicit family-scoped tombstones; omission still carries
+
+**Decision:** A staged post-v1 `contracts.json` may retire standing contract surface only through a transient top-level `remove` object whose allowed keys are `routes`, `schemas`, `errors`, `ui`, and `entry_points`, with arrays naming exact standing ids/symbols. `scripts/contracts-merge.py` applies those tombstones before emitting the merged full artifact and strips `remove` from the output. Every tombstone must name an existing item in the stated family, appear once, and not also be staged as an update; unknown, cross-family, duplicate, and update+remove directives fail closed with the name. An omitted contract remains byte-identical carried content under D-136. The ordinary old-vs-new DELTA producer already records removed ids and entry points in `changed_contract_ids`, so retirement participates in affected-task reset and verdict scope without a second bookkeeping channel.
+
+**Alternatives considered:** (a) infer deletion from omission — rejected because omission is D-136's safe carry signal and making it destructive restores silent loss; (b) require a full returned id-array minus the retired entry — rejected because it makes the TPM reproduce accumulated surface it did not receive and cannot vouch for; (c) use one global id list — rejected because a family-scoped directive detects wrong-family names and avoids ambiguity; (d) install tombstones in the frozen full schema — rejected because `remove` is merge procedure, not standing product surface, and must disappear before every downstream gate.
+
+**Reason:** D-136 made additions and updates milestone-minimal but intentionally made omission non-destructive. Without a separate explicit retirement operation, obsolete routes, schemas, errors, UI locks, and entry points could only accumulate forever or force a risky full-file replacement. Family-scoped tombstones complete the staged-delta lifecycle while preserving D-136's central invariant: context not returned by the TPM is carried byte-identical, never silently deleted.
+
+**Do not suggest:** treating omission as deletion; accepting an unknown tombstone as an idempotent no-op (a typo would silently retain the obsolete contract); allowing one item to be both changed and removed; retaining `remove` in installed `scripts/.approved/contracts.json`; adding a second DELTA field for removals (the existing old-vs-new producer already emits removed names in `changed_contract_ids`). Cross-repo note: derived projects receive the merger/refreeze/selftests via template sync, while their project-owned TPM role and decision ledger receive this entry in the same alignment batch.
+
 ## D-136 — 2026-08-12 — contracts.json refreezes as a staged merge artifact, not a full-file replacement (SHAPE A)
 
 **Decision:** contracts.json changes enter `refreeze.sh` as a STAGED MERGE ARTIFACT, not a full-file replacement. The TPM returns only changed/new entries (each carrying its `file` pin per D-120/D-124) in `scripts/.approved/incoming/contracts.json`; refreeze merges them onto the standing contracts.json and verifies mechanically: every entry the delta does NOT name changed must remain byte-identical (checksum the untouched remainder); any touched-but-unexpected entry fails closed with the id named; new entry ids must appear in the delta's changed set; entry_points derive from the merged file under the existing deterministic rule. The merge is a PRODUCER: the result still faces the full existing freeze gates (`check-spec-delta`, `check-test-surface`, pin-gate, live interface) — never an authority. The PRD gets an additive-only guard: a staged PRD must contain the standing capsule text unchanged; silent removal of historical acceptance criteria is a fail-closed error (supersessions go through ERD-DELTA as today).
@@ -1678,4 +1688,3 @@ Doc guards catch the LLM's *intent*; mechanical gates catch the *result*. Both h
 - Reduced "AGENTS.md symlinks to CLAUDE.md" mentions from 5 to 3 (one in prose + 2 short callouts)
 
 ---
-
