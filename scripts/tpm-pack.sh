@@ -9,9 +9,14 @@
 # script removes the operator's courier burden: one command packs the small
 # milestone slice a TPM session needs into a single copy-pasteable blob.
 #
-# Milestone relevance (D-116/D-117/D-120): the product context is a capsule
-# plus the current changed-acceptance slice; the standing architecture is
-# rules plus a generated file map; contracts contain only in-scope bodies.
+# Milestone relevance (D-116/D-117/D-120/D-141): the product context is a
+# capsule plus the current changed-acceptance slice; the standing
+# architecture is rules plus a generated file map; contracts arrive in TWO
+# stages (D-141) — the stage-1 bundle carries the COMPLETE interface index
+# (every interface with its owning file, names and pins only, never bodies:
+# nothing the accumulated spec holds is hidden by the previous milestone's
+# inventory), and full bodies arrive only for the files the TPM names after
+# hearing the new feature's intent (stage-2: tpm-pack.sh --contracts-for).
 # Every missing or failed slice falls back to its full artifact with a stderr
 # warning — never a silent context loss.
 #
@@ -26,6 +31,10 @@
 #   --clipboard: copy to clipboard instead (pbcopy/wl-copy/xclip) — the
 #   human-at-a-terminal convenience, now opt-in. --stdout is accepted as a
 #   no-op for backward compatibility.
+# Usage: tpm-pack.sh --contracts-for <file> [<file>...]  (stage 2 of 2, D-141)
+#   after the TPM names the files it needs bodies for, this small follow-up
+#   bundle carries the FULL contract bodies of exactly those files (plus the
+#   conservative unpinned carries, D-120). Optional leading --clipboard.
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
@@ -35,11 +44,17 @@ ALLOWED_ARTIFACTS=$(python3 scripts/spec_artifacts.py describe) || {
   exit 1
 }
 WANT_CLIPBOARD=0
+MODE=pack
 case "${1:-}" in
-  --clipboard) WANT_CLIPBOARD=1 ;;
+  --clipboard) WANT_CLIPBOARD=1; shift ;;
   --stdout|"") ;;
-  *) echo "tpm-pack: unknown option ${1} (usage: tpm-pack.sh [--clipboard])" >&2; exit 1 ;;
+  --contracts-for) MODE=bodies; shift ;;
+  *) echo "tpm-pack: unknown option ${1} (usage: tpm-pack.sh [--clipboard] | tpm-pack.sh --contracts-for <file> [<file>...])" >&2; exit 1 ;;
 esac
+if [ "$MODE" = bodies ] && [ $# -eq 0 ]; then
+  echo "tpm-pack: --contracts-for needs at least one file (usage: tpm-pack.sh --contracts-for <file> [<file>...])" >&2
+  exit 1
+fi
 
 emit() {  # emit <path> [label]
   echo "=== CONTEXT FILE: ${2:-$1} ==="
@@ -292,11 +307,16 @@ HDR
     fi
     contracts_slice="$(mktemp "${TMPDIR:-/tmp}/contracts-delta.XXXXXX")"
     if [ -f "$APPROVED/contracts.json" ] \
-      && python3 scripts/contracts-delta.py "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null; then
-      emit "$contracts_slice" "$APPROVED/contracts.json"
+      && python3 scripts/contracts-delta.py --index "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null; then
+      emit "$contracts_slice" "$APPROVED/contracts.json — COMPLETE interface index (D-141: names + owning files only)"
+      echo "The block above is the COMPLETE interface index (D-141): every interface in the accumulated"
+      echo "spec, with its owning file (no bodies). If the next feature needs full bodies of specific"
+      echo "files, reply naming them; the CEO will relay \`tpm-pack.sh --contracts-for <files>\` as a"
+      echo "small stage-2 follow-up bundle."
+      echo
     else
       [ -f "$APPROVED/contracts.json" ] && emit "$APPROVED/contracts.json"
-      echo "tpm-pack: contracts slice generation failed — shipped the full contracts.json" >&2
+      echo "tpm-pack: contracts index generation failed — shipped the full contracts.json" >&2
     fi
     rm -f "$contracts_slice"
   else
@@ -317,7 +337,37 @@ anything outside the sentinels is treated as discussion, not artifact.
 FTR
 }
 
-OUT="$(bundle)"
+contracts_bodies() {  # stage-2 TPM intake (D-141): full bodies for named files
+  if [ ! -f "$APPROVED/contracts.json" ]; then
+    echo "tpm-pack: no frozen contracts yet — nothing to slice" >&2
+    return 1
+  fi
+  cat <<'HDR'
+--- TPM CONTRACTS FOLLOW-UP (stage 2 of 2, D-141): full bodies for the requested files ---
+The stage-1 bundle carried the complete interface index; this carries the full
+bodies of exactly the files you named, so the delta you author matches the
+standing shapes. Entries without a pin are carried in full on every slice
+(the conservative D-120 rule), all others only when their owning file is one
+you named.
+
+HDR
+  slice="$(mktemp "${TMPDIR:-/tmp}/contracts-bodies.XXXXXX")"
+  if SWBP_CONTRACT_FILES="$*" \
+    python3 scripts/contracts-delta.py "$APPROVED/contracts.json" > "$slice" 2>/dev/null; then
+    emit "$slice" "$APPROVED/contracts.json — full bodies for: $*"
+  else
+    rm -f "$slice"
+    echo "tpm-pack: contracts body slice generation failed" >&2
+    return 1
+  fi
+  rm -f "$slice"
+}
+
+if [ "$MODE" = bodies ]; then
+  OUT="$(contracts_bodies "$@")"
+else
+  OUT="$(bundle)"
+fi
 
 copy_cmd=""
 if command -v pbcopy >/dev/null 2>&1; then copy_cmd="pbcopy"
