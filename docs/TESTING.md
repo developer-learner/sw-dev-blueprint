@@ -10,7 +10,8 @@
 
 ## Who writes the tests
 
-The TPM (frontier LLM in a web chat) authors the frozen suite alongside
+The TPM (the CEO-assigned spec seat, D-139 — web chat, scoped agent, or the
+same LLM already on the job) authors the frozen suite alongside
 the ERD/contracts, at spec time, **before the implementation exists**
 (INV-1, D-31). They enter the repo only via `scripts/refreeze.sh` — which
 auto-applies once every mechanical preflight is green (D-121) — and are

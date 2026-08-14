@@ -646,15 +646,6 @@ if [ "$DELTA_BASELINE_V" -lt "$FROZEN_V" ]; then
 elif [ -f "$APPROVED/DELTA-v$FROZEN_V.json" ]; then
   ACTIVE_DELTA_FILES+=("$APPROVED/DELTA-v$FROZEN_V.json")
 fi
-# D-138: validate-plan's contract-claim gate consumes this SAME D-113 range.
-# A newline-delimited environment value keeps every later validator call
-# (--topo/--task included) on the current milestone without duplicating the
-# baseline computation or falling back to the accumulated DELTA history.
-SWBP_ACTIVE_DELTA_FILES=""
-if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
-  printf -v SWBP_ACTIVE_DELTA_FILES '%s\n' "${ACTIVE_DELTA_FILES[@]}"
-fi
-export SWBP_ACTIVE_DELTA_FILES
 # END D-113 active-delta range
 
 # --- Plan-revision budget is per freeze: keyed to the spec version itself.

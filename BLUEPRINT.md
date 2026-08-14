@@ -25,7 +25,7 @@ the scope its capability class can carry, and the shell owns all procedure.
 | Tier | Where it runs | Produces |
 |------|---------------|----------|
 | **CEO** (human) | conversation | business intent; approvals |
-| **TPM** (frontier LLM) | **web chat** (D-38) or scoped repo agent via `tpm-agent.sh` (D-39) | PRD, ERD + `contracts.json`, the test suite |
+| **TPM** (CEO-assigned seat) | **web chat** (D-38), scoped repo agent via `tpm-agent.sh` (D-39), or the same LLM already on the job — CEO names the holder per session (D-139) | PRD, ERD + `contracts.json`, the test suite |
 | **Conductor** (any capable LLM) | whatever chat agent the CEO chooses (Claude Code, OpenCode, a plain shell) | no artifacts — runs the scripts, shuttles TPM I/O, reports to the CEO (D-40) |
 | **EM** (mid-tier LLM) | one HTTP completion, no tools (`scripts/llm-call.sh`, D-53) | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) — shell writes both |
 | **Coder** (local LLM) | one HTTP completion, no tools (`scripts/llm-call.sh`, D-53) | one file per task, sentinel-wrapped in the reply |
@@ -96,7 +96,7 @@ The full stack this system runs on. Know every object before operating it.
 | **LM Studio** | The local inference server (`localhost:1234`) for the coder tier (and, typically, the EM tier). Most common failure point — verify the correct non-thinking model is loaded (Pre-Flight Step 0). |
 | **scripts/llm-call.sh** | The ONLY way the pipeline talks to a model (D-53): one bare HTTP completion per call, no harness, no tools, no memory between calls. Reads the CEO's role→model mapping and hard-halts rather than silently substituting a model if a role is unmapped. |
 | **A conductor (any chat agent)** | The CEO's single interface (D-40) — Claude Code, OpenCode, or anything similar. Runs the scripts and reports back; the CEO runs no commands. Never in the trust-critical path: EM/coder don't go through it (D-53), so the choice of conductor is a preference, not an architecture decision. |
-| **TPM (frontier LLM)** | Runs in a web chat the human operates, outside the conductor. Authors the spec and the test suite; answers escalation batches. Never touches the repo — its output enters via `scripts/refreeze.sh`. |
+| **TPM (CEO-assigned seat)** | The LLM seat that authors the spec and the test suite and answers escalation batches — who holds it per session is the CEO's call (D-139): a web chat the human operates (D-38), a scoped repo agent (D-39), or the same LLM already on the job. Never touches the repo — its output enters via `scripts/refreeze.sh`. |
 | **EM (mid-tier LLM)** | One `scripts/llm-call.sh` completion, no tools. Decomposes the frozen spec into `tasks/plan.json`; diagnoses failures on consult. The shell writes `tasks/plan.json` / `diagnosis.json` from its reply — the model never touches the filesystem. Advisory — the shell decides. |
 | **Coder (local LLM)** | One `scripts/llm-call.sh` completion, no tools. MUST be non-thinking; the CEO picks which loaded LM Studio model backs it in `~/.config/sw-dev-blueprint/models.env` — the repo never names a model. Replies with the one file its task names, sentinel-wrapped; the shell writes it to disk. |
 | **pytest / CI** | The test harness = **ground truth**, machine-readable via `.cache/test-report.json`. The suite is TPM-authored and frozen; the shell runs it. |
@@ -235,6 +235,11 @@ When unsupervised, STOP and write a clear note in `tasks/CURRENT.md` (under
 - LM Studio at `localhost:1234` is unreachable, or podman is unavailable
   (the orchestrator refuses to run unsandboxed)
 - The frozen spec cannot be met as written
+- A fix is diagnosed as needing a TPM round-trip or a milestone
+  (orchestrate) run — that is a launch decision for the human, not an
+  automatic route: inform the CEO and ask, including who will take the TPM
+  seat if one is needed (D-139; the TPM seat may be the same LLM already on
+  the job, by explicit assignment)
 
 The dangerous failure is acting confidently when wrong — not stopping.
 
@@ -394,7 +399,8 @@ If any check fails, STOP and report exactly which one. Do not proceed.
 ## The System in One Diagram
 
 ```
-CEO business intent ──► TPM (frontier LLM — web chat D-38 or scoped repo agent D-39)
+CEO business intent ──► TPM (CEO-assigned seat: web chat D-38, scoped agent D-39,
+                          or the same LLM already on the job — D-139)
                           │  writes PRD + ERD/contracts + the test suite
                           ▼
             scripts/refreeze.sh  ← mechanical preflights ARE the gate; D-95
@@ -547,9 +553,9 @@ description, stack, structure, contents — you derive from talking to them
 and write yourself. The grep gate, not your self-report, confirms you
 finished.
 
-**After first commit:** the project is live. The first feature starts in the
-TPM web chat (see `docs/TPM-ROLE.md`), freezes via `scripts/refreeze.sh`, and
-builds via `scripts/orchestrate.sh`.
+**After first commit:** the project is live. The first feature starts at the
+TPM seat — the CEO names who holds it (D-139; see `docs/TPM-ROLE.md`) — freezes
+via `scripts/refreeze.sh`, and builds via `scripts/orchestrate.sh`.
 
 ---
 
@@ -557,7 +563,7 @@ builds via `scripts/orchestrate.sh`.
 
 | Tier | Model class | Why |
 |------|-------------|-----|
-| TPM | Frontier (web chat, human-operated) | Spec authorship and test authorship are the highest-leverage, hardest-to-verify work — concentrate the strongest model there, at conversation cadence (no API cost) |
+| TPM | Frontier (CEO-assigned seat, D-139) | Spec authorship and test authorship are the highest-leverage, hardest-to-verify work — concentrate the strongest human-approved model there, at conversation cadence (no API cost) |
 | EM | Mid-tier | Decomposition and diagnosis need reasoning but are schema-validated — a mechanical gate catches what the model gets wrong |
 | Coder | Local (LM Studio, CEO-chosen model) | Free, fast; atomic one-file tasks with exact briefs are exactly what coder-class local models do well |
 | Tests | None (shell runs pytest) | Running tests requires no judgment; authoring them does (TPM) |

@@ -1,8 +1,9 @@
 # ESCALATION.md — The TPM Round-Trip
 
-> The TPM (frontier LLM) runs in a **web chat operated by a human** — it is not
-> a callable service. The filesystem is the only integration between the web
-> chat and this repo. Every escalation is therefore a manual browser
+> The TPM seat (CEO-assigned per session, D-139) may run in a **web chat
+> operated by a human** — it is not necessarily a callable service. The
+> filesystem is the only integration between the web chat and this repo.
+> Every escalation is therefore a manual browser
 > round-trip, and minimizing round-trips is an explicit design goal (D-29):
 > the orchestrator **batches** escalations and halts once, at a stopping
 > point, after every runnable subtree has been driven as far as it can go.

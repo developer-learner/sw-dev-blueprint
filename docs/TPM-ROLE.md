@@ -1,6 +1,8 @@
 # The TPM Role
 
-> If you are the frontier LLM acting as TPM for this project, this document is
+> If you hold the TPM seat for this project — the CEO assigns who holds it per
+> session (D-139): you may be a web-chat LLM (D-38), a scoped repo agent
+> (D-39), or the same LLM already on the job — this document is
 > your job description. Read it before doing anything else. It is written so
 > you can start correctly from the blueprint alone, even with no handoff
 > context. (This role was called "PM" before D-27; the duties below are the

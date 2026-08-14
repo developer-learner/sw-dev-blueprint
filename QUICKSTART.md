@@ -140,8 +140,10 @@ done (D-112; the full suite is an on-demand `--full-suite` check).
 
 Go deeper strictly on demand:
 
-- **Your own project (milestone 1):** a frontier web chat authors the four
-  artifacts — read `docs/TPM-ROLE.md` (how to run that chat) and
+- **Your own project (milestone 1):** name your TPM seat — a frontier web
+  chat, `scripts/tpm-agent.sh`, or the LLM already on the job (D-139) — and
+  have it author the four
+  artifacts — read `docs/TPM-ROLE.md` (the seat's job description) and
   `docs/CEO-PLAYBOOK.md` (the operator rhythm), then repeat Steps 4–6 with
   its output. Note: a real project also runs the curated cleanup
   (BLUEPRINT.md Bootstrap Step 4 — delete the one-shot `bootstrap.sh` /

@@ -3,7 +3,9 @@
 > A GitHub template repository for LLM-assisted software development.
 > One-time setup. Every new project bootstraps from this.
 >
-> **Execution model:** Tell the TPM (frontier LLM, web chat) what you want. It
+> **Execution model:** Tell the TPM — the spec seat, named by you per session
+> (D-139: a frontier LLM in a web chat, a scoped repo agent, or the LLM already
+> on the job) — what you want. It
 > writes the PRD, the contracts, and the tests. The freeze applies itself once
 > every mechanical preflight is green (D-121). The shell
 > orchestrator drives an EM (mid-tier) to plan and a local coder to execute, one
@@ -71,7 +73,7 @@ container-image builds and model downloads.
 | A **~27B-class dense local model, non-thinking, 32K context** | The proven floor for the coder/EM seats — smaller or heavily-MoE models failed task-level work in this repo's own history (D-12/D-14/D-66). Quantization: 4-bit is the CEO default (D-72); keep an 8-bit variant loadable for reactive escalation on the D-72 trigger signals | "Non-thinking" is a hard rule (BLUEPRINT.md Rule 1) |
 | **ruff** inside Linux | `refreeze.sh` lints staged tests at the freeze door and fails closed without it (D-67) | Install it in the dev VM |
 | **python3, git**; `gh` optional | Gate scripts, version control, template drift-check | — |
-| A **frontier LLM web chat** (any) | Plays the TPM seat: writes the spec + tests you freeze | No API needed — the filesystem is the only integration (D-29) |
+| A **frontier LLM** (any — web chat, agent CLI, or the LLM already on the job) | Plays the TPM seat you name per session (D-139): writes the spec + tests you freeze | No API needed — the filesystem is the only integration (D-29) |
 
 Want to see what you're signing up for before installing anything? Read
 **`examples/minimal-spec/`** — a complete, real frozen spec (PRD, ERD,
@@ -100,7 +102,7 @@ cd my-new-project
 ## The working loop — capability ladder (D-27)
 
 ```
-CEO business intent ──► TPM (frontier LLM, WEB CHAT — outside the conductor)
+CEO business intent ──► TPM (CEO-assigned seat, D-139 — web chat, scoped agent, or the same LLM)
                           │  writes PRD + ERD/contracts + the test suite
                           ▼
             scripts/refreeze.sh  ← mechanical preflights are the gate; auto-applies on green (D-95)
@@ -178,7 +180,8 @@ see BLUEPRINT.md Rule 9.
 
 ## Using the tiers
 
-1. **TPM (web chat)** — describe what you want in the frontier chat. It returns
+1. **TPM (the seat you name, D-139)** — tell the assigned LLM what you want
+   (web chat, scoped agent, or the same LLM on the job). It returns
    the PRD, the ERD with machine-readable `contracts.json`, and the test suite.
    Save them under `scripts/.approved/incoming/` and run `scripts/refreeze.sh`:
    `--diff` previews; the freeze auto-applies on green preflights (D-121) —

@@ -1,7 +1,8 @@
 # examples/minimal-spec — a complete frozen spec, linkbox-sized
 
-This is a **real, working example** of the four artifacts the TPM (your
-frontier chat) authors before the pipeline builds anything. This exact spec
+This is a **real, working example** of the four artifacts the TPM — the spec
+seat you name per session (D-139) —
+authors before the pipeline builds anything. This exact spec
 was frozen and built end-to-end by the pipeline on 2026-07-16: two tasks,
 two source files, 21 frozen tests, verdict green on the second run, and
 the result was a working personal bookmarks API.

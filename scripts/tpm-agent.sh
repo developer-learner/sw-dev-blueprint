@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # tpm-agent.sh — launch the TPM as a scoped repo agent (D-39).
 #
-# D-38 kept the TPM chat-side with an air gap; D-39 promotes it to a repo
-# agent on the CEO's explicit decision, with the containment D-38(b) recorded:
+# D-139: the TPM is a CEO-assigned seat — run this only after the CEO names
+# this agent as the TPM holder for the session. D-38 kept the TPM chat-side
+# with an air gap; D-39 promotes it to a repo agent on the CEO's explicit
+# decision, with the containment D-38(b) recorded:
 #
 #   WRITE lane   .tpm/outbox/ only (harness-allowed; everything protected is
 #                harness-denied; anything else prompts the operator). Nothing

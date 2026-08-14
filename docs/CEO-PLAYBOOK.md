@@ -38,10 +38,13 @@ LM Studio — no specific model required, D-41) and `scripts/bootstrap.sh`.
 
 ## Each milestone
 
-1. **Start the TPM.** Ask the conductor to launch `scripts/tpm-agent.sh`
-   (or use a web chat — see Fallback). It's a frontier agent already scoped
-   to its lane (reads the repo except `src/`, writes only its outbox, runs
-   nothing) and briefed on its role.
+1. **Name the TPM seat (D-139).** The TPM is whoever YOU assign for this
+   session — the conductor must not launch TPM or milestone work on its own
+   judgment, and must not assume the seat belongs to a separate web-chat
+   model. Choose: `scripts/tpm-agent.sh` (a scoped repo agent — reads the
+   repo except `src/`, writes only its outbox, runs nothing, briefed on its
+   role), a plain web chat (see Fallback), or the same LLM already on the
+   job (tell the conductor explicitly).
 2. **State business outcomes in plain language.** For iterative builds:
    *"Break this into milestones. Spec milestone 1 only — design its
    interfaces so later milestones add to them without changing them."*
@@ -108,7 +111,7 @@ tools handle the moments where you want the resources back (D-97):
 
 ## Fallback: TPM without repo access
 
-If you'd rather run the TPM in a plain web chat (or don't have the agent
+If you assign the TPM seat to a plain web chat (or don't have the agent
 CLI): the conductor runs `scripts/tpm-pack.sh` and gives you the briefing
 for one paste into the chat; you paste the TPM's reply back to the
 conductor, which stages it via `scripts/tpm-unpack.sh`; then step 3 as
