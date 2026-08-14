@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-143 — 2026-08-14 — Retire the S7 ERD-section-size advisory (D-85)
+
+**Decision:** The freeze-time S7 advisory (an ERD section exceeding 1200 chars would warn that downstream plan briefs might exceed `MAX_BRIEF_CHARS`) is retired and removed from `refreeze.sh`. Its absence is now pinned by an inverted selftest. This is the D-85 selection rule applied: a paid freeze-time advisory that has produced no behavioral change is retired rather than kept to demonstrate diligence.
+
+**Alternatives considered:** (a) Keep S7 as a soft early signal — rejected: it predicts exactly what the plan gate enforces harder (mass rejection over `MAX_BRIEF_CHARS`), so it can never act before the gate with information the gate lacks; the D-89 class was retired in the same ledger for the same "duplicated the plan gate's already-harder check" reason. (b) Lower S7's threshold to act earlier — rejected: a threshold that fires on every real freeze is noise, not signal, and the plan gate remains the enforcement point either way.
+
+**Reason:** S7 never blocked a freeze (advisory by construction) and has no documented behavioral change in its track record — the v105 consolidation freeze printed it to a verdict nobody consumed. D-56 (undeclared-externals heuristic, caught the v8/v9 class) and D-80 (D-68 debt sweep, forced the M28 v54 recut and remediation directives) are retained: both have demonstrated blast radius exceeding their runtime cost. The plan gate's `MAX_BRIEF_CHARS` rejection remains the hard, authoritative check.
+
+**Do not suggest:** reintroducing an ERD section-size advisory at freeze time; moving S7 lower/higher rather than deleting it; making the plan-gate brief check an advisory (it stays a hard halt — the EM cannot act on a soft signal); treating D-56/D-80 as equally retired without their behavioral-change evidence.
+
 ## D-142 — 2026-08-14 — Reuse mypy green verdicts only for an identical typing fingerprint
 
 **Decision:** `run_tests` stores a successful mypy verdict in the current milestone's ephemeral `.pipeline-state/mypy-green/` directory, keyed by a SHA-256 fingerprint of the exact mypy target list plus every `src/**/*.py` file and the repository inputs that determine type-check behavior: mypy/config files, dependency manifests and locks, `Containerfile`, `scripts/sandbox-run.sh`, `MYPYPATH`, and `MYPY_CONFIG_FILE`. A matching marker skips only mypy; pytest still runs for every acceptance/verdict invocation. Mypy failures are never cached. Scoped and whole-tree target sets have distinct fingerprints, and any fingerprinting or marker-write failure halts rather than using an unknown result.

@@ -7114,9 +7114,11 @@ def test_refreeze_accepts_url_aware_httpx_mock(freezable_repo):
     assert "S6" not in r.stdout + r.stderr
 
 
-def test_refreeze_warns_oversized_erd_section(freezable_repo):
-    """S7: an ERD section exceeding 1200 chars produces an advisory warning
-    but does not halt the freeze."""
+def test_refreeze_no_longer_warns_oversized_erd_section(freezable_repo):
+    """S7 was retired per D-85 (dead-weight advisory: it predicted exactly the
+    plan gate's harder MAX_BRIEF_CHARS rejection, never blocked a freeze, and
+    produced no behavioral change). An oversized ERD section now freezes with
+    NO S7 warning — the absence assertion is the detection (Rule 6)."""
     approved = freezable_repo / "scripts" / ".approved"
     big_section = "x " * 700  # 1400 chars
     (approved / "incoming" / "ERD.md").write_text(
@@ -7126,8 +7128,7 @@ def test_refreeze_warns_oversized_erd_section(freezable_repo):
     )
     r = _run_refreeze_diff(freezable_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "WARNING (S7)" in r.stdout
-    assert "Oversized section" in r.stdout
+    assert "WARNING (S7)" not in r.stdout + r.stderr
 
 
 def test_tpm_shuttle_carries_erd_delta_end_to_end(tmp_path):

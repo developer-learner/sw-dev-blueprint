@@ -512,36 +512,6 @@ if [ -n "$SWEEP_FILES" ]; then
   fi
 fi
 
-# --- S7: ERD section size advisory (brief overrun warning) ---------------
-# An ERD section exceeding 1200 chars will likely overflow MAX_BRIEF_CHARS
-# (2500) downstream when the EM builds the plan brief. Advisory, not a halt:
-# the right response may be to restructure, split, or accept the risk — a
-# TPM call. Fires only on staged files (the approved copy was checked at
-# its own freeze).
-for _s7f in ERD.md ERD-DELTA.md; do
-  [ -f "$IN/$_s7f" ] || continue
-  _S7_OUT=$(python3 - "$IN/$_s7f" 1200 <<'PYS7'
-import re, sys
-path, limit = sys.argv[1], int(sys.argv[2])
-text = open(path).read()
-parts = re.split(r"^(## .+)$", text, flags=re.MULTILINE)
-for i in range(1, len(parts), 2):
-    body = parts[i + 1] if i + 1 < len(parts) else ""
-    chars = len(body.strip())
-    if chars > limit:
-        print(f"  {parts[i].strip()}: {chars} chars (threshold {limit})")
-PYS7
-  )
-  if [ -n "$_S7_OUT" ]; then
-    echo ""
-    echo "  WARNING (S7): ERD section(s) in $_s7f exceed 1200 chars — downstream"
-    echo "  plan briefs will likely exceed MAX_BRIEF_CHARS and trigger the plan"
-    echo "  gate's mass rejection. Trim or restructure before the pipeline burns"
-    echo "  EM calls against an impossible brief:"
-    echo "$_S7_OUT"
-  fi
-done
-
 if [ "$MODE" = "diff" ]; then
   echo ""
   echo "DIFF-SHA: $DIFF_SHA"
