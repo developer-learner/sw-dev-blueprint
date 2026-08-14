@@ -209,6 +209,47 @@ def validate(staging: Path, approved: Path, repo: Path, current_version: int,
     errors: list[str] = []
     if contract_delta:
         incoming = load_json(contracts_path)
+        files = {
+            value for value in incoming.get("files", [])
+            if isinstance(value, str) and value
+        }
+        no_edit_files = {
+            value for value in incoming.get("no_edit_files", [])
+            if isinstance(value, str) and value
+        }
+        current = load_json(approved / "contracts.json")
+        evidenced_files = set(changed_files) | no_edit_files
+        for key in ("routes", "schemas", "errors", "ui"):
+            current_entries = {
+                entry.get("id"): entry
+                for entry in current.get(key, [])
+                if isinstance(entry, dict) and entry.get("id")
+            }
+            for entry in incoming.get(key, []):
+                if not isinstance(entry, dict) or not entry.get("id"):
+                    continue
+                if entry != current_entries.get(entry["id"]):
+                    pin = entry.get("file")
+                    if isinstance(pin, str) and pin:
+                        evidenced_files.add(pin)
+                    elif len(files) == 1:
+                        evidenced_files.update(files)
+        current_smokes = current.get("smoke_checks", {})
+        incoming_smokes = incoming.get("smoke_checks", {})
+        if isinstance(current_smokes, dict) and isinstance(incoming_smokes, dict):
+            evidenced_files.update(
+                file for file, command in incoming_smokes.items()
+                if current_smokes.get(file) != command
+            )
+        unexplained_inventory = sorted(files - evidenced_files)
+        if unexplained_inventory:
+            errors.append(
+                "contracts.files carries file(s) outside this milestone's "
+                "declared work: " + ", ".join(unexplained_inventory)
+                + " — every inventory member must be in changed_files "
+                "(coder work) or no_edit_files (explicit acceptance-only "
+                "carry); remove accumulated prior-milestone files"
+            )
         mapping = incoming.get("test_mapping", {})
         if not isinstance(mapping, dict):
             errors.append("contracts.test_mapping must be an object")
@@ -219,7 +260,6 @@ def validate(staging: Path, approved: Path, repo: Path, current_version: int,
                 for line in nodeids_path.read_text().splitlines()
                 if line.strip()
             } if nodeids_path.is_file() else set()
-            files = set(incoming.get("files", []))
             for node_id, pinned in sorted(mapping.items()):
                 if node_id not in nodeids:
                     errors.append(
@@ -232,7 +272,6 @@ def validate(staging: Path, approved: Path, repo: Path, current_version: int,
                         f"contracts.test_mapping pins {node_id} to "
                         f"{pinned}, which is not in contracts.files"
                     )
-        current = load_json(approved / "contracts.json")
         for key in ("routes", "schemas", "errors"):
             incoming_entries = {
                 e.get("id"): e for e in incoming.get(key, [])

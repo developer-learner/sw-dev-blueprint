@@ -85,6 +85,11 @@ This is what moved up the ladder and why the role exists at frontier tier:
   inventory), `entry_points`, `routes`, `schemas`, `errors`, each with an
   `id`, plus `erd_version` matching the version being frozen. This is what
   the plan validator and the INV-4 test-surface check enforce against.
+  `files` is THIS milestone's task inventory, never the accumulated app file
+  list: every member must appear in `changed_files` when the coder may edit it,
+  or in `no_edit_files` when this milestone deliberately validates existing
+  behavior without editing it. The freeze gate rejects unexplained carried
+  files so a one-file milestone cannot silently become a six-file plan.
   **Stage it as a delta, not the whole file (D-136).** On every freeze after
   v1, `contracts.json` is a STAGED MERGE ARTIFACT: include only the entries
   this milestone CHANGES or ADDS (each `file`-pinned per D-120), plus the

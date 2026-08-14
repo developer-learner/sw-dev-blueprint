@@ -775,6 +775,48 @@ def test_spec_delta_mapping_file_outside_inventory_fails(delta_repo):
     assert "not in contracts.files" in r.stderr
 
 
+def test_spec_delta_rejects_accumulated_prior_milestone_inventory(delta_repo):
+    """A one-file milestone must not silently retain old inventory members.
+    Every planned file is either changed now or explicitly no-edit; otherwise
+    mechanical synthesis recreates irrelevant tasks for prior milestones."""
+    _, approved, staging = delta_repo
+    (staging / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py", "src/old.py"],
+        "changed_files": ["src/a.py"],
+        "test_mapping": {"tests/test_a.py::test_one": "src/a.py"},
+    }))
+    (staging / "ERD-DELTA.md").write_text(
+        "## Changed acceptance criteria\nAC-1\n"
+        "## Superseded acceptance criteria\nNone\n"
+        "## Changed files\nsrc/a.py\n"
+        "## Test-to-file mapping\nAC-1 -> src/a.py\n"
+    )
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 1
+    assert "src/old.py" in r.stderr
+    assert "accumulated prior-milestone files" in r.stderr
+
+
+def test_spec_delta_allows_explicit_no_edit_inventory_member(delta_repo):
+    """An acceptance-only file is relevant when the TPM names it no-edit;
+    the minimality gate rejects unexplained carry, not deliberate ratification."""
+    _, approved, staging = delta_repo
+    (staging / "contracts.json").write_text(json.dumps({
+        "files": ["src/a.py", "src/ratified.py"],
+        "changed_files": ["src/a.py"],
+        "no_edit_files": ["src/ratified.py"],
+        "test_mapping": {"tests/test_a.py::test_one": "src/a.py"},
+    }))
+    (staging / "ERD-DELTA.md").write_text(
+        "## Changed acceptance criteria\nAC-1\n"
+        "## Superseded acceptance criteria\nNone\n"
+        "## Changed files\nsrc/a.py\n"
+        "## Test-to-file mapping\nAC-1 -> src/a.py\n"
+    )
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 0, r.stderr
+
+
 def _stage_pinned_delta(staging, routes):
     (staging / "contracts.json").write_text(json.dumps({
         "files": ["src/a.py"],
@@ -3124,6 +3166,7 @@ def v51_incoming_partial(files):
     return {
         "erd_version": 2,
         "files": files,
+        "no_edit_files": files,
         "entry_points": [],
         "routes": [
             {"id": "route:GET /api/v1/models/catalog",
@@ -3907,7 +3950,8 @@ def debt_delta(repo, app_source):
     refreeze_scripts(repo)
     (repo / "src").mkdir()
     (repo / "src" / "app.py").write_text(app_source)
-    contracts = {"erd_version": 2, "files": ["src/app.py"], "entry_points": []}
+    contracts = {"erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+                 "no_edit_files": ["src/app.py"]}
     (repo / "scripts" / ".approved" / "incoming" / "contracts.json").write_text(
         json.dumps(contracts))
 
@@ -5798,6 +5842,7 @@ def test_check_spec_delta_validates_merged_not_partial_contracts(tmp_path):
     staging.mkdir()
     standing = {
         "erd_version": 1, "files": ["src/app.py"], "entry_points": [],
+        "no_edit_files": ["src/app.py"],
         "routes": [{"id": "route:GET /a", "method": "GET", "path": "/a",
                     "file": "src/app.py"}],
     }
@@ -5828,6 +5873,7 @@ def test_check_spec_delta_validates_merged_not_partial_contracts(tmp_path):
     # The raw PARTIAL (id-arrays omitted) slips past D-122 — the exact defect
     # the merged path closes.
     partial = {"erd_version": 2, "files": ["src/app.py"], "entry_points": [],
+               "no_edit_files": ["src/app.py"],
                "smoke_checks": {"src/app.py": "true"}}
     r2 = run(partial)
     assert r2.returncode == 0, (r2.stdout, r2.stderr)
