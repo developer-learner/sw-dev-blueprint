@@ -41,8 +41,42 @@ esac
 emit() {  # emit <path> [label]
   echo "=== CONTEXT FILE: ${2:-$1} ==="
   cat "$1"
+  # A packed file may lack a trailing newline (contracts.schema.json ends
+  # in `}`, ERD-DELTA.md in a backtick) — that would glue the END marker
+  # onto its last line (review 2026-08-13 P2). Separate unconditionally.
+  [ -z "$(tail -c 1 "$1" 2>/dev/null | tr -d '\n')" ] || echo
   echo "=== END CONTEXT FILE ==="
   echo
+}
+
+generate_role_slice() {
+  python3 - "$1" <<'PY'
+"""Chat-bundle role slice (review 2026-08-13 P2): the agent-mode annex is
+the tpm-agent.sh seat's instruction set (D-39) — the chat TPM never runs
+agent mode, so the bundle drops the annex and de-dangles its forward
+reference. The repo file keeps the annex verbatim (institutional memory —
+do not discard); this is a pack-only view, like the PRD/delta slices."""
+import re
+import sys
+from pathlib import Path
+
+try:
+    text = Path(sys.argv[1]).read_text()
+except OSError:
+    sys.exit(1)
+
+text = re.sub(r"\n## Agent mode \(annex\)\n.*\Z", "\n", text, flags=re.S)
+# De-dangle: the reference sentence points at a section the slice removed.
+text = text.replace(
+    "Its full procedure is\n"
+    "in the **Agent mode (annex)** at the end; everything from here on is written for\n"
+    "chat-mode intake.",
+    "It is a separate seat (D-39) whose procedure this chat bundle does not carry.",
+)
+if not text.strip():
+    sys.exit(1)
+sys.stdout.write(text)
+PY
 }
 
 generate_prd_slice() {
@@ -194,8 +228,24 @@ everything, including your delivery format. After the context, the CEO will
 state intent in business terms.
 HDR
   echo
-  emit docs/TPM-ROLE.md
-  emit scripts/schemas/contracts.schema.json
+  role_slice="$(mktemp "${TMPDIR:-/tmp}/role-slice.XXXXXX")"
+  if generate_role_slice docs/TPM-ROLE.md > "$role_slice" 2>/dev/null; then
+    emit "$role_slice" "docs/TPM-ROLE.md (chat bundle — agent-mode annex omitted, review 2026-08-13)"
+  else
+    emit docs/TPM-ROLE.md
+    echo "tpm-pack: role slice unavailable — shipped the full TPM-ROLE.md" >&2
+  fi
+  rm -f "$role_slice"
+  schema_slice="$(mktemp "${TMPDIR:-/tmp}/schema-slice.XXXXXX")"
+  if [ -f scripts/schemas/contracts.schema.json ] \
+    && python3 -c 'import json, sys; json.load(open(sys.argv[1])); json.dump(json.load(open(sys.argv[1])), sys.stdout, separators=(",", ":"), ensure_ascii=False)' \
+      scripts/schemas/contracts.schema.json > "$schema_slice" 2>/dev/null; then
+    emit "$schema_slice" "scripts/schemas/contracts.schema.json (minified, review 2026-08-13)"
+  else
+    [ -f scripts/schemas/contracts.schema.json ] && emit scripts/schemas/contracts.schema.json
+    echo "tpm-pack: schema minification unavailable — shipped the full schema" >&2
+  fi
+  rm -f "$schema_slice"
   if [ -f "$APPROVED/VERSION" ]; then
     echo "--- CURRENTLY FROZEN SPEC (v$(cat "$APPROVED/VERSION")) — derive any delta from THIS, not from chat memory ---"
     echo

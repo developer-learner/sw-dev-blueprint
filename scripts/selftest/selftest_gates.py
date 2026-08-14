@@ -4244,17 +4244,20 @@ def test_run_tests_mypy_gate_green_runs_pytest(tmp_path):
 # The whole-tree `mypy src/` on every acceptance run let a type error in a file
 # the task never touched block its verdict. A targeted run (node-ids passed)
 # now scopes mypy to the active delta's changed source files; the full-suite
-# regression check (no node-ids) and a src-free delta keep the whole-tree
-# check. drive-runtime.sh calls run_tests with no args and sets no
-# ACTIVE_DELTA_FILES, so it cannot reach the scoped path — this focused driver
-# extracts the SAME run_tests (anti-drift) and drives it with a delta range +
-# node-ids. mypy is a sandbox-only tool (it does not exist on the dev host —
-# the correction-log class of a template selftest growing a transitive tool
-# dependency without CI installs), so the stub FAKES the mypy outcome via
-# SANDBOX_MYPY_RC exactly like the drive-runtime stub; the arg log still pins
-# EXACTLY which targets the gate selected, which is the scoping contract
-# (a regression that leaked src/z.py into a scoped call changes the arg line
-# and fails these tests).
+# regression check (no node-ids) keeps the whole-tree check, and a targeted run
+# whose active delta changed no src/*.py has nothing new to type-check — the
+# gate is skipped rather than paying whole-app mypy (review 2026-08-13 P2).
+# Unknown delta state still falls back to the whole tree: absence of state
+# reads as unknown, never as nothing-to-do. drive-runtime.sh calls run_tests
+# with no args and sets no ACTIVE_DELTA_FILES, so it cannot reach the scoped
+# path — this focused driver extracts the SAME run_tests (anti-drift) and
+# drives it with a delta range + node-ids. mypy is a sandbox-only tool (it
+# does not exist on the dev host — the correction-log class of a template
+# selftest growing a transitive tool dependency without CI installs), so the
+# stub FAKES the mypy outcome via SANDBOX_MYPY_RC exactly like the
+# drive-runtime stub; the arg log still pins EXACTLY which targets the gate
+# selected, which is the scoping contract (a regression that leaked src/z.py
+# into a scoped call changes the arg line and fails these tests).
 
 _SCOPED_STUB = (
     "#!/usr/bin/env bash\n"
@@ -4390,10 +4393,13 @@ def test_scoped_mypy_full_suite_checks_whole_tree(tmp_path):
         "--cache-dir=/tmp/mypy-cache", "src/"], _mypy_call_line(arg_log)
 
 
-def test_scoped_mypy_no_src_change_falls_back_to_whole_tree(tmp_path):
-    """Fail-closed default: a delta that changed no src/*.py (only a test file)
-    yields an empty scope, so the gate falls back to the whole-tree `src/`
-    check rather than skipping — src/z.py's error is still caught."""
+def test_scoped_mypy_no_src_change_skips_gate(tmp_path):
+    """Review 2026-08-13 P2: a targeted run whose active delta changed no
+    src/*.py (only a test file) has nothing new to type-check, so the gate is
+    SKIPPED — the whole-app fallback is gone. mypy_rc=1 provokes the stub: if
+    the gate regressed to a whole-tree call the arg log would show it and the
+    verdict would go red; a clean run shows no mypy line and pytest alone
+    decides."""
     r, arg_log = _drive_scoped_run_tests(
         tmp_path,
         src_files={"src/a.py": _MYPY_CLEAN_SRC, "src/z.py": _MYPY_ERR_SRC},
@@ -4401,9 +4407,10 @@ def test_scoped_mypy_no_src_change_falls_back_to_whole_tree(tmp_path):
         node_ids=["tests/test_a.py::t"],
         mypy_rc=1,
     )
-    assert "FINAL_TESTS_RC=1" in r.stdout, (r.stdout, r.stderr)
-    assert "FINAL_FAILING=mypy:src" in r.stdout, r.stdout
-    assert _mypy_call_line(arg_log)[-1] == "src/", _mypy_call_line(arg_log)
+    assert "FINAL_TESTS_RC=0" in r.stdout, (r.stdout, r.stderr)
+    lines = _mypy_call_line(arg_log)
+    assert not any("mypy" in line for line in lines), lines
+    assert any("pytest" in line for line in lines), lines
 
 
 def test_scoped_mypy_unions_changed_src_across_deltas(tmp_path):

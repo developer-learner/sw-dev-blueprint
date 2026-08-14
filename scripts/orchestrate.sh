@@ -982,8 +982,13 @@ run_tests() {
   # only the active delta's changed source files; mypy follows imports, so a
   # reachable error in their dependency closure still surfaces — only genuinely
   # unrelated files stop blocking. The full-suite regression check (no
-  # node-ids) and a delta that changed no src/*.py both keep the whole-tree
-  # `src/` check (fail-closed default). The FAILING label names the checked set.
+  # node-ids) keeps the whole-tree `src/` check (fail-closed default). A
+  # targeted run whose active delta changed no src/*.py has nothing new to
+  # type-check: the gate is skipped (mypy:none) instead of paying whole-app
+  # mypy (review 2026-08-13 P2). Unknown delta state (unset/empty
+  # ACTIVE_DELTA_FILES) still falls back to the whole tree — absence of
+  # state reads as unknown, never as nothing-to-do. The FAILING label names
+  # the checked set.
   MYPY_OUT=""
   MYPY_RC=0
   local mypy_targets=()
@@ -1011,12 +1016,17 @@ PYSCOPE
   local mypy_label
   if [ "${#mypy_targets[@]}" -gt 0 ]; then
     mypy_label="mypy:$(IFS=,; printf '%s' "${mypy_targets[*]}")"
-  else
+  elif [ "$#" -eq 0 ] || [ "${ACTIVE_DELTA_FILES+set}" != "set" ] \
+     || [ "${#ACTIVE_DELTA_FILES[@]}" -eq 0 ]; then
     mypy_targets=("src/")
     mypy_label="mypy:src"
+  else
+    mypy_label="mypy:none"
   fi
-  MYPY_OUT=$(scripts/sandbox-run.sh -- mypy --explicit-package-bases \
-    --cache-dir=/tmp/mypy-cache "${mypy_targets[@]}" 2>&1) || MYPY_RC=$?
+  if [ "$mypy_label" != "mypy:none" ]; then
+    MYPY_OUT=$(scripts/sandbox-run.sh -- mypy --explicit-package-bases \
+      --cache-dir=/tmp/mypy-cache "${mypy_targets[@]}" 2>&1) || MYPY_RC=$?
+  fi
   if [ "$MYPY_RC" -ne 0 ]; then
     mark "mypy gate FAILED (rc=$MYPY_RC)"
     FAILING="$mypy_label"
