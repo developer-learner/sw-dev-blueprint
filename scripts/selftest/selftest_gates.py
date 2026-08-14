@@ -8242,7 +8242,7 @@ def _metrics_root(tmp_path, with_git=False):
     )
     (meas / "timings-2026-08-06T10:01:30Z.tsv").write_text(
         "10:00:00\t0s\trun start (budget 1200s)\n"
-        "10:00:05\t5s\tpre-flight\n"
+        "10:00:05\t5s\tpre-flight done (spec v7)\n"
         "10:01:00\t60s\tpytest tests\n"
         "10:01:30\t90s\tem-call plan\n"
         "10:02:30\t150s\tpytest selftest\n"
@@ -8362,6 +8362,34 @@ def test_metrics_report_evidence_matches_recorded_row(tmp_path):
     assert "feature v7" in r.stdout
     assert "success_runs=1  retry_runs=1" in r.stdout
     assert not (root / ".measurement" / "metrics.tsv").exists()
+
+
+def test_metrics_report_timings_scoped_to_requested_spec(tmp_path):
+    """selftest timing columns come from the requested spec's OWN timings copy,
+    never the newest file: a milestone whose run left no timings reports zero
+    test phases, not another milestone's (the v105-showed-v101's-152s defect).
+    Copies are matched on the `(spec vN)` pre-flight marker."""
+    root = _metrics_root(tmp_path, with_git=True)
+    # A newer copy for a DIFFERENT spec (v8), with one test phase of its own.
+    (root / ".measurement" / "timings-2026-08-06T10:05:00Z.tsv").write_text(
+        "10:00:00\t0s\trun start (budget 1200s)\n"
+        "10:00:05\t5s\tpre-flight done (spec v8)\n"
+        "10:01:00\t60s\tpytest tests\n"
+    )
+    out = root / ".measurement" / "metrics.tsv"
+    # v8 -> its own copy (1 phase); v7 -> its copy (2 phases); a spec with no
+    # copy -> 0, NOT the newest file's phases.
+    for feat, exp_count in (("v8", "1"), ("v7", "2"), ("v404", "0")):
+        if out.exists():
+            out.unlink()
+        r = subprocess.run(
+            [sys.executable, str(METRICS_REPORT), "--root", str(root),
+             "--feature", feat],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0, r.stderr
+        row = out.read_text().splitlines()[1].split("\t")
+        assert row[4] == exp_count, (feat, row)
 
 
 # --- validate-plan.py --synthesize-plan (B3 mechanical plan synthesis) -------

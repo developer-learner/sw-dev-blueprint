@@ -87,6 +87,26 @@ def newest_timings_copy(meas_dir: Path) -> Path | None:
     return copies[-1] if copies else None
 
 
+def timings_for_spec(meas_dir: Path, spec: int | None) -> Path | None:
+    """The timings copy for THIS milestone's spec, matched on the `(spec vN)`
+    marker the run writes into its pre-flight line. A spec with no tagged copy
+    ran no timed phases of its own (e.g. a zero-work consolidation) — return
+    None rather than inherit the newest file's phases, which would report
+    another milestone's timings (a zero-work v105 showing v101's 152s). The
+    trailing ")" in the marker prevents v8 matching v80. With no spec (ad-hoc
+    --evidence), fall back to the newest copy (unchanged behavior)."""
+    if spec is None:
+        return newest_timings_copy(meas_dir)
+    if not meas_dir.is_dir():
+        return None
+    marker = f"(spec v{spec})"
+    tagged = sorted(
+        c for c in meas_dir.glob("timings-*.tsv")
+        if marker in c.read_text(errors="ignore")
+    )
+    return tagged[-1] if tagged else None
+
+
 def read_timings(path: Path) -> list[tuple[int, str]]:
     """Return [(elapsed_seconds, label)] for THIS run only (last run start)."""
     if not path.is_file():
@@ -192,7 +212,7 @@ def compute(root: Path, milestone: str, feature_override: str) -> dict[str, str]
     success = sum(1 for r in runs if r["rc"] == "0")
     retries = len(runs) - success
 
-    selftest_count, selftest_s = selftest_stats(newest_timings_copy(meas_dir))
+    selftest_count, selftest_s = selftest_stats(timings_for_spec(meas_dir, spec))
     em_calls, em_waste = em_outcomes(archive, spec)
 
     return {
