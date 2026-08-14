@@ -1190,6 +1190,21 @@ def test_contracts_delta_all_legacy_keeps_standing_default(tmp_path):
     assert [e["id"] for e in kept["routes"]] == ["route:0", "route:1"]
 
 
+def test_contracts_delta_default_picks_numeric_newest_snapshot(tmp_path):
+    """The newest snapshot is NUMERIC, not lexicographic: DELTA-v105.json is
+    newer than DELTA-v99.json even though '1' < '9' sorts v99 later."""
+    sources = {
+        "contracts.json": _pinned_contracts(["src/a.py", "src/b.py"]),
+        "DELTA-v99.json": {"version": 99, "changed_files": ["src/a.py"]},
+        "DELTA-v105.json": {"version": 105, "inventory_files": ["src/a.py"]},
+    }
+    r = _run_contracts_delta_in(sources, tmp_path)
+    assert r.returncode == 0, r.stderr
+    kept = json.loads(r.stdout)
+    assert [e["id"] for e in kept["routes"]] == ["route:0"]
+    assert "route:1" not in r.stdout
+
+
 def test_route_check_fails_open_on_dynamic_path(repo):
     """A dynamically-built path is invisible to the AST scan — no false fire."""
     route_repo(repo, (

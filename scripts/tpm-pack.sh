@@ -317,12 +317,17 @@ next feature's delta, distinct from the COMPLETE interface index above
 (D-141). Newest modern DELTA snapshot is authoritative; a consolidation is
 shown as none. All-legacy or absent -> print nothing (standing default)."""
 import json
+import re
 import sys
 from pathlib import Path
 approved = Path(sys.argv[1])
 newest = None
-for delta in sorted(approved.glob("DELTA-v*.json")):
-    newest = delta
+if approved.is_dir():
+    def _version(delta):
+        match = re.match(r"DELTA-v(\d+)\.json$", delta.name)
+        return int(match.group(1)) if match else -1
+    for delta in sorted(approved.glob("DELTA-v*.json"), key=_version):
+        newest = delta
 if newest is None:
     sys.exit(0)
 try:

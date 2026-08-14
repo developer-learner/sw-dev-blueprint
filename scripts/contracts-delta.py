@@ -39,6 +39,7 @@ shell falls back to the full contracts file — never a silent standing slice).
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -137,7 +138,12 @@ def default_inventory(contracts_dir: Path, contracts: dict) -> list[str]:
     """
     newest: Path | None = None
     if contracts_dir.is_dir():
-        for delta in contracts_dir.glob("DELTA-v*.json"):
+        def _version(delta: Path) -> int:
+            match = re.match(r"DELTA-v(\d+)\.json$", delta.name)
+            return int(match.group(1)) if match else -1
+        for delta in sorted(
+            contracts_dir.glob("DELTA-v*.json"), key=_version,
+        ):
             newest = delta
     if newest is None:
         return list(contracts.get("files", []))

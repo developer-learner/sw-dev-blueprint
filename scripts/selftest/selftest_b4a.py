@@ -465,6 +465,9 @@ def test_tpm_pack_stage1_reports_active_inventory(tmp_path):
     next feature is authored against active scope, not the standing list."""
     repo = _build_contracts_repo(tmp_path)
 
+    # legacy v99 must not shadow the modern v105 (numeric newest wins)
+    (repo / "scripts" / ".approved" / "DELTA-v99.json").write_text(
+        json.dumps({"version": 99, "changed_files": []}))
     # consolidation snapshot: inventory_files empty -> pack says none
     (repo / "scripts" / ".approved" / "DELTA-v105.json").write_text(
         json.dumps({"version": 105, "inventory_files": []}))
