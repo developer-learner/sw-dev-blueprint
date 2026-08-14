@@ -82,6 +82,25 @@ def _slice_lines(src: str, start: int, end: int) -> list[str]:
     ]
 
 
+def _module_docstring_span(tree) -> tuple[int, int] | None:
+    """(start_lineno, end_lineno) of the module docstring, or None. The module
+    docstring is the first statement when it is a bare string literal — a
+    documentation string that cannot change any test's runtime meaning, so an
+    edit confined to it is meaning-neutral like a comment (the v103 class:
+    one docstring edit re-ran five model-lifecycle tests via the file-level
+    fallback). Function/class docstrings are NOT module docstrings: they live
+    inside a test span and are handled by the per-function comparison."""
+    body = getattr(tree, "body", [])
+    if body and isinstance(body[0], ast.Expr) \
+            and isinstance(getattr(body[0].value, "value", None), str):
+        return (body[0].lineno, body[0].end_lineno)
+    return None
+
+
+def _in_span(lineno: int, span: tuple[int, int] | None) -> bool:
+    return span is not None and span[0] <= lineno <= span[1]
+
+
 def _semantic_function(node: ast.AST) -> str:
     """Stable function meaning for delta scope (D-140).
 
@@ -139,6 +158,18 @@ def function_changes(
         new_tree = ast.parse(new_src, filename=file_path)
     except SyntaxError:
         return set(), True
+    # A change confined to the MODULE DOCSTRING is meaning-neutral (like a
+    # comment): drop the docstring's lines and re-test equality before the
+    # infra check, so a docstring-only edit scopes nothing instead of tripping
+    # the file-level fallback (v103 re-ran five model-lifecycle tests for one
+    # docstring edit). Fixtures, imports, helpers, and module constants stay
+    # meaning-bearing and keep the conservative fallback below.
+    old_doc = _module_docstring_span(old_tree)
+    new_doc = _module_docstring_span(new_tree)
+    old_lines = [(i, ln) for i, ln in old_lines if not _in_span(i, old_doc)]
+    new_lines = [(i, ln) for i, ln in new_lines if not _in_span(i, new_doc)]
+    if [ln for _, ln in old_lines] == [ln for _, ln in new_lines]:
+        return set(), False
     old_spans = _test_spans(old_tree)
     new_spans = _test_spans(new_tree)
     old_nodes = _test_nodes(old_tree)

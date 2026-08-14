@@ -2932,6 +2932,44 @@ def test_module_level_fixture_change_falls_back_to_file():
     assert out == sorted(ids), out
 
 
+def test_module_docstring_only_change_is_noise():
+    """v103: a module-docstring edit is meaning-neutral like a comment and must
+    NOT trip the file-level fallback (it re-ran five model-lifecycle tests for
+    one changed body). Distinct from the fixture case above, which still falls
+    back — see test_module_level_fixture_change_falls_back_to_file."""
+    old_src = '"""Model-lifecycle tests."""\n' + _src_a_v1()
+    new_src = old_src.replace(
+        '"""Model-lifecycle tests."""\n',
+        '"""Model-lifecycle tests. Rewritten docstring, no body change."""\n', 1)
+    fams, infra = refreeze_delta.function_changes(
+        "tests/test_a.py", old_src, new_src)
+    assert fams == set()
+    assert infra is False
+    ids = {"tests/test_a.py::test_first", "tests/test_a.py::test_second",
+           "tests/test_a.py::test_third"}
+    out = refreeze_delta.compute_changed_tests(
+        old_nodeids=ids, new_nodeids=ids,
+        changed_files={"tests/test_a.py"}, removed_files=set(),
+        old_sources={"tests/test_a.py": old_src},
+        new_sources={"tests/test_a.py": new_src},
+    )
+    assert out == [], out
+
+
+def test_module_docstring_change_does_not_mask_a_real_body_change():
+    """Stripping the module docstring must not swallow a concurrent real edit:
+    a docstring rewrite PLUS one changed test body scopes exactly that test."""
+    old_src = '"""Model-lifecycle tests."""\n' + _src_a_v1()
+    new_src = old_src.replace(
+        '"""Model-lifecycle tests."""\n', '"""Rewritten."""\n', 1).replace(
+        "def test_second():\n    assert True\n",
+        "def test_second():\n    assert False\n", 1)
+    fams, infra = refreeze_delta.function_changes(
+        "tests/test_a.py", old_src, new_src)
+    assert fams == {"tests/test_a.py::test_second"}
+    assert infra is False
+
+
 def test_decorator_change_counts_as_function_change():
     """Parametrization decorators belong to the function's span: changing the
     parameter list changes the test's meaning and must ride."""
