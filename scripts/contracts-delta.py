@@ -74,8 +74,9 @@ for entry_point in contracts.get("entry_points", []):
         kept_points.append(entry_point)
 sliced["entry_points"] = kept_points
 
-pretty = json.dumps(sliced, indent=2, ensure_ascii=False) + "\n"
-if len(pretty.encode()) <= len(raw.encode()):
-    sys.stdout.write(pretty)
-else:
-    sys.stdout.write(json.dumps(sliced, separators=(",", ":"), ensure_ascii=False))
+# Compact serialization (P1e / board finding 7 — context trimming): the slice
+# is EM context, not a human artifact; compact separators cut ~17% of the
+# block (16.2 KB -> 13.4 KB on testchat v103) with zero information loss.
+# The pretty-vs-raw size dance is gone: compact is always <= pretty, so the
+# slice-never-exceeds-source invariant (D-120) holds by construction.
+sys.stdout.write(json.dumps(sliced, separators=(",", ":"), ensure_ascii=False) + "\n")
