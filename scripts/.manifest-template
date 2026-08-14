@@ -1,5 +1,5 @@
 a5ae0a89d070d2d969cffa88dfa87b671d63f8eddc7b63e4d5c0f539f195b5f9  .githooks/pre-commit
-2be583d9c255b5446442e4780313be07aab71b74cf706afe16c43b41903a0df3  .github/workflows/check-drift.yml
+a0d07cd19085e64d972b1ff09bbb20b66e3422045043666991e1543da6e51756  .github/workflows/check-drift.yml
 c00fc610faca7c7a6a85a5b1b6e7a2864b015d9a2c2aa5917c56467e74e96fd9  .opencode/prompts/coder.md
 2de4f04f04b356721c2710edb708d9ac0589c19f85cfa54539be2e3a93c2073f  .opencode/prompts/em-plan.md
 eeefaf6113ed7b06f8ed76fb03386f9205b1b583d5b1583db6e5eb4f64f66bea  .opencode/prompts/em.md
