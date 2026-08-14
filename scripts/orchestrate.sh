@@ -141,6 +141,7 @@ cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 #   plan_revisions       EM plan re-emit counter (cap: MAX_PLAN_REVISIONS)
 #   tasks/<id>.status    pending|done|escalated|blocked
 #   tasks/<id>.strikes|.revisions|.fp|.lastfail   per-task counters/fingerprint
+#   mypy-green/<sha256>  successful mypy result for one exact source/config state
 #   briefs/<id>          EM-revised brief overriding the plan's brief
 #   logs/<id>-a<n>.raw|.log   coder attempt transcripts; em-last.raw|.err
 #   escalations/<id>/bundle.md, escalations/BATCH.md   TPM bundles (D-29)
@@ -1048,9 +1049,61 @@ PYSCOPE
   else
     mypy_label="mypy:none"
   fi
+  local mypy_fingerprint="" mypy_green_dir mypy_green_marker=""
   if [ "$mypy_label" != "mypy:none" ]; then
-    MYPY_OUT=$(scripts/sandbox-run.sh -- mypy --explicit-package-bases \
-      --cache-dir=/tmp/mypy-cache "${mypy_targets[@]}" 2>&1) || MYPY_RC=$?
+    # D-142: a green type verdict is reusable only for byte-identical typing
+    # inputs.  Hash the exact target set, every Python source mypy may follow,
+    # and the config/dependency/sandbox inputs that determine its environment.
+    # The cache lives in ephemeral pipeline state and stores successes only:
+    # unknown/failing checks always execute and any relevant edit selects a
+    # new marker rather than trusting stale green state.
+    mypy_fingerprint=$(python3 - "${mypy_targets[@]}" <<'PYMYPYHASH'
+import hashlib
+import os
+import sys
+from pathlib import Path
+
+digest = hashlib.sha256()
+
+
+def add(label: str, data: bytes) -> None:
+    digest.update(label.encode())
+    digest.update(b"\0")
+    digest.update(data)
+    digest.update(b"\0")
+
+
+for target in sys.argv[1:]:
+    add("target", target.encode())
+
+inputs = {path for path in Path("src").rglob("*.py") if path.is_file()}
+for name in (
+    ".mypy.ini", "mypy.ini", "pyproject.toml", "setup.cfg", "tox.ini",
+    "requirements.txt", "requirements-dev.txt", "requirements.lock",
+    "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock", "Containerfile",
+    "scripts/sandbox-run.sh",
+):
+    path = Path(name)
+    if path.is_file():
+        inputs.add(path)
+for pattern in ("requirements*.txt", "requirements*.lock"):
+    inputs.update(path for path in Path(".").glob(pattern) if path.is_file())
+
+for path in sorted(inputs, key=lambda item: item.as_posix()):
+    add(path.as_posix(), path.read_bytes())
+for name in ("MYPYPATH", "MYPY_CONFIG_FILE"):
+    add(f"env:{name}", os.environ.get(name, "").encode())
+print(digest.hexdigest())
+PYMYPYHASH
+    ) || die "could not fingerprint mypy inputs — refusing stale-cache risk"
+    mypy_green_dir="${STATE_DIR:-.pipeline-state}/mypy-green"
+    mypy_green_marker="$mypy_green_dir/$mypy_fingerprint"
+    if [ -f "$mypy_green_marker" ]; then
+      mark "mypy gate cached green ($mypy_label)"
+    else
+      MYPY_OUT=$(scripts/sandbox-run.sh -- mypy --explicit-package-bases \
+        --cache-dir=/tmp/mypy-cache "${mypy_targets[@]}" 2>&1) || MYPY_RC=$?
+    fi
   fi
   if [ "$MYPY_RC" -ne 0 ]; then
     mark "mypy gate FAILED (rc=$MYPY_RC)"
@@ -1061,6 +1114,12 @@ PYSCOPE
     TESTS_RC=1
     rm -f .cache/test-report.json
     return 0
+  fi
+  if [ -n "$mypy_green_marker" ] && [ ! -f "$mypy_green_marker" ]; then
+    mkdir -p "$mypy_green_dir"
+    local mypy_green_tmp="$mypy_green_marker.tmp.$$"
+    printf 'green\n' > "$mypy_green_tmp"
+    mv "$mypy_green_tmp" "$mypy_green_marker"
   fi
   scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
     --json-report-file=.cache/test-report.json "${test_args[@]}" >/dev/null 2>&1 || true
