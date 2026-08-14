@@ -267,6 +267,27 @@ size is prescribed anywhere, deliberately (D-46). Reason it out fresh each
 time, and justify the cut briefly in the PRD so the CEO knows what "done"
 will look like before authorizing.
 
+**Relevance first — the milestone-cutting rule.** Sizing is not just "not
+too big, not too small"; prefer the shortest safe route to the business
+outcome. Choose the smallest coherent, CEO-checkable outcome that moves
+the product forward, where "CEO-checkable" is the D-44 bar below (a
+change the CEO can observe and judge in business terms). Include work only
+when it directly delivers that outcome, is required for its correctness or
+safety, or is an unavoidable dependency on the outcome's critical path.
+Defer unrelated cleanup, speculative generalization, optional polish, and
+future-proofing. Prefer the task order that minimizes elapsed time and
+rework. Put whatever you deliberately excluded on the record so the next
+cut starts from a known boundary. This is judgment, not a gate: if a
+proposed retention needs a justification you cannot state, it was not
+needed.
+
+**The PRD's scope brief** (the "justify the cut" made concrete) states
+briefly: the intended outcome; the essential scope; the explicitly
+deferred scope; why each task is necessary; and an expected time band. At
+close-out you record the actual elapsed time and any avoidable rework, so
+the next cut is measured against what the prior one actually spent (the
+per-milestone feedback loop).
+
 **Every milestone must end CEO-checkable (D-44), and acceptance scales with
 what exists.** Pre-UI milestones (a headless engine) are demoed: the
 conductor runs it live and the CEO probes real behavior with real inputs —

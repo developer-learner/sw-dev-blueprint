@@ -8328,6 +8328,26 @@ def test_metrics_report_spec_scoping_ignores_other_specs(tmp_path):
     assert "feature v7" in r.stdout
 
 
+def test_metrics_report_v_prefixed_feature_override_records_row(tmp_path):
+    """The orchestrator success path passes `--feature v$FROZEN_V` (e.g. v99).
+    That shape must record a metrics.tsv row, not crash on int('v99') — which
+    the caller's `|| true` swallowed silently, so the loop never produced a
+    row (the defect this pins)."""
+    root = _metrics_root(tmp_path, with_git=True)
+    r = subprocess.run(
+        [sys.executable, str(METRICS_REPORT), "--root", str(root),
+         "--feature", "v99"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    out = root / ".measurement" / "metrics.tsv"
+    assert out.is_file(), "v-prefixed feature override must write a row"
+    row = out.read_text().splitlines()[1].split("\t")
+    assert row[2] == "v99"         # stored back with the v prefix
+    assert row[3] == "0.00"        # no spec-99 counters -> 0 gate hours
+    assert "recorded" in r.stdout
+
+
 def test_metrics_report_evidence_matches_recorded_row(tmp_path):
     """--evidence prints the same numbers the recorded row carries."""
     root = _metrics_root(tmp_path, with_git=True)

@@ -179,6 +179,12 @@ def compute(root: Path, milestone: str, feature_override: str) -> dict[str, str]
     meas_dir = root / ".measurement"
     archive = root / ".em-archive"
     short, date, feature = resolve_milestone(root, milestone, feature_override)
+    # The orchestrator's success path passes `--feature v$FROZEN_V` (with the
+    # "v" prefix, e.g. v99) and RE_FEATURE captures the bare digits from the
+    # subject — normalize to the integer form once so the spec filter, flake
+    # count, and the v-prefixed row all agree. Before this, int("v99") raised
+    # and the caller's `|| true` swallowed it: no .measurement/metrics.tsv row.
+    feature = re.sub(r"^[vV]", "", feature.strip())
     spec = int(feature) if feature else None
 
     runs = counter_runs(meas_dir / "counters", spec)
