@@ -169,20 +169,25 @@
      "testid",
      "description"
     ],
-    "properties": {
-     "id": {
-      "type": "string",
-      "description": "Stable id, e.g. 'ui:send-btn'."
-     },
-     "testid": {
-      "type": "string",
-      "description": "The data-testid value the implementation must carry and UI tests locate by. The ONLY DOM surface frozen tests may observe (D-58) \u2014 check-test-surface.py rejects role/text/CSS/XPath location in playwright-importing tests."
-     },
-     "description": {
-      "type": "string",
-      "description": "What the element is, so the coder knows where the testid belongs."
+"properties": {
+      "id": {
+       "type": "string",
+       "description": "Stable id, e.g. 'ui:send-btn'."
+      },
+      "testid": {
+       "type": "string",
+       "description": "The data-testid value the implementation must carry and UI tests locate by. The ONLY DOM surface frozen tests may observe (D-58) \u2014 check-test-surface.py rejects role/text/CSS/XPath location in playwright-importing tests."
+      },
+      "description": {
+       "type": "string",
+       "description": "What the element is, so the coder knows where the testid belongs."
+      },
+      "file": {
+       "type": "string",
+       "pattern": "^src/static/.*\\.(js|html)$",
+       "description": "D-120: the source file that owns this entry — the file whose code must satisfy it. UI files live under src/static (JS/HTML); the pattern intentionally differs from the Python .py pins on routes/schemas/errors."
+      }
      }
-    }
    },
    "description": "D-58: the locked DOM surface. Same principle as routes/entry_points \u2014 tests observe only what the spec locks, so the coder is free to restructure everything else. Testids reach the coder via contracts in the brief material."
   },
