@@ -2223,9 +2223,13 @@ EOF
     || git commit -m "[success] spec v$FROZEN_V" 2>/dev/null || true
   # Metrics row (D-126): computed from DURABLE sources that survive the
   # rm -rf above (..measurement/, .em-archive/, the committed flake ledger).
-  # A report — a failure here must never fail the run.
-  python3 "$METRICS_REPORT_TOOL" --milestone HEAD --feature "v$FROZEN_V" \
-    2>/dev/null || true
+  # A report — a failure here must never fail the run, but it must be VISIBLE:
+  # the int("v99") crash sat hidden for weeks behind `2>/dev/null || true`
+  # (correction log 2026-07-16: an `|| true` swallows EVERY failure mode). Keep
+  # it non-gating, but surface the tool's error and a warning instead.
+  if ! python3 "$METRICS_REPORT_TOOL" --milestone HEAD --feature "v$FROZEN_V"; then
+    echo "orchestrate: metrics row NOT recorded for v$FROZEN_V (non-fatal report; see error above)" >&2
+  fi
   exit 0
 fi
 
