@@ -74,56 +74,58 @@ def entry_point_file(entry_point: object) -> str:
 
 def interface_index(contracts: dict) -> dict:
     """The complete interface index (D-141): every interface with its owning
-    file and a minimal signature — names and pins only, never bodies."""
-    points = []
-    for entry_point in contracts.get("entry_points", []):
-        derived = entry_point_file(entry_point)
-        points.append({"id": entry_point, "file": derived or "(unpinned)"})
-    routes = []
+    file and a minimal signature — names and pins only, never bodies.
+
+    Shapes: `entry_points` are plain ids — they self-pin (the module is
+    derivable from `src.pkg.mod:obj`), so no per-id file field is needed.
+    The pinned families (`routes`/`schemas`/`errors`/`ui`) are grouped into
+    `by_file`, keyed by owning file (or `(unpinned)`), with every entry's
+    minimal signature nested under its file key — the file path is written
+    once per owning file instead of repeated on ~120 entries (compact, and
+    lossless: every interface id still appears, pinned or not)."""
+    entry_points = list(contracts.get("entry_points", []))
+    by_file: dict[str, dict] = {}
     for entry in contracts.get("routes", []):
-        pin = entry_pin(entry)
-        routes.append({
-            "id": entry.get("id"),
-            "method": entry.get("method"),
+        _add(by_file, "routes", entry_pin(entry), {
+            "id": entry.get("id"), "method": entry.get("method"),
             "path": entry.get("path"),
-            "file": pin or "(unpinned)",
         })
-    schemas = []
     for entry in contracts.get("schemas", []):
-        pin = entry_pin(entry)
         fields = entry.get("fields", {})
-        schemas.append({
+        _add(by_file, "schemas", entry_pin(entry), {
             "id": entry.get("id"),
             "fields": list(fields.keys()) if isinstance(fields, dict) else [],
-            "file": pin or "(unpinned)",
         })
-    errors = []
     for entry in contracts.get("errors", []):
-        pin = entry_pin(entry)
-        errors.append({
-            "id": entry.get("id"),
-            "status": entry.get("status"),
-            "file": pin or "(unpinned)",
+        _add(by_file, "errors", entry_pin(entry), {
+            "id": entry.get("id"), "status": entry.get("status"),
         })
-    ui = []
     for entry in contracts.get("ui", []):
-        pin = entry_pin(entry)
-        ui.append({
-            "id": entry.get("id"),
-            "testid": entry.get("testid"),
-            "file": pin or "(unpinned)",
+        _add(by_file, "ui", entry_pin(entry), {
+            "id": entry.get("id"), "testid": entry.get("testid"),
         })
     index = {
         "kind": "interface-index (D-141)",
-        "counts": {},
-        "entry_points": points,
-        "routes": routes,
-        "schemas": schemas,
-        "errors": errors,
-        "ui": ui,
+        "counts": {
+            "entry_points": len(entry_points),
+            "routes": len(contracts.get("routes", [])),
+            "schemas": len(contracts.get("schemas", [])),
+            "errors": len(contracts.get("errors", [])),
+            "ui": len(contracts.get("ui", [])),
+        },
+        "entry_points": entry_points,
+        "by_file": by_file,
     }
-    index["counts"] = {key: len(index[key]) for key in ("entry_points", "routes", "schemas", "errors", "ui")}
     return index
+
+
+def _add(by_file: dict, family: str, pin: str, entry: dict) -> None:
+    """Lose nothing while grouping: drop a key only when it is an unpinned
+    placeholder — the grouped key itself carries the pin, so the entry need
+    not repeat it."""
+    group = by_file.setdefault(pin or "(unpinned)", {})
+    family_list = group.setdefault(family, [])
+    family_list.append(entry)
 
 
 def default_inventory(contracts_dir: Path, contracts: dict) -> list[str]:

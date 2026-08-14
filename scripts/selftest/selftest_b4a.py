@@ -407,9 +407,21 @@ def test_tpm_pack_stage1_ships_complete_interface_index_not_bodies(tmp_path):
         "schema:ChatRequest", "schema:Widget",
         "error:422-validation",
         "ui:message-input", "ui:unpinned-testid",
-        '"file":"(unpinned)"', '"counts"', '"kind":"interface-index (D-141)"',
+        '"by_file"', '"counts"', '"kind":"interface-index (D-141)"',
     ):
         assert token in region, token
+
+    # grouped by owning file (compact index): pinned families are nested
+    # under their file key — the path is written once, not on ~120 entries.
+    assert '"routes":[{"id":"route:POST /api/v1/chat","method":"POST","path":"/api/v1/chat"}]' in region
+    assert '"src/static/app.js":{"schemas":[{"id":"schema:Widget","fields":["label","count"]}]' in region
+
+    # unpinned entries collate under a single "(unpinned)" key, not per entry
+    assert '"id":"route:GET /","method":"GET","path":"/"' in region
+    assert '"(unpinned)"' in region
+
+    # entry points stay lossless as plain ids — no per-entry file field
+    assert '"entry_points":["src.main:app","src.api.chat:create_chat"]' in region
 
     # interface = names + pins: schema field names are listed, body types not
     assert '"fields":["message","history"]' in region
