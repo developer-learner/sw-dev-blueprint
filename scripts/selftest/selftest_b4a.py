@@ -186,8 +186,8 @@ def test_b4a_tpm_pack_emits_only_milestone_product_and_contract_context(
     assert "- `src/old.py` — DISTINCT_ACCUMULATED_ARCHITECTURE." in result.stdout
     assert "DISTINCT_ORACLE_INVENTORY" not in result.stdout
     assert "DISTINCT_RISK_REGISTER" not in result.stdout
-    assert '"id": "route:current"' in result.stdout
-    assert '"id": "route:unpinned"' in result.stdout
+    assert '"id":"route:current"' in result.stdout
+    assert '"id":"route:unpinned"' in result.stdout
     assert '"id": "route:old"' not in result.stdout
     assert "out_of_scope" not in result.stdout
 
