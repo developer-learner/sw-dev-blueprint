@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-147 — 2026-08-14 — A clean no-delta freeze ships the TPM's minimal standing context (amends D-117)
+
+**Decision:** When the frozen spec has no `ERD-DELTA.md` (an initial freeze or pure consolidation), `tpm-pack.sh` now emits the PRD's bounded product capsule plus an explicit `NO ACTIVE FEATURE DELTA` marker, and the generated standing ERD summary, instead of the full standing PRD and ERD. The complete interface index continues to ship. An existing delta still supplies the current changed acceptance criteria and milestone slice. Missing/malformed source content, generator failure, or any generated slice larger than its source retains D-117/D-145's loud full-source fallback.
+
+**Alternatives considered:** (a) Keep shipping the full PRD and ERD when no delta exists — rejected because absence of active work does not make accumulated product and architecture history relevant to authoring the next feature. (b) Emit only a one-line no-delta note — rejected because the TPM still needs the product identity, durable standing rules, per-file map, and complete interface index. (c) Treat a malformed existing delta as a consolidation — rejected because that would silently erase an intended current milestone; malformed content must fall back losslessly.
+
+**Reason:** On testchat's v105 consolidation, the old no-delta path shipped about 42 KB of standing PRD+ERD. The capsule+marker and standing summary are about 3.4 KB, saving about 38 KB while retaining the context needed to scope the next feature. No-delta is a valid state, not a generation failure; the full-source fallback remains reserved for actual failures and D-145 relative-expansion rejection.
+
+**Do not suggest:** restoring full standing PRD/ERD merely because the active delta is absent; omitting the explicit no-delta marker; treating an empty or malformed existing delta as equivalent to no delta; weakening the no-expansion check; dropping the full-source fallback on genuine generation failure. Cross-repo: derived projects receive the packer and selftests through template sync and align this ledger entry in the same propagation batch.
+
 ## D-145 — 2026-08-14 — Context byte budgets warn on growth; generated slices may never exceed their sources
 
 **Decision:** Model-facing context has six pinned warning budgets, measured in exact UTF-8/file bytes by `scripts/context-budget.py`: TPM stage-1 bundle 88,000; product capsule/current-criteria block 8,192; standing summary 8,192; complete interface index 16,384; assembled EM package 65,536; escalation shared-context block 32,768. Absolute overruns warn on stderr and continue—the safe full-artifact fallback and a genuinely large active delta remain available. Relative expansion is a hard generator rejection: every pack-produced role, schema, product, standing-summary, ERD-delta, interface-index, and requested-contract-body slice must be no larger than its source artifact. A rejected slice enters the existing loud full-source fallback. `contracts-delta.py` enforces the same invariant when called outside `tpm-pack.sh`. The EM measurement is the exact saved user prompt plus its system prompt and response schema; escalation measures the exact shared block emitted once at the batch top.

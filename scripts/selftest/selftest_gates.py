@@ -2280,13 +2280,15 @@ def test_tpm_pack_ships_milestone_slice_not_standing_erd(tmp_path):
     assert "=== CONTEXT FILE: scripts/.approved/contracts.json ===" in out
 
 
-def test_tpm_pack_no_delta_ships_full_standing_erd(tmp_path):
-    """D-117: no delta (initial freeze / consolidation) — the standing ERD
-    is the reference and ships in full."""
+def test_tpm_pack_no_delta_ships_standing_summary_not_full_erd(tmp_path):
+    """D-147 (no delta — initial freeze / consolidation): the standing ERD is
+    replaced by the generated standing summary (rules + per-file map). The full
+    standing ERD ships only as the loud fallback when summary generation
+    fails (test_tpm_pack_generator_failure_falls_back_to_full_erd)."""
     r = run_tpm_pack(tmp_path, with_delta=False)
     assert r.returncode == 0, r.stderr
-    assert "=== CONTEXT FILE: scripts/.approved/ERD.md ===" in r.stdout
-    assert "no informational value left in it" in r.stdout
+    assert "standing-summary.md (generated from ERD.md" in r.stdout
+    assert "=== CONTEXT FILE: scripts/.approved/ERD.md ===" not in r.stdout
     assert "=== CONTEXT FILE: scripts/.approved/ERD-DELTA.md ===" not in r.stdout
 
 

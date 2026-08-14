@@ -164,15 +164,34 @@ prd_path, delta_path = map(Path, sys.argv[1:3])
 try:
     prd = prd_path.read_text()
     capsule = product_capsule(prd)
-    criteria = changed_acceptance(delta_path.read_text())
 except OSError:
     sys.exit(1)
-if not capsule or not criteria:
+if not capsule:
     sys.exit(1)
+if delta_path.is_file():
+    try:
+        criteria = changed_acceptance(delta_path.read_text())
+    except OSError:
+        sys.exit(1)
+    if not criteria:
+        sys.exit(1)
+    delta_block = f"## Current PRD delta (from ERD-DELTA.md)\n\n{criteria}"
+else:
+    # No current feature delta: the frozen spec is a consolidation (e.g. v105),
+    # so ship the capsule plus an explicit marker rather than the full standing
+    # PRD. The standing rules and the complete interface index carry the
+    # surface; full product history stays out of the TPM's intake context.
+    delta_block = (
+        "## NO ACTIVE FEATURE DELTA\n\n"
+        "No ERD-DELTA is present — the frozen spec is a consolidation "
+        "(e.g. v105). The standing ERD summary and the complete interface "
+        "index (below) carry the surface; full artifacts arrive only for "
+        "files the TPM names."
+    )
 output = (
     "# Product milestone context\n\n"
     f"## Product capsule\n\n{bounded(capsule)}\n\n"
-    f"## Current PRD delta (from ERD-DELTA.md)\n\n{criteria}\n"
+    f"{delta_block}\n"
 )
 if len(output.encode()) > len(prd.encode()):
     sys.exit(1)
@@ -279,7 +298,6 @@ HDR
     echo
     prd_slice="$(mktemp "${TMPDIR:-/tmp}/prd-slice.XXXXXX")"
     if [ -f "$APPROVED/PRD.md" ] \
-      && [ -f "$APPROVED/ERD-DELTA.md" ] \
       && generate_prd_slice "$APPROVED/PRD.md" "$APPROVED/ERD-DELTA.md" > "$prd_slice" 2>/dev/null \
       && accept_slice product-capsule "$prd_slice" "$APPROVED/PRD.md"; then
       emit "$prd_slice" "$APPROVED/PRD.md"
@@ -316,7 +334,19 @@ HDR
       fi
       rm -f "$delta_slice"
     else
-      [ -f "$APPROVED/ERD.md" ] && emit "$APPROVED/ERD.md"
+      # No current feature delta (consolidation): ship the standing summary
+      # instead of the full standing ERD — the D-147 minimal view. The full
+      # artifact remains the loud fallback if generation fails.
+      summary="$(mktemp "${TMPDIR:-/tmp}/standing-summary.XXXXXX")"
+      if [ -f "$APPROVED/ERD.md" ] \
+        && python3 scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
+        && accept_slice standing-summary "$summary" "$APPROVED/ERD.md"; then
+        emit "$summary" "standing-summary.md (generated from ERD.md — standing rules + per-file map, D-117)"
+      else
+        [ -f "$APPROVED/ERD.md" ] && emit "$APPROVED/ERD.md"
+        echo "tpm-pack: standing summary generation failed — shipped the full standing ERD" >&2
+      fi
+      rm -f "$summary"
     fi
     contracts_slice="$(mktemp "${TMPDIR:-/tmp}/contracts-delta.XXXXXX")"
     if [ -f "$APPROVED/contracts.json" ] \
