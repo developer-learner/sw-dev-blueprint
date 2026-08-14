@@ -2222,7 +2222,7 @@ def run_tpm_pack(tmp_path, with_delta=True, with_summary_generator=True):
     (repo / "scripts" / ".approved").mkdir(parents=True)
     (repo / "scripts" / "schemas").mkdir(parents=True)
     (repo / "docs").mkdir(parents=True)
-    for name in ("tpm-pack.sh", "spec_artifacts.py"):
+    for name in ("tpm-pack.sh", "spec_artifacts.py", "context-budget.py"):
         shutil.copy(SCRIPTS / name, repo / "scripts" / name)
     if with_summary_generator:
         shutil.copy(SCRIPTS / "standing-summary.py",
@@ -7239,7 +7239,7 @@ def test_tpm_shuttle_carries_erd_delta_end_to_end(tmp_path):
     (tmp_path / "scripts" / "schemas").mkdir(parents=True)
     (tmp_path / "scripts" / ".approved").mkdir()
     (tmp_path / "docs").mkdir()
-    for name in ("tpm-pack.sh", "tpm-unpack.sh"):
+    for name in ("tpm-pack.sh", "tpm-unpack.sh", "context-budget.py"):
         target = tmp_path / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
     policy = SCRIPTS / "spec_artifacts.py"

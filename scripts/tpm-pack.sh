@@ -42,6 +42,7 @@ set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
 APPROVED="scripts/.approved"
+BUDGET_TOOL="scripts/context-budget.py"
 ALLOWED_ARTIFACTS=$(python3 scripts/spec_artifacts.py describe) || {
   echo "tpm-pack: shared spec-artifact policy unavailable" >&2
   exit 1
@@ -58,6 +59,10 @@ if [ "$MODE" = bodies ] && [ $# -eq 0 ]; then
   echo "tpm-pack: --contracts-for needs at least one file (usage: tpm-pack.sh --contracts-for <file> [<file>...])" >&2
   exit 1
 fi
+
+accept_slice() {  # accept_slice <surface> <slice> <source> [<source> ...]
+  python3 "$BUDGET_TOOL" slice "$@"
+}
 
 emit() {  # emit <path> [label]
   echo "=== CONTEXT FILE: ${2:-$1} ==="
@@ -250,7 +255,8 @@ state intent in business terms.
 HDR
   echo
   role_slice="$(mktemp "${TMPDIR:-/tmp}/role-slice.XXXXXX")"
-  if generate_role_slice docs/TPM-ROLE.md > "$role_slice" 2>/dev/null; then
+  if generate_role_slice docs/TPM-ROLE.md > "$role_slice" 2>/dev/null \
+    && accept_slice role-slice "$role_slice" docs/TPM-ROLE.md; then
     emit "$role_slice" "docs/TPM-ROLE.md (chat bundle — agent-mode annex omitted, review 2026-08-13)"
   else
     emit docs/TPM-ROLE.md
@@ -260,7 +266,8 @@ HDR
   schema_slice="$(mktemp "${TMPDIR:-/tmp}/schema-slice.XXXXXX")"
   if [ -f scripts/schemas/contracts.schema.json ] \
     && python3 -c 'import json, sys; json.load(open(sys.argv[1])); json.dump(json.load(open(sys.argv[1])), sys.stdout, separators=(",", ":"), ensure_ascii=False)' \
-      scripts/schemas/contracts.schema.json > "$schema_slice" 2>/dev/null; then
+      scripts/schemas/contracts.schema.json > "$schema_slice" 2>/dev/null \
+    && accept_slice schema-slice "$schema_slice" scripts/schemas/contracts.schema.json; then
     emit "$schema_slice" "scripts/schemas/contracts.schema.json (minified, review 2026-08-13)"
   else
     [ -f scripts/schemas/contracts.schema.json ] && emit scripts/schemas/contracts.schema.json
@@ -273,7 +280,8 @@ HDR
     prd_slice="$(mktemp "${TMPDIR:-/tmp}/prd-slice.XXXXXX")"
     if [ -f "$APPROVED/PRD.md" ] \
       && [ -f "$APPROVED/ERD-DELTA.md" ] \
-      && generate_prd_slice "$APPROVED/PRD.md" "$APPROVED/ERD-DELTA.md" > "$prd_slice" 2>/dev/null; then
+      && generate_prd_slice "$APPROVED/PRD.md" "$APPROVED/ERD-DELTA.md" > "$prd_slice" 2>/dev/null \
+      && accept_slice product-capsule "$prd_slice" "$APPROVED/PRD.md"; then
       emit "$prd_slice" "$APPROVED/PRD.md"
     else
       [ -f "$APPROVED/PRD.md" ] && emit "$APPROVED/PRD.md"
@@ -287,7 +295,8 @@ HDR
       # full standing ERD loudly (stderr — the bundle stays clean).
       summary="$(mktemp "${TMPDIR:-/tmp}/standing-summary.XXXXXX")"
       if [ -f "$APPROVED/ERD.md" ] \
-        && python3 scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null; then
+        && python3 scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
+        && accept_slice standing-summary "$summary" "$APPROVED/ERD.md"; then
         emit "$summary" "standing-summary.md (generated from ERD.md — standing rules + per-file map, D-117)"
       else
         [ -f "$APPROVED/ERD.md" ] && emit "$APPROVED/ERD.md"
@@ -298,7 +307,8 @@ HDR
       # scheduling — irrelevant for starting TPM intake of the next feature.
       # Generation failure falls back to the full delta loudly (stderr).
       delta_slice="$(mktemp "${TMPDIR:-/tmp}/erd-delta-slice.XXXXXX")"
-      if generate_delta_slice "$APPROVED/ERD-DELTA.md" > "$delta_slice" 2>/dev/null; then
+      if generate_delta_slice "$APPROVED/ERD-DELTA.md" > "$delta_slice" 2>/dev/null \
+        && accept_slice erd-delta-slice "$delta_slice" "$APPROVED/ERD-DELTA.md"; then
         emit "$delta_slice" "$APPROVED/ERD-DELTA.md"
       else
         emit "$APPROVED/ERD-DELTA.md"
@@ -310,7 +320,8 @@ HDR
     fi
     contracts_slice="$(mktemp "${TMPDIR:-/tmp}/contracts-delta.XXXXXX")"
     if [ -f "$APPROVED/contracts.json" ] \
-      && python3 scripts/contracts-delta.py --index "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null; then
+      && python3 scripts/contracts-delta.py --index "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null \
+      && accept_slice interface-index "$contracts_slice" "$APPROVED/contracts.json"; then
       active_inv="$(python3 - "$APPROVED" <<'PY'
 """D-140 informational line: the EXECUTOR's active build inventory for the
 next feature's delta, distinct from the COMPLETE interface index above
@@ -393,7 +404,8 @@ you named.
 HDR
   slice="$(mktemp "${TMPDIR:-/tmp}/contracts-bodies.XXXXXX")"
   if SWBP_CONTRACT_FILES="$*" \
-    python3 scripts/contracts-delta.py "$APPROVED/contracts.json" > "$slice" 2>/dev/null; then
+    python3 scripts/contracts-delta.py "$APPROVED/contracts.json" > "$slice" 2>/dev/null \
+    && accept_slice contracts-body-slice "$slice" "$APPROVED/contracts.json"; then
     emit "$slice" "$APPROVED/contracts.json — full bodies for: $*"
   else
     rm -f "$slice"
@@ -407,6 +419,8 @@ if [ "$MODE" = bodies ]; then
   OUT="$(contracts_bodies "$@")"
 else
   OUT="$(bundle)"
+  OUT_BYTES=$(printf '%s\n' "$OUT" | wc -c | tr -d ' ')
+  python3 "$BUDGET_TOOL" warn-bytes tpm-stage1 "$OUT_BYTES"
 fi
 
 copy_cmd=""

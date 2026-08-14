@@ -36,6 +36,7 @@ MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-2}"      # coder attempts per brief (D-70:
 MAX_BRIEF_REVISIONS="${MAX_BRIEF_REVISIONS:-1}" # EM brief_wrong rewrites per task
 MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"   # EM plan re-emits per run (validation retries + decomposition_wrong); default 2: the validator's error feedback demonstrably fixes plans on the second emit (testchat M6)
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
+CONTEXT_BUDGET_TOOL="scripts/context-budget.py"
 
 # Wave 1 (D-107-class): the required plan/task keys, named verbatim in every
 # plan-emission prompt. The EM is stateless (D-53) and response_format is only
@@ -499,6 +500,7 @@ mark "run start (budget ${SWBP_RUN_BUDGET}s)"
 python3 --version >/dev/null 2>&1 || die "python3 required"
 git --version >/dev/null 2>&1    || die "git required"
 [ -x scripts/llm-call.sh ]       || die "scripts/llm-call.sh missing or not executable"
+[ -f "$CONTEXT_BUDGET_TOOL" ]     || die "$CONTEXT_BUDGET_TOOL missing"
 [ -f "$COMPLETION_LEDGER_TOOL" ]    || die "$COMPLETION_LEDGER_TOOL missing"
 [ -f "$FLAKE_LEDGER_TOOL" ]       || die "$FLAKE_LEDGER_TOOL missing"
 [ -f .gate-paths ]               || die ".gate-paths not found"
@@ -572,6 +574,7 @@ mark "pre-flight done (spec v$FROZEN_V)"
 STANDING_SUMMARY="$STATE_DIR/standing-summary.md"
 if [ -f "$APPROVED/ERD.md" ] \
   && python3 scripts/standing-summary.py "$APPROVED/ERD.md" > "$STANDING_SUMMARY" 2>/dev/null; then
+  python3 "$CONTEXT_BUDGET_TOOL" warn standing-summary "$STANDING_SUMMARY"
   echo "  standing context: generated summary ($(wc -l < "$STANDING_SUMMARY" | tr -d ' ') lines, vs $(wc -l < "$APPROVED/ERD.md" | tr -d ' ') in ERD.md)"
 else
   STANDING_SUMMARY="$APPROVED/ERD.md"
@@ -793,11 +796,23 @@ em_call() {
   fi
   write_state phase em
   mark "em-call start -> $out"
-  { printf '%s\n' "$instr"; build_context "$@"; } \
-    | tee "$LOG_DIR/em-last.prompt" \
-    | timeout "$AGENT_TIMEOUT" scripts/llm-call.sh em "$sys_prompt" \
+  { printf '%s\n' "$instr"; build_context "$@"; } > "$LOG_DIR/em-last.prompt"
+  : > "$LOG_DIR/em-last.err"
+  local budget_tool="${CONTEXT_BUDGET_TOOL:-scripts/context-budget.py}"
+  local budget_warning=""
+  if [ -f "$budget_tool" ]; then
+    if ! budget_warning=$(python3 "$budget_tool" warn em-context \
+      "$sys_prompt" "$schema" "$LOG_DIR/em-last.prompt" 2>&1); then
+      die "EM context budget measurement failed: $budget_warning"
+    fi
+    if [ -n "$budget_warning" ]; then
+      printf '%s\n' "$budget_warning" | tee -a "$LOG_DIR/em-last.err" >&2
+    fi
+  fi
+  timeout "$AGENT_TIMEOUT" scripts/llm-call.sh em "$sys_prompt" \
         --schema "$schema" --max-time "$AGENT_TIMEOUT" \
-    > "$LOG_DIR/em-last.raw" 2> "$LOG_DIR/em-last.err" \
+    < "$LOG_DIR/em-last.prompt" \
+    > "$LOG_DIR/em-last.raw" 2>> "$LOG_DIR/em-last.err" \
     || { cat "$LOG_DIR/em-last.err" >&2
          # Archive the failed call too (outcome=call_failed): the prompt in
          # em-last.prompt dies with .pipeline-state/ on the next success, and
@@ -1650,25 +1665,11 @@ PYEOF
 
 finalize_batch() {  # writes the single copy-pasteable batch and halts
   local batch="$ESC_DIR/BATCH.md"
+  local shared="$STATE_DIR/escalation-shared.md"
   local n
   n=$(find "$ESC_DIR" -name bundle.md | wc -l | tr -d ' ')
   [ "$n" -gt 0 ] || return 0
   {
-    echo "# TPM escalation batch — $n item(s) — spec v$FROZEN_V"
-    echo
-    echo "> Operator: paste everything below this line into the TPM web chat in one message."
-    echo "> The TPM must reply with a DELTA: the full new content of ONLY the changed"
-    echo "> frozen files (contracts.json and/or files under tests/, plus ERD.md/PRD.md if"
-    echo "> affected). Save the reply files under scripts/.approved/incoming/ preserving"
-    echo "> paths (tests go in scripts/.approved/incoming/tests/), then run:"
-    echo ">     scripts/refreeze.sh scripts/.approved/incoming"
-    echo "> and re-run scripts/orchestrate.sh. Only the affected subtree resumes."
-    echo
-    echo "---"
-    echo
-    # Finding-7: the milestone slice is shared by every item, so it is emitted
-    # ONCE here at the batch top instead of being re-copied inside each bundle
-    # (which batching then duplicated N times).
     echo "## Shared milestone context (applies to every item below — D-118)"
     echo
     echo "### Standing summary"
@@ -1690,6 +1691,29 @@ finalize_batch() {  # writes the single copy-pasteable batch and halts
     echo '```'
     echo
     echo "---"
+  } > "$shared"
+  local budget_tool="${CONTEXT_BUDGET_TOOL:-scripts/context-budget.py}"
+  if [ -f "$budget_tool" ]; then
+    python3 "$budget_tool" warn escalation-shared "$shared" \
+      || die "escalation shared-context budget measurement failed"
+  fi
+  {
+    echo "# TPM escalation batch — $n item(s) — spec v$FROZEN_V"
+    echo
+    echo "> Operator: paste everything below this line into the TPM web chat in one message."
+    echo "> The TPM must reply with a DELTA: the full new content of ONLY the changed"
+    echo "> frozen files (contracts.json and/or files under tests/, plus ERD.md/PRD.md if"
+    echo "> affected). Save the reply files under scripts/.approved/incoming/ preserving"
+    echo "> paths (tests go in scripts/.approved/incoming/tests/), then run:"
+    echo ">     scripts/refreeze.sh scripts/.approved/incoming"
+    echo "> and re-run scripts/orchestrate.sh. Only the affected subtree resumes."
+    echo
+    echo "---"
+    echo
+    # Finding-7: the milestone slice is shared by every item, so it is emitted
+    # ONCE here at the batch top instead of being re-copied inside each bundle
+    # (which batching then duplicated N times).
+    cat "$shared"
     find "$ESC_DIR" -name bundle.md | sort | while read -r b; do
       cat "$b"; echo; echo "---"
     done

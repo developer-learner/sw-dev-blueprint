@@ -158,10 +158,18 @@ def default_inventory(contracts_dir: Path, contracts: dict) -> list[str]:
     return list(inventory)
 
 
+def emit_json_slice(payload: dict) -> None:
+    """Emit compact JSON only when it is no larger than its source (D-145)."""
+    output = json.dumps(
+        payload, separators=(",", ":"), ensure_ascii=False
+    ) + "\n"
+    if len(output.encode()) > len(raw.encode()):
+        sys.exit(1)
+    sys.stdout.write(output)
+
+
 if INDEX_MODE:
-    sys.stdout.write(
-        json.dumps(interface_index(contracts), separators=(",", ":"), ensure_ascii=False) + "\n"
-    )
+    emit_json_slice(interface_index(contracts))
     sys.exit(0)
 
 any_pinned = any(
@@ -206,8 +214,6 @@ for entry_point in contracts.get("entry_points", []):
 sliced["entry_points"] = kept_points
 
 # Compact serialization (P1e / board finding 7 — context trimming): the slice
-# is EM context, not a human artifact; compact separators cut ~17% of the
-# block (16.2 KB -> 13.4 KB on testchat v103) with zero information loss.
-# The pretty-vs-raw size dance is gone: compact is always <= pretty, so the
-# slice-never-exceeds-source invariant (D-120) holds by construction.
-sys.stdout.write(json.dumps(sliced, separators=(",", ":"), ensure_ascii=False) + "\n")
+# is EM context, not a human artifact. D-145 verifies the actual bytes instead
+# of assuming compact JSON is smaller than an already-compact source.
+emit_json_slice(sliced)

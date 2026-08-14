@@ -31,6 +31,7 @@ def make_pack_repo(tmp_path: Path, with_delta: bool = True) -> Path:
         "spec_artifacts.py",
         "standing-summary.py",
         "contracts-delta.py",
+        "context-budget.py",
     ):
         shutil.copy(SCRIPTS / name, repo / "scripts" / name)
     (approved / "VERSION").write_text("41\n")
@@ -61,6 +62,7 @@ def make_pack_repo(tmp_path: Path, with_delta: bool = True) -> Path:
             "## Superseded acceptance criteria\n\nNone.\n"
         )
     contracts = {
+        "standing_detail": "accumulated contract body " * 80,
         "files": ["src/current.py"],
         "routes": [
             {"id": "route:current", "file": "src/current.py"},
@@ -264,7 +266,12 @@ def _build_repo(tmp_path):
     (repo / "scripts" / ".approved").mkdir(parents=True)
     (repo / "scripts" / "schemas").mkdir(parents=True)
     (repo / "docs").mkdir(parents=True)
-    for name in ("tpm-pack.sh", "spec_artifacts.py", "standing-summary.py"):
+    for name in (
+        "tpm-pack.sh",
+        "spec_artifacts.py",
+        "standing-summary.py",
+        "context-budget.py",
+    ):
         shutil.copy(SCRIPTS / name, repo / "scripts" / name)
     approved = repo / "scripts" / ".approved"
     (approved / "VERSION").write_text("99\n")
@@ -291,6 +298,7 @@ def _build_repo(tmp_path):
 # (D-141): the index must list ALL of it with pins; bodies must follow only
 # the requested owning files.
 CONTRACTS_FIXTURE = {
+    "standing_detail": "accumulated interface contract body " * 80,
     "files": ["src/api/chat.py", "src/static/app.js"],
     "smoke_checks": [],
     "test_mapping": {},
