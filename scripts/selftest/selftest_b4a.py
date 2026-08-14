@@ -183,10 +183,10 @@ def test_b4a_standing_summary_refuses_to_expand_a_tiny_source(tmp_path: Path) ->
     assert result.stdout == ""
 
 
-def test_b4a_tpm_pack_emits_only_milestone_product_and_contract_context(
+def test_b4a_tpm_pack_emits_full_prd_and_milestone_contract_context(
     tmp_path: Path,
 ) -> None:
-    """D-117/D-120 pack the product capsule, current criteria, and contract bodies."""
+    """The full PRD remains available while ERD/contracts stay milestone-scoped."""
     repo = make_pack_repo(tmp_path)
 
     result = run_pack(repo)
@@ -194,7 +194,7 @@ def test_b4a_tpm_pack_emits_only_milestone_product_and_contract_context(
     assert result.returncode == 0, result.stderr
     assert "Fixture is a local product with one current milestone." in result.stdout
     assert "CURRENT_MILESTONE_BEHAVIOR" in result.stdout
-    assert "DISTINCT_OLD_PRODUCT_FAMILY" not in result.stdout
+    assert "DISTINCT_OLD_PRODUCT_FAMILY" in result.stdout
     assert "- `src/old.py` — DISTINCT_ACCUMULATED_ARCHITECTURE." in result.stdout
     assert "DISTINCT_ORACLE_INVENTORY" not in result.stdout
     assert "DISTINCT_RISK_REGISTER" not in result.stdout
@@ -204,23 +204,20 @@ def test_b4a_tpm_pack_emits_only_milestone_product_and_contract_context(
     assert "out_of_scope" not in result.stdout
 
 
-def test_b4a_tpm_pack_missing_delta_ships_capsule_and_standing_summary(
+def test_b4a_tpm_pack_missing_delta_ships_full_prd_and_standing_summary(
     tmp_path: Path,
 ) -> None:
-    """D-147: with no ERD-DELTA the pack still ships the
-    product capsule plus an explicit 'no active feature delta' marker and the
-    standing summary — NOT the full standing PRD/ERD (D-117's loud fallback is
-    reserved for generation failure, not for a clean consolidation)."""
+    """D-147 amended: no-delta trims the ERD, never the additive PRD."""
     repo = make_pack_repo(tmp_path, with_delta=False)
 
     result = run_pack(repo)
 
     assert result.returncode == 0, result.stderr
-    # capsule + marker present, standing PRD history excluded
+    # Full standing PRD history remains available for a safe additive update.
     assert "Fixture is a local product with one current milestone." in result.stdout
-    assert "NO ACTIVE FEATURE DELTA" in result.stdout
-    assert "DISTINCT_OLD_PRODUCT_FAMILY" not in result.stdout
-    assert "accumulated and carries enough historical product detail" not in result.stdout
+    assert "NO ACTIVE FEATURE DELTA" not in result.stdout
+    assert "DISTINCT_OLD_PRODUCT_FAMILY" in result.stdout
+    assert "accumulated and carries enough historical product detail" in result.stdout
     # standing summary present, full standing ERD excluded
     assert "standing-summary.md (generated from ERD.md" in result.stdout
     assert "DISTINCT_ACCUMULATED_ARCHITECTURE" in result.stdout
@@ -229,10 +226,10 @@ def test_b4a_tpm_pack_missing_delta_ships_capsule_and_standing_summary(
     assert "ERD-DELTA.md" not in first
 
 
-def test_b4a_tpm_pack_empty_delta_criteria_falls_back_to_full_prd(
+def test_b4a_tpm_pack_empty_delta_criteria_still_ships_full_prd(
     tmp_path: Path,
 ) -> None:
-    """An existing malformed delta stays on D-117's loud, lossless fallback."""
+    """PRD delivery is independent of ERD-delta parsing."""
     repo = make_pack_repo(tmp_path)
     (repo / "scripts" / ".approved" / "ERD-DELTA.md").write_text(
         "# ERD-DELTA\n\n## Changed files\n\n* `src/current.py`\n"
@@ -242,7 +239,7 @@ def test_b4a_tpm_pack_empty_delta_criteria_falls_back_to_full_prd(
 
     assert result.returncode == 0, result.stderr
     assert "DISTINCT_OLD_PRODUCT_FAMILY" in result.stdout
-    assert "current PRD delta unavailable" in result.stderr
+    assert "current PRD delta unavailable" not in result.stderr
 
 
 def test_b4a_tpm_pack_generator_failures_warn_and_ship_full_sources(

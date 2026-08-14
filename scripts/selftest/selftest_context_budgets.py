@@ -35,7 +35,6 @@ def test_context_budget_limits_are_explicit_and_pinned() -> None:
     module = load_budget_module()
     assert module.SURFACE_BUDGETS == {
         "tpm-stage1": 88_000,
-        "product-capsule": 8_192,
         "standing-summary": 8_192,
         "interface-index": 16_384,
         "em-context": 65_536,
@@ -101,7 +100,6 @@ def test_all_context_surfaces_are_wired_to_the_budget_tool() -> None:
     for invocation in (
         'accept_slice role-slice "$role_slice" docs/TPM-ROLE.md',
         'accept_slice schema-slice "$schema_slice" scripts/schemas/contracts.schema.json',
-        'accept_slice product-capsule "$prd_slice" "$APPROVED/PRD.md"',
         'accept_slice standing-summary "$summary" "$APPROVED/ERD.md"',
         'accept_slice erd-delta-slice "$delta_slice" "$APPROVED/ERD-DELTA.md"',
         'accept_slice interface-index "$contracts_slice" "$APPROVED/contracts.json"',

@@ -18,7 +18,6 @@ from pathlib import Path
 
 SURFACE_BUDGETS: dict[str, int] = {
     "tpm-stage1": 88_000,
-    "product-capsule": 8_192,
     "standing-summary": 8_192,
     "interface-index": 16_384,
     "em-context": 65_536,

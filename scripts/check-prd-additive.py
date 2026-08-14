@@ -3,8 +3,8 @@
 
 The PRD is the standing product record. A milestone may ADD product context
 and acceptance criteria to it, but it may not silently drop what came before:
-the product capsule (the introduction paragraph tpm-pack.sh ships as milestone
-context) must survive unchanged, and no historical acceptance-criterion id may
+the product capsule (the identifying introduction paragraph) must survive
+unchanged, and no historical acceptance-criterion id may
 disappear. Superseding a criterion is a real operation — it goes through the
 ERD-DELTA (D-107), which records the supersession while the PRD keeps the
 historical id. A criterion that simply vanishes from a staged PRD is a
@@ -12,8 +12,8 @@ fail-closed error: the loss is either an accident or an unrecorded supersession,
 and both are caught here before the freeze.
 
 This runs only when a PRD is staged over an existing one (v>1). The capsule
-extraction mirrors tpm-pack.sh's product_capsule/first_paragraph so the text
-this guard protects is exactly the text the milestone context ships.
+extraction identifies the durable product introduction independently of the
+chat packer, which now ships the complete PRD (D-147 amended).
 
 Usage: check-prd-additive.py <standing-PRD.md> <staged-PRD.md>
 Exit 0 when the staged PRD is additive; exit 1 naming the removed capsule or
@@ -29,7 +29,7 @@ AC_ID = re.compile(r"\bAC-(\d+)\b")
 
 
 def first_paragraph(lines: list[str], start: int) -> str:
-    """Read one Markdown paragraph after a heading (mirrors tpm-pack.sh)."""
+    """Read one Markdown paragraph after a product heading."""
     paragraph: list[str] = []
     for line in lines[start:]:
         if line.startswith("#"):
@@ -43,7 +43,7 @@ def first_paragraph(lines: list[str], start: int) -> str:
 
 
 def product_capsule(prd: str) -> str:
-    """Select the PRD's product-introduction paragraph (mirrors tpm-pack.sh)."""
+    """Select the PRD's product-introduction paragraph."""
     lines = prd.splitlines()
     for index, line in enumerate(lines):
         if re.match(r"^#{1,3}\s+(what\b|product\b|overview\b)", line, re.I):

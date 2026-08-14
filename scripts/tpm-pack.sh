@@ -9,9 +9,10 @@
 # script removes the operator's courier burden: one command packs the small
 # milestone slice a TPM session needs into a single copy-pasteable blob.
 #
-# Milestone relevance (D-116/D-117/D-120/D-141): the product context is a
-# capsule plus the current changed-acceptance slice; the standing
-# architecture is rules plus a generated file map; contracts arrive in TWO
+# Milestone relevance (D-116/D-117/D-120/D-141/D-147 amended): the complete
+# standing PRD remains visible because PRD updates are full-file/additive and
+# have no lazy-load or merge path; the standing architecture is rules plus a
+# generated file map; contracts arrive in TWO
 # stages (D-141) — the stage-1 bundle carries the COMPLETE interface index
 # (every interface with its owning file, names and pins only, never bodies:
 # nothing the accumulated spec holds is hidden by the previous milestone's
@@ -102,100 +103,6 @@ text = text.replace(
 if not text.strip():
     sys.exit(1)
 sys.stdout.write(text)
-PY
-}
-
-generate_prd_slice() {
-  python3 - "$1" "$2" <<'PY'
-"""Derive a product capsule and current criteria from frozen truth (D-117)."""
-import re
-import sys
-from pathlib import Path
-
-
-def first_paragraph(lines: list[str], start: int) -> str:
-    """Read one Markdown paragraph after a product heading (D-117)."""
-    paragraph: list[str] = []
-    for line in lines[start:]:
-        if line.startswith("#"):
-            break
-        if not line.strip():
-            if paragraph:
-                break
-            continue
-        paragraph.append(line.strip())
-    return re.sub(r"\s+", " ", " ".join(paragraph)).strip()
-
-
-def product_capsule(prd: str) -> str:
-    """Select the PRD's product-introduction paragraph (D-117)."""
-    lines = prd.splitlines()
-    for index, line in enumerate(lines):
-        if re.match(r"^#{1,3}\s+(what\b|product\b|overview\b)", line, re.I):
-            return first_paragraph(lines, index + 1)
-    for index, line in enumerate(lines):
-        if line.startswith("#") or not line.strip():
-            continue
-        paragraph = first_paragraph(lines, index)
-        if paragraph:
-            return paragraph
-    return ""
-
-
-def changed_acceptance(delta: str) -> str:
-    """Extract the authoritative current PRD criteria from D-107's delta."""
-    match = re.search(
-        r"^## Changed acceptance criteria\s*$\n(.*?)(?=^##\s|\Z)",
-        delta,
-        re.M | re.S | re.I,
-    )
-    return match.group(1).strip() if match else ""
-
-
-def bounded(text: str, limit: int = 700) -> str:
-    """Keep the product capsule short without cutting a word (D-117)."""
-    if len(text) <= limit:
-        return text
-    prefix = text[: limit - 3].rsplit(" ", 1)[0].rstrip(" ,;:")
-    return prefix + "..."
-
-
-prd_path, delta_path = map(Path, sys.argv[1:3])
-try:
-    prd = prd_path.read_text()
-    capsule = product_capsule(prd)
-except OSError:
-    sys.exit(1)
-if not capsule:
-    sys.exit(1)
-if delta_path.is_file():
-    try:
-        criteria = changed_acceptance(delta_path.read_text())
-    except OSError:
-        sys.exit(1)
-    if not criteria:
-        sys.exit(1)
-    delta_block = f"## Current PRD delta (from ERD-DELTA.md)\n\n{criteria}"
-else:
-    # No current feature delta: the frozen spec is a consolidation (e.g. v105),
-    # so ship the capsule plus an explicit marker rather than the full standing
-    # PRD. The standing rules and the complete interface index carry the
-    # surface; full product history stays out of the TPM's intake context.
-    delta_block = (
-        "## NO ACTIVE FEATURE DELTA\n\n"
-        "No ERD-DELTA is present — the frozen spec is a consolidation "
-        "(e.g. v105). The standing ERD summary and the complete interface "
-        "index (below) carry the surface; full artifacts arrive only for "
-        "files the TPM names."
-    )
-output = (
-    "# Product milestone context\n\n"
-    f"## Product capsule\n\n{bounded(capsule)}\n\n"
-    f"{delta_block}\n"
-)
-if len(output.encode()) > len(prd.encode()):
-    sys.exit(1)
-sys.stdout.write(output)
 PY
 }
 
@@ -296,16 +203,10 @@ HDR
   if [ -f "$APPROVED/VERSION" ]; then
     echo "--- CURRENTLY FROZEN SPEC (v$(cat "$APPROVED/VERSION")) — derive any delta from THIS, not from chat memory ---"
     echo
-    prd_slice="$(mktemp "${TMPDIR:-/tmp}/prd-slice.XXXXXX")"
-    if [ -f "$APPROVED/PRD.md" ] \
-      && generate_prd_slice "$APPROVED/PRD.md" "$APPROVED/ERD-DELTA.md" > "$prd_slice" 2>/dev/null \
-      && accept_slice product-capsule "$prd_slice" "$APPROVED/PRD.md"; then
-      emit "$prd_slice" "$APPROVED/PRD.md"
-    else
-      [ -f "$APPROVED/PRD.md" ] && emit "$APPROVED/PRD.md"
-      echo "tpm-pack: current PRD delta unavailable — shipped the full standing PRD" >&2
-    fi
-    rm -f "$prd_slice"
+    # D-147 amended: PRD changes remain full-file/additive under D-136, and
+    # stage 2 can retrieve contract bodies only. A capsule would hide the
+    # historical AC ids a chat TPM must preserve when it updates the PRD.
+    [ -f "$APPROVED/PRD.md" ] && emit "$APPROVED/PRD.md"
     if [ -f "$APPROVED/ERD-DELTA.md" ]; then
       # D-117: milestone slice only — the standing ERD arrives as the
       # generated minimal summary; ERD-DELTA.md is the authoritative

@@ -2258,10 +2258,7 @@ def run_tpm_pack(tmp_path, with_delta=True, with_summary_generator=True):
 
 
 def test_tpm_pack_ships_milestone_slice_not_standing_erd(tmp_path):
-    """D-117: with a delta in flight, the TPM bundle carries the product
-    capsule + current criteria (from ERD-DELTA.md), the generated standing
-    summary (rules + per-file map), the contracts slice, and ERD-DELTA —
-    never the accumulated standing PRD or ERD."""
+    """The full PRD remains visible; ERD context stays milestone-scoped."""
     r = run_tpm_pack(tmp_path, with_delta=True)
     assert r.returncode == 0, r.stderr
     out = r.stdout
@@ -2275,21 +2272,20 @@ def test_tpm_pack_ships_milestone_slice_not_standing_erd(tmp_path):
     assert "=== CONTEXT FILE: scripts/.approved/PRD.md ===" in out
     assert "Fixture is a local product with one current milestone." in out
     assert "AC-117" in out
-    assert "AC-OLD" not in out
-    assert "DISTINCT_ACCUMULATED_PRODUCT_DETAIL" not in out
+    assert "AC-OLD" in out
+    assert "DISTINCT_ACCUMULATED_PRODUCT_DETAIL" in out
     assert "=== CONTEXT FILE: scripts/.approved/contracts.json ===" in out
 
 
 def test_tpm_pack_no_delta_ships_standing_summary_not_full_erd(tmp_path):
-    """D-147 (no delta — initial freeze / consolidation): the standing ERD is
-    replaced by the generated standing summary (rules + per-file map). The full
-    standing ERD ships only as the loud fallback when summary generation
-    fails (test_tpm_pack_generator_failure_falls_back_to_full_erd)."""
+    """D-147 amended: no-delta still trims ERD but always ships full PRD."""
     r = run_tpm_pack(tmp_path, with_delta=False)
     assert r.returncode == 0, r.stderr
     assert "standing-summary.md (generated from ERD.md" in r.stdout
     assert "=== CONTEXT FILE: scripts/.approved/ERD.md ===" not in r.stdout
     assert "=== CONTEXT FILE: scripts/.approved/ERD-DELTA.md ===" not in r.stdout
+    assert "AC-OLD" in r.stdout
+    assert "DISTINCT_ACCUMULATED_PRODUCT_DETAIL" in r.stdout
 
 
 def test_tpm_pack_generator_failure_falls_back_to_full_erd(tmp_path):
