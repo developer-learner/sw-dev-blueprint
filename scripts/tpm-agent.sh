@@ -8,8 +8,9 @@
 #
 #   WRITE lane   .tpm/outbox/ only (harness-allowed; everything protected is
 #                harness-denied; anything else prompts the operator). Nothing
-#                installs from the outbox except through the human y/N in
-#                scripts/refreeze.sh — same door as ever, hash-pinned after.
+#                installs from the outbox except through the automatic
+#                preflight-green apply in scripts/refreeze.sh (D-121 — the
+#                old human y/N approval is retired); hash-pinned after.
 #   READ wall    src/ is harness-denied and Bash is denied entirely (no
 #                `cat src/...` bypass). Oracle independence (INV-1): the TPM
 #                authors tests without ever seeing the implementation.
@@ -19,7 +20,8 @@
 # Honest layer statement: the read wall is harness-enforced (softer than the
 # chat air gap — that fallback remains: tpm-pack.sh/tpm-unpack.sh, D-38).
 # The write wall is layered and hard: harness deny + operator ask-prompts +
-# hash-pinned manifests failing closed + the interactive refreeze gate.
+# hash-pinned manifests failing closed + the automatic preflight-green
+# apply in scripts/refreeze.sh (D-121, no interactive approval step).
 #
 # Usage: tpm-agent.sh   (from the project root; requires the `claude` CLI)
 set -euo pipefail

@@ -2,9 +2,11 @@
 """
 metrics-report — the metrics layer (D-126): per-milestone aggregate over the
 data the pipeline already writes — read ONLY from artifacts that survive the
-success teardown's `rm -rf .pipeline-state` (orchestrate.sh:1953). D-108's
-lesson, applied: the row must be recomputable after the milestone, from what
-outlives it.
+success teardown's `rm -rf .pipeline-state` (orchestrate.sh; D-126 ordering in
+its success path, P3-5's SHA-verified `[success]` commit guard — the row is
+bound to the commit THIS run made, never a stale HEAD). D-108's lesson,
+applied: the row must be recomputable after the milestone, from what outlives
+it.
 
 Durable sources (all survive teardown):
   - .measurement/counters            per-run exit rows: rc, phase, task,
