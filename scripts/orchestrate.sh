@@ -1376,9 +1376,16 @@ $audit" "-"
   may refresh the budget: rm .pipeline-state/plan_revisions*   — otherwise the
   fix belongs in a re-freeze, which refreshes it automatically."
     }
-    if [ "${SUBTREE_MODE:-0}" = "1" ] && [ "${SUBTREE_ATTEMPTS:-0}" -ge 2 ]; then
+    # P2-1 (amends D-91): subtree mode is abandoned after the FIRST rejected
+    # merge, not the second. revs and SUBTREE_ATTEMPTS increment in lockstep
+    # (both written before the merge below), so the old >= 2 threshold could
+    # only ever fire after the revision cap: at the default MAX_PLAN_REVISIONS
+    # of 2, the budget die above always ran first and the fallback was dead
+    # code. With >= 1 the next EM revision is a FULL-plan call — the EM sees
+    # the whole inventory, and the rejections it earned are still appended.
+    if [ "${SUBTREE_MODE:-0}" = "1" ] && [ "${SUBTREE_ATTEMPTS:-0}" -ge 1 ]; then
       SUBTREE_MODE=0
-      echo "subtree re-plan abandoned after $SUBTREE_ATTEMPTS attempts — full plan emission (the delta may need mapping beyond the affected subtree)"
+      echo "subtree re-plan abandoned after $SUBTREE_ATTEMPTS rejected merge(s) — full plan emission (the delta may need mapping beyond the affected subtree)"
     fi
     if [ "${SUBTREE_MODE:-0}" = "1" ] && \
        [ "$(python3 -c "import json;print(int(json.load(open('$STATE_DIR/subtree-scope.json'))['em_needed']))")" = "0" ]; then

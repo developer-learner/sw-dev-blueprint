@@ -6499,6 +6499,34 @@ SUB_GOOD_REPLY = {
     ],
 }
 
+# The FULL-plan counterpart for the P2-1 abandon drive: every inventory
+# file, carried T1 included (revision two is a full emission, not a merge).
+SUB_FULL_PLAN = {
+    "version": 2,
+    "erd_version": 2,
+    "tasks": [
+        {"id": "T1", "file": "src/a.py", "depends_on": [],
+         "brief": "build a", "contracts": [],
+         "tests": ["tests/test_a.py::test_one"]},
+        {"id": "T2", "file": "src/b.py", "depends_on": ["T1"],
+         "brief": "rebuild b", "contracts": [],
+         "tests": ["tests/test_b.py::test_two",
+                   "tests/test_b.py::test_three"]},
+        {"id": "T3", "file": "src/c.py", "depends_on": ["T2"],
+         "brief": "build c", "contracts": [],
+         "tests": ["tests/test_c.py::test_four"]},
+    ],
+}
+
+
+def bad_keep_id_reply():
+    """Copy of SUB_GOOD_REPLY with the re-planned file under a WRONG id —
+    the exact shape --merge-subtree rejects loud (D-91 id discipline:
+    rejected, never repaired)."""
+    bad = json.loads(json.dumps(SUB_GOOD_REPLY))
+    bad["tasks"][0]["id"] = "T9"
+    return bad
+
 
 @pytest.fixture()
 def subtree_repo(tmp_path):
@@ -6961,6 +6989,44 @@ def test_plan_subtree_replan_one_em_call(tmp_path):
     assert by_id["T2"]["brief"] == "rebuild b"
     assert not (work / ".pipeline-state" / "plan-prior.json").exists()
     assert not (work / "tasks" / "plan-subtree.json").exists()
+
+
+def test_plan_subtree_first_rejected_merge_abandons_to_full(tmp_path):
+    """P2-1 (amends D-91): the FIRST rejected subtree merge abandons subtree
+    mode — revision two is a FULL-plan call, within the default
+    MAX_PLAN_REVISIONS=2 budget. The old promise of two rejected merges was
+    unreachable: `revs` and SUBTREE_ATTEMPTS increment in lockstep before the
+    second attempt, so at the cap the budget die ran before the abandon
+    branch ever could. Here reply 1 is a subtree reply the merge rejects
+    (wrong keep-id — emitted verbatim as T9, D-97 id discipline), reply 2 is
+    a valid FULL plan: the second call must be the full emission prompt, and
+    both revisions must fit the budget."""
+    work = plan_workdir(tmp_path, dict(SUB_CONTRACTS),
+                        [json.dumps(bad_keep_id_reply()),
+                         json.dumps(SUB_FULL_PLAN)])
+    (work / "scripts" / ".approved" / "test-nodeids").write_text(
+        "\n".join(SUB_NODEIDS) + "\n")
+    (work / "scripts" / ".approved" / "DELTA-v2.json").write_text(
+        json.dumps(SUB_DELTA))
+    (work / "tasks").mkdir()
+    (work / "tasks" / "plan.json").write_text(json.dumps(SUB_PRIOR))
+    r = run_drive_plan(work)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "subtree re-plan armed" in r.stdout, r.stdout
+    assert "abandoned after 1 rejected merge" in r.stdout, r.stdout
+    assert (work / ".calls").read_text().strip() == "2", r.stdout
+    subtree_prompt = (work / "prompts" / "1").read_text()
+    full_prompt = (work / "prompts" / "2").read_text()
+    assert "Delta re-plan" in subtree_prompt
+    assert "Decompose the frozen ERD" in full_prompt, \
+        "revision two must be the FULL emission prompt, not another subtree"
+    assert "Delta re-plan" not in full_prompt
+    assert "must keep the carried plan's id T2" in full_prompt, \
+        "the merge rejection must be the feedback the EM's NEXT call carries"
+    plan = json.loads((work / "tasks" / "plan.json").read_text())
+    assert plan["erd_version"] == 2
+    assert {t["file"] for t in plan["tasks"]} == \
+        {"src/a.py", "src/b.py", "src/c.py"}
 
 
 def test_plan_docs_only_delta_zero_em_calls(tmp_path):
