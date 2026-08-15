@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-149 — 2026-08-14 — check-spec-delta's test_mapping pin gate family-matches node-ids (D-116/D-124)
+
+**Decision:** The `check-spec-delta.py` pin gate no longer compares `contracts.test_mapping` keys to frozen `test-nodeids` by raw string equality. Both sides are reduced to the D-116/D-124 node-id family (module-prefix + bare test name, parametrization suffix stripped via the same `_node_family` rule `validate-plan.py`'s `_id_family` uses) before membership testing, so a mapping key of either shape — `name[chromium]` or `name` — satisfies a frozen node-id of the other. The "unknown node-id" rejection still fires for a key whose family is genuinely not frozen (testchat v106 froze `test-nodeids` in bare form while `contracts.json` kept the three `[chromium]`-suffixed keys, and select-2 transport was already family-tolerant; remaining tolerance asymmetry was a latent false-positive trap at the next real freeze).
+
+**Alternatives considered:** (a) Data-side only: normalize the two frozen `test_mapping` keys in `contracts.json` to bare form — rejected as the sole fix because the collection shape flips both ways between freezes (D-116 selftests pin `_FLICKER_OLD`/`_FLICKER_NEW` in both directions), so a one-time rewrite would break again at the next environment flip; the gate, not the data, is the recurring failure mode. (b) Gate tolerance only, keeping the frozen mapping suffixed — accepted (family matching on both sides is symmetric and matches the file's own DELTA-token handling at ~line 151).
+
+**Reason:** The pin gate existed to stop a mapping key that is not a frozen node-id (M35b class — a gate cannot honor placement for a test that does not exist). Exact-match satisfied that intent when collection shape was stable, but D-116/D-124 explicitly bless `name[chromium]` and `name` as the same test, and the family-match already governs every other consumer (`_id_family` in `validate-plan.py`, the D-116 flicker guard, DELTA-token matching). A gate that rejects a key the rest of the control plane treats as identical is a self-inflicted hard block on the next behavioral freeze over an already-consistent frozen state.
+
+**Do not suggest:** reverting the pin gate to exact string equality; "repairing" the frozen `test_mapping` keys to silicon-bare form as a substitute for gate tolerance (they denote the same family); weakening the unknown-family rejection to allow arbitrary suffixed keys; deleting the two direction-pinned selftests. Cross-repo: derived projects receive the gate, the two selftests, manifest re-pins, and this ledger entry through the same propagation batch.
+
 ## D-148 — 2026-08-14 — Historical PRD acceptance-criterion blocks are immutable and contiguous
 
 **Decision:** The D-136 PRD additive guard preserves each historical acceptance criterion as a complete Markdown block, not merely as an identifier. `check-prd-additive.py` recognizes AC bullet/heading starts, delimits each block at the next AC or section heading, normalizes whitespace so harmless line wrapping remains possible, and fails closed when a historical block is missing, duplicated, altered, or split by an interleaved criterion. New AC blocks remain additive and may be placed between existing complete blocks. Supersession remains an ERD-DELTA operation that retains the historical PRD block.

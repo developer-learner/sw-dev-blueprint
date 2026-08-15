@@ -815,6 +815,30 @@ def test_spec_delta_mapping_unknown_nodeid_fails(delta_repo):
     assert "unknown node-id" in r.stderr
 
 
+def test_spec_delta_mapping_chromium_suffix_matches_bare_nodeid(delta_repo):
+    """D-116/D-124 family tolerance: testchat v106 froze test-nodeids with
+    bare node-ids while contracts.test_mapping kept `name[chromium]` keys;
+    the pin gate must match on the family so a suffixed key pins a bare
+    frozen node-id (and vice versa)."""
+    _, approved, staging = delta_repo
+    _stage_delta(staging, {"tests/test_a.py::test_one[chromium]": "src/a.py"})
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "behavioral"
+
+
+def test_spec_delta_mapping_bare_key_matches_parametric_nodeid(delta_repo):
+    """The reverse flip — a bare key must also pin a frozen node-id frozen
+    with a `[chromium]` suffix (collection shape flips both ways)."""
+    _, approved, staging = delta_repo
+    (approved / "test-nodeids").write_text(
+        "tests/test_a.py::test_one[chromium]\n")
+    _stage_delta(staging, {"tests/test_a.py::test_one": "src/a.py"})
+    r = run_spec_delta(staging, approved, staging.parents[2])
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "behavioral"
+
+
 def test_spec_delta_mapping_file_outside_inventory_fails(delta_repo):
     """A mapping pinned to a file outside contracts.files claims the
     delta exercises work the freeze does not plan."""

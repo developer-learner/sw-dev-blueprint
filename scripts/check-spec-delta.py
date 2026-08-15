@@ -32,6 +32,17 @@ INVISIBLE_CONTRACT_KEYS = ("files", "test_mapping", "smoke_checks", "no_edit_fil
 UPDATED_MARK = re.compile(r"\btest_[a-z0-9_]+")
 
 
+def _node_family(node_id: str) -> str:
+    """The stable family of a test node-id: module-prefix + bare test name,
+    with any parametrization suffix stripped. Node-ids legitimately flip
+    between `module::name[chromium]` and `module::name` (D-116/D-124); the
+    family is the form the pin gate matches on, so a mapping key of either
+    shape satisfies a frozen node-id of the other (testchat v106 froze bare
+    test-nodeids while contracts kept the suffixed mapping keys)."""
+    module, sep, name = node_id.rpartition("::")
+    return (module + "::" + name.split("[", 1)[0]) if sep else node_id
+
+
 def load_json(path: Path) -> dict:
     if not path.is_file():
         return {}
@@ -256,12 +267,12 @@ def validate(staging: Path, approved: Path, repo: Path, current_version: int,
         else:
             nodeids_path = approved / "test-nodeids"
             nodeids = {
-                line.strip()
+                _node_family(line.strip())
                 for line in nodeids_path.read_text().splitlines()
                 if line.strip()
             } if nodeids_path.is_file() else set()
             for node_id, pinned in sorted(mapping.items()):
-                if node_id not in nodeids:
+                if _node_family(node_id) not in nodeids:
                     errors.append(
                         f"contracts.test_mapping pins unknown node-id "
                         f"{node_id} — every key must be a frozen node-id "
