@@ -2655,6 +2655,96 @@ exit 0
     assert metrics["selftest_count"] == "1"
 
 
+def test_metrics_guard_binds_to_this_runs_success_commit(tmp_path):
+    """P3-5: `--milestone HEAD` must bind to the commit THIS run made. A
+    subject-only `git log -1 --format=%s` check passes when the PREVIOUS
+    milestone already carries a `[success] spec vN` subject and today's
+    guarded commit silently failed (identity, hook abort — all muffled by
+    the `|| true`). The guard requires the pre-commit SHA to advance AND the
+    new subject to be exact. Arm A: the commit lands -> row recorded. Arm B:
+    a failing pre-commit hook aborts the commit -> HEAD unchanged -> loud
+    SKIPPED warning, no row, still exit 0."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    guard = re.search(
+        r"^  # P3-5: the metrics row must bind to THIS milestone's \[success\] commit.*?"
+        r"^  exit 0$",
+        source, re.M | re.S,
+    )
+    assert guard, "P3-5 metrics guard not found in orchestrate.sh — extractor drift"
+    block = guard.group(0)
+
+    def run_arm(arm, hook_aborts):
+        arm_dir = tmp_path / arm
+        arm_dir.mkdir()
+        state = arm_dir / ".pipeline-state"
+        mea = arm_dir / ".measurement"
+        logs = state / "logs"
+        logs.mkdir(parents=True)
+        (logs / "timings.tsv").write_text(
+            "10:00:00\t0s\trun start (budget 1200s)\n"
+            "10:00:05\t5s\tpre-flight done (spec v106)\n"
+        )
+        subprocess.run(["git", "init", "-q"], cwd=arm_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=arm_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=arm_dir, check=True)
+        # seed HEAD with the PRIOR milestone's commit: a subject-only guard
+        # would pass against it once today's commit fails
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t",
+             "commit", "-q", "--allow-empty", "-m", "[success] spec v105"],
+            cwd=arm_dir, check=True,
+        )
+        if hook_aborts:
+            hooks = arm_dir / ".git" / "hooks"
+            hooks.mkdir(exist_ok=True)
+            (hooks / "pre-commit").write_text("#!/usr/bin/env bash\nexit 1\n")
+            (hooks / "pre-commit").chmod(0o755)
+        # The production path `git add`s the success artifacts before the
+        # guard; stage a file the same way so the commit actually fires.
+        (state / "ledger.md").write_text("row\n")
+        subprocess.run(["git", "add", ".pipeline-state/ledger.md"],
+                       cwd=arm_dir, check=True)
+        script = """#!/usr/bin/env bash
+set -euo pipefail
+STATE_DIR="{state}"
+LOG_DIR="$STATE_DIR/logs"
+MEAS_DIR="{mea}"
+METRICS_REPORT_TOOL="{tool}"
+FROZEN_V=106
+__GUARD_BLOCK__
+""".format(state=state, mea=mea, tool=SCRIPTS / "metrics-report.py")
+        script = script.replace("__GUARD_BLOCK__", block)
+        return subprocess.run(
+            ["bash", "-c", script], cwd=arm_dir, capture_output=True, text=True,
+        )
+
+    r = run_arm("a", hook_aborts=False)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "metrics row NOT recorded" not in r.stderr
+    rows = (tmp_path / "a" / ".measurement" / "metrics.tsv").read_text().splitlines()
+    assert len(rows) == 2 and "feature" in rows[0], rows
+    metrics = dict(zip(rows[0].split("\t"), rows[1].split("\t")))
+    assert metrics["feature"] == "v106"
+    head = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=tmp_path / "a",
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert head == "[success] spec v106", "arm A must advance HEAD"
+
+    r = run_arm("b", hook_aborts=True)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "metrics row SKIPPED" in r.stderr, r.stderr
+    assert "HEAD " in r.stderr and "->" in r.stderr, r.stderr
+    assert not (tmp_path / "b" / ".measurement" / "metrics.tsv").exists(), \
+        "a failed [success] commit must not produce a row bound to a stale HEAD"
+    head = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=tmp_path / "b",
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert head == "[success] spec v105", \
+        "the ARM B guard must not have committed anything"
+
+
 def test_full_suite_execution_is_confined_to_tests_directory():
     """No-argument run_tests cannot discover archives or selftests.
 

@@ -2239,16 +2239,35 @@ EOF
   rm -rf "$STATE_DIR"
   git add tasks/CURRENT.md "$COMPLETION_LEDGER"
   [ ! -f "$FLAKE_LEDGER" ] || git add "$FLAKE_LEDGER"
+  # P3-5: the metrics row must bind to THIS milestone's [success] commit —
+  # a bare `--milestone HEAD` can bind a STALE ref if the guarded commit
+  # above fails (git identity, pre-commit hook, anything else, all muffled
+  # by the `|| true`): HEAD would still point at the previous milestone's
+  # commit whose subject may already match `[success] spec vN`. Capture the
+  # pre-commit SHA and require: HEAD advanced AND the new subject is EXACTLY
+  # `[success] spec v$FROZEN_V`; otherwise warn loudly and skip the row.
+  pre_success_sha=""
+  pre_success_sha=$(git rev-parse HEAD 2>/dev/null || true)
   git diff --cached --quiet \
     || git commit -m "[success] spec v$FROZEN_V" 2>/dev/null || true
-  # Metrics row (D-126): computed from DURABLE sources that survive the
-  # rm -rf above (..measurement/, .em-archive/, the committed flake ledger).
-  # A report — a failure here must never fail the run, but it must be VISIBLE:
-  # the int("v99") crash sat hidden for weeks behind `2>/dev/null || true`
-  # (correction log 2026-07-16: an `|| true` swallows EVERY failure mode). Keep
-  # it non-gating, but surface the tool's error and a warning instead.
-  if ! python3 "$METRICS_REPORT_TOOL" --milestone HEAD --feature "v$FROZEN_V"; then
-    echo "orchestrate: metrics row NOT recorded for v$FROZEN_V (non-fatal report; see error above)" >&2
+  post_success_sha=""
+  post_success_sha=$(git rev-parse HEAD 2>/dev/null || true)
+  success_subject=""
+  success_subject=$(git log -1 --format=%s 2>/dev/null || true)
+  if [ -n "$pre_success_sha" ] && [ -n "$post_success_sha" ] \
+     && [ "$post_success_sha" != "$pre_success_sha" ] \
+     && [ "$success_subject" = "[success] spec v$FROZEN_V" ]; then
+    # Metrics row (D-126): computed from DURABLE sources that survive the
+    # rm -rf above (..measurement/, .em-archive/, the committed flake ledger).
+    # A report — a failure here must never fail the run, but it must be VISIBLE:
+    # the int("v99") crash sat hidden for weeks behind `2>/dev/null || true`
+    # (correction log 2026-07-16: an `|| true` swallows EVERY failure mode). Keep
+    # it non-gating, but surface the tool's error and a warning instead.
+    if ! python3 "$METRICS_REPORT_TOOL" --milestone HEAD --feature "v$FROZEN_V"; then
+      echo "orchestrate: metrics row NOT recorded for v$FROZEN_V (non-fatal report; see error above)" >&2
+    fi
+  else
+    echo "orchestrate: [success] commit did not land for v$FROZEN_V (HEAD ${pre_success_sha:-none} -> ${post_success_sha:-none}, subject '$success_subject') — metrics row SKIPPED (report-only, never fails a run)" >&2
   fi
   exit 0
 fi
