@@ -73,6 +73,9 @@ LOG_DIR="$STATE_DIR/logs"
 APPROVED="scripts/.approved"
 AGENT_TIMEOUT=60
 FROZEN_V="42"
+# P3-1: the evidence archive is DURABLE — outside .pipeline-state, same as
+# orchestrate.sh's .em-archive; the success teardown must not erase it.
+CODER_ARCHIVE_DIR=".coder-archive"
 # Mirrors orchestrate.sh's entry default exactly: unset OR empty means 4096.
 SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-4096}"
 mkdir -p "$STATE_DIR" "$TASK_STATE" "$LOG_DIR"

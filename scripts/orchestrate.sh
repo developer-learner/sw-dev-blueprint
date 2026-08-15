@@ -177,6 +177,16 @@ mkdir -p "$ARCHIVE_DIR"
 [ -f "$ARCHIVE_DIR/.gitignore" ] || printf '*\n' > "$ARCHIVE_DIR/.gitignore"
 LAST_ARCHIVE_ENTRY=""
 
+# Durable archive of every coder attempt (survives rm -rf .pipeline-state on
+# success) — the coder analog of .em-archive (P3-1): the transcripts were
+# written under $LOG_DIR/archive and wiped at the success teardown, defeating
+# the "Coder-evidence archive (Phase 6, D-115)" intent and foreclosing the
+# coder analog of em-bench. Pure capture: nothing reads them during a run.
+# Same self-ignoring pattern as .em-archive.
+CODER_ARCHIVE_DIR=".coder-archive"
+mkdir -p "$CODER_ARCHIVE_DIR"
+[ -f "$CODER_ARCHIVE_DIR/.gitignore" ] || printf '*\n' > "$CODER_ARCHIVE_DIR/.gitignore"
+
 # Durable run-measurement sink (Phase 5 instrumentation, 2026-08-06): one
 # timestamped row per firing in .measurement/counters. Survives the success
 # teardown's rm -rf .pipeline-state (timings.tsv is wiped with it). Pure
@@ -908,19 +918,22 @@ brief; transcribe it into working code immediately."
         --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
     || { CODER_EVIDENCE="coder call failed: $(tail -3 "$LOG_DIR/$id-a$attempt.log" | tr '\n' ' ')"; write_state phase ""; return 1; }
-  # Coder-evidence archive (Phase 6, D-115): the flat log name above is a
+  # Coder-evidence archive (Phase 6, D-115; P3-1): the flat log name above is a
   # per-run scratchpad — a brief_wrong revision resets the strike counter, so
   # a same-slot retry would silently overwrite the prior brief's only
   # transcript. Archive every attempt verbatim under a version/task/revision/
-  # attempt name, best-effort (a full scratch dir must never gate the run).
+  # attempt name, best-effort (a full scratch dir must never gate the run),
+  # into the DURABLE .coder-archive/ — the success teardown's rm -rf wipes
+  # .pipeline-state, and the pre-P3-1 location ($LOG_DIR/archive) erased the
+  # evidence at the exact moment the milestone succeeded.
   # No sequencing, metadata, or pruning: the name is the ordering.
   {
     local coder_revs; coder_revs=$(counter "$id" revisions)
-    mkdir -p "$LOG_DIR/archive"
+    mkdir -p "$CODER_ARCHIVE_DIR"
     cp "$LOG_DIR/$id-a$attempt.raw" \
-       "$LOG_DIR/archive/$FROZEN_V.$id.$coder_revs.$attempt.raw" || true
+       "$CODER_ARCHIVE_DIR/$FROZEN_V.$id.$coder_revs.$attempt.raw" || true
     cp "$LOG_DIR/$id-a$attempt.log" \
-       "$LOG_DIR/archive/$FROZEN_V.$id.$coder_revs.$attempt.log" || true
+       "$CODER_ARCHIVE_DIR/$FROZEN_V.$id.$coder_revs.$attempt.log" || true
   }
   if [ -n "$existing" ]; then
     # D-59 edit-block path: fail-closed applier; target untouched on any error

@@ -4459,7 +4459,7 @@ def test_coder_wrong_path_reply_is_strike_not_commit(tmp_path):
 
 
 def archive_names(tmp_path):
-    arch = tmp_path / ".pipeline-state" / "logs" / "archive"
+    arch = tmp_path / ".coder-archive"
     return sorted(p.name for p in arch.glob("*")) if arch.exists() else []
 
 
@@ -4469,16 +4469,25 @@ def test_coder_evidence_archive_survives_brief_revision(tmp_path):
     revision resets the strike counter (drive-coder paths key off it), so a
     same-slot retry after a revision would OVERWRITE the flat log file the
     run used — the archive is what keeps the earlier brief's transcript.
-    Assert both revisions' transcripts coexist under distinct names."""
+    Assert both revisions' transcripts coexist under distinct names.
+    P3-1: the archive lives in .coder-archive/ OUTSIDE .pipeline-state —
+    a simulated success teardown (rm -rf .pipeline-state) must not erase
+    the evidence (the pre-P3-1 location, $LOG_DIR/archive, died that way)."""
     r = run_coder_drive(tmp_path, CODER_GOOD_REPLY, gate_rc=0)
     assert r.returncode == 0, (r.stdout, r.stderr)
     first = archive_names(tmp_path)
     assert "42.T7.0.1.raw" in first, first          # version=42 (drive-coder FROZEN_V)
     assert "42.T7.0.1.log" in first, first
-    assert (tmp_path / ".pipeline-state" / "logs" / "archive" / "42.T7.0.1.raw"
+    assert (tmp_path / ".coder-archive" / "42.T7.0.1.raw"
             ).read_text() == CODER_GOOD_REPLY
+    # P3-1: the success teardown must not touch the evidence archive.
+    import shutil
+    shutil.rmtree(tmp_path / ".pipeline-state")
+    assert "42.T7.0.1.raw" in archive_names(tmp_path), \
+        "coder evidence must survive rm -rf .pipeline-state (P3-1)"
     # Simulate a brief_wrong revision: the EM bumps revisions and resets
     # strikes to 0, so the next attempt is again "attempt 1" of a new brief.
+    (tmp_path / ".pipeline-state" / "tasks").mkdir(parents=True)
     (tmp_path / ".pipeline-state" / "tasks" / "T7.revisions").write_text("1")
     (tmp_path / ".pipeline-state" / "tasks" / "T7.strikes").write_text("0")
     # Reset the created file so the second drive is CREATE-mode again (edit
@@ -4490,7 +4499,7 @@ def test_coder_evidence_archive_survives_brief_revision(tmp_path):
     second = archive_names(tmp_path)
     assert "42.T7.0.1.raw" in second               # first brief's transcript retained
     assert "42.T7.1.1.raw" in second               # second brief, distinct name
-    assert (tmp_path / ".pipeline-state" / "logs" / "archive" / "42.T7.1.1.raw"
+    assert (tmp_path / ".coder-archive" / "42.T7.1.1.raw"
             ).read_text() == CODER_GOOD_REPLY
 
 
