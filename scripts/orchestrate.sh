@@ -552,8 +552,9 @@ fi
 guard_task_state
 # Control-plane + frozen-artifact integrity (phase-gate verifies both, fail-closed)
 bash scripts/phase-gate.sh manifest HEAD
-# The frozen spec IS the human approval: it only exists via scripts/refreeze.sh,
-# which requires an interactive human y/N on the diff (D-31). No honor-string.
+# The frozen spec is admitted only through scripts/refreeze.sh, which
+# auto-installs after every mechanical preflight passes (D-121). No
+# honor-string or separate human approval step exists in this lane.
 [ -f "$APPROVED/frozen-manifest" ] || die "no frozen TPM spec — install PRD/ERD/contracts/tests via scripts/refreeze.sh"
 [ -f "$APPROVED/VERSION" ]         || die "$APPROVED/VERSION missing — run scripts/refreeze.sh"
 FROZEN_V=$(cat "$APPROVED/VERSION")

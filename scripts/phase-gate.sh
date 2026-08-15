@@ -51,7 +51,8 @@ done
 
 # Frozen-spec integrity (D-31). The frozen TPM artifacts (PRD/ERD/contracts/
 # tests) may only change via scripts/refreeze.sh, which regenerates this
-# manifest under an interactive human approval. Any other change fails closed.
+# manifest after every mechanical preflight passes (D-121). Any other change
+# fails closed.
 #
 # Trigger: once a spec has been frozen (VERSION exists), the manifest is
 # required. `[ -f FROZEN ]` alone silently skipped the whole check when the
