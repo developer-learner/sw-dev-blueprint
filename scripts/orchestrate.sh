@@ -316,7 +316,21 @@ mark() { printf '%s\t%ss\t%s\n' "$(date '+%H:%M:%S')" "$(run_elapsed)" "$1" >> "
 # --- exit trap: record how the run ended, always ------------------------------
 # M33 v76 (2026-08-02): the run died mid-T1 with no HALT, no escalation, no
 # final timing mark — orchestrate crashed under `set -euo pipefail` and every
-# subsequent measurement was blind because no artifact recorded the exit. This
+# subsequent measurement was blind because no artifact recorded the exit.
+#
+# Persist one run's terminal measurement while its timing source still exists.
+# The success path calls this before teardown; record_exit covers every other
+# termination path. Measurement remains report-only and can never fail a run.
+record_measurement() {  # record_measurement <rc> <phase> <task>
+  local rc="$1" phase="$2" task="$3"
+  mkdir -p "$MEAS_DIR" 2>/dev/null || true
+  if [ -d "$MEAS_DIR" ]; then
+    [ -f "$LOG_DIR/timings.tsv" ] \
+      && cp "$LOG_DIR/timings.tsv" "$MEAS_DIR/timings-$(date -u +%FT%TZ).tsv" 2>/dev/null || true
+    meas "exit rc=$rc phase=${phase:-<none>} task=${task:-<none>} spec=${FROZEN_V:-unknown} revisions=$(plan_revisions_used) elapsed=$(run_elapsed)s"
+  fi
+}
+
 # trap runs on EVERY exit path (success, die, uncaught error) and appends one
 # row to run-exit.log: iso-timestamp, exit code, last recorded phase, current
 # task target, last timings row. It does NOT invent an escalation for an
@@ -342,17 +356,10 @@ record_exit() {
       "$(run_elapsed)" "${last_ts:-<none>}" \
       >> "$LOG_DIR/run-exit.log"
   fi
-  # Phase 5 instrumentation (2026-08-06): durable terminal-event capture. The
-  # success teardown wipes .pipeline-state BEFORE this EXIT trap fires, so
-  # copy timings.tsv here and append one summary row (spec version, exit code,
-  # phase, task, revisions used, elapsed) — the run's after-measurement
-  # record. Guarded: measurement can never fail the run or alter its exit
-  # code.
-  mkdir -p "$MEAS_DIR" 2>/dev/null || true
-  if [ -d "$MEAS_DIR" ]; then
-    [ -f "$LOG_DIR/timings.tsv" ] \
-      && cp "$LOG_DIR/timings.tsv" "$MEAS_DIR/timings-$(date -u +%FT%TZ).tsv" 2>/dev/null || true
-    meas "exit rc=$rc phase=${phase:-<none>} task=${task:-<none>} spec=${FROZEN_V:-unknown} revisions=$(plan_revisions_used) elapsed=$(run_elapsed)s"
+  # Success has already persisted the same terminal event before deleting its
+  # timing source. Do not append a duplicate rc=0 row from this EXIT trap.
+  if [ "${SUCCESS_RECORDED:-0}" != "1" ]; then
+    record_measurement "$rc" "$phase" "$task"
   fi
   return $rc
 }
@@ -2217,6 +2224,11 @@ if [ "$TESTS_RC" -eq 0 ]; then
 
   $_verdict_note. Feature built and validated.${FLAKE_NOTE}
 EOF
+  # D-126 ordering: persist this successful run while timings.tsv still
+  # exists, before teardown and before metrics-report reads the durable sink.
+  # The EXIT trap observes SUCCESS_RECORDED and does not duplicate the row.
+  record_measurement 0 "" ""
+  SUCCESS_RECORDED=1
   rm -rf "$STATE_DIR"
   git add tasks/CURRENT.md "$COMPLETION_LEDGER"
   [ ! -f "$FLAKE_LEDGER" ] || git add "$FLAKE_LEDGER"

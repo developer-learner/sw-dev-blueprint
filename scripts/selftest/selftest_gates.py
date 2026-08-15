@@ -2486,9 +2486,13 @@ def test_run_exit_trap_records_every_termination_path(tmp_path):
     reliable ground truth for the next feature-summary. Not an escalation
     substitute: unexpected rc must not fabricate a bundle."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
+    measurement_fn = re.search(
+        r"^record_measurement\(\) \{.*?^\}$", source, re.M | re.S,
+    )
+    assert measurement_fn, "record_measurement not found — extractor drift"
     fn = re.search(r"^record_exit\(\) \{.*?^\}$", source, re.M | re.S)
     assert fn, "record_exit not found — extractor drift"
-    fn_body = fn.group(0)
+    fn_body = measurement_fn.group(0) + "\n\n" + fn.group(0)
     trap_line = re.search(r"^trap 'record_exit' EXIT$", source, re.M)
     assert trap_line, "EXIT trap not installed"
 
@@ -2542,6 +2546,89 @@ trap 'record_exit' EXIT
     (state / "logs" / "run-exit.log").unlink(missing_ok=True)
     rc, log = run("echo halted >&2; exit 3")
     assert rc == 3 and "rc=3" in log and "phase=plan" in log
+
+
+def test_success_metrics_are_persisted_before_teardown_and_report(tmp_path):
+    """Regression: the success path used to delete timings.tsv, run the
+    idempotent metrics reporter, and only then let the EXIT trap persist the
+    current rc=0 row. The milestone row therefore froze without its own run.
+
+    Exercise the production measurement producer through the real ordering:
+    capture -> teardown -> metrics-report -> EXIT trap. The report must count
+    the current success once, retain its timing copy, and the trap must not
+    append a duplicate terminal event.
+    """
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    measurement_fn = re.search(
+        r"^record_measurement\(\) \{.*?^\}$", source, re.M | re.S,
+    )
+    exit_fn = re.search(r"^record_exit\(\) \{.*?^\}$", source, re.M | re.S)
+    assert measurement_fn and exit_fn, "measurement producer extractor drift"
+
+    capture_at = source.index('  record_measurement 0 "" ""')
+    recorded_at = source.index("  SUCCESS_RECORDED=1", capture_at)
+    teardown_at = source.index('  rm -rf "$STATE_DIR"', recorded_at)
+    report_at = source.index(
+        '  if ! python3 "$METRICS_REPORT_TOOL"', teardown_at,
+    )
+    assert capture_at < recorded_at < teardown_at < report_at
+
+    state = tmp_path / ".pipeline-state"
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    (logs / "timings.tsv").write_text(
+        "10:00:00\t0s\trun start (budget 1200s)\n"
+        "10:00:05\t5s\tpre-flight done (spec v106)\n"
+        "10:00:20\t20s\tpytest selftest\n"
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-q", "--allow-empty", "-m", "[success] spec v106"],
+        cwd=tmp_path, check=True,
+    )
+
+    script = f"""#!/usr/bin/env bash
+set -euo pipefail
+STATE_DIR="{state}"
+LOG_DIR="$STATE_DIR/logs"
+MEAS_DIR="{tmp_path / '.measurement'}"
+METRICS_REPORT_TOOL="{SCRIPTS / 'metrics-report.py'}"
+RUN_T0=$(date +%s)
+run_elapsed() {{ echo $(( $(date +%s) - RUN_T0 )); }}
+meas() {{ printf '%s\\t%s\\n' "$(date -u +%FT%TZ)" "$1" >> "$MEAS_DIR/counters" 2>/dev/null || true; }}
+plan_revisions_used() {{ echo 0; }}
+FROZEN_V=106
+
+{measurement_fn.group(0)}
+
+{exit_fn.group(0)}
+
+trap 'record_exit' EXIT
+record_measurement 0 "" ""
+SUCCESS_RECORDED=1
+rm -rf "$STATE_DIR"
+python3 "$METRICS_REPORT_TOOL" --root "$PWD" --milestone HEAD --feature "v$FROZEN_V"
+exit 0
+"""
+    result = subprocess.run(
+        ["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+    counters = (tmp_path / ".measurement" / "counters").read_text()
+    assert counters.count("exit rc=0") == 1, counters
+    timing_copies = list((tmp_path / ".measurement").glob("timings-*.tsv"))
+    assert len(timing_copies) == 1
+    assert "pytest selftest" in timing_copies[0].read_text()
+
+    rows = (tmp_path / ".measurement" / "metrics.tsv").read_text().splitlines()
+    assert len(rows) == 2
+    metrics = dict(zip(rows[0].split("\t"), rows[1].split("\t")))
+    assert metrics["feature"] == "v106"
+    assert metrics["success_runs"] == "1"
+    assert metrics["retry_runs"] == "0"
+    assert metrics["selftest_count"] == "1"
 
 
 def test_full_suite_execution_is_confined_to_tests_directory():
