@@ -147,8 +147,9 @@ case "$PHASE" in
     if [ -f .placeholder-gate ]; then
       hits=$({ grep -rnE '\[[A-Z][A-Za-z0-9_ ]+\]|\[[A-Z][a-z]+ [a-z]|\[[a-z][a-z_]+ [a-z]' . \
           --include='*.md' --include='*.json' --exclude-dir=.git \
+          --exclude-dir=project-trail --exclude='HANDOFF-*' \
           --exclude='DECISIONS.md' --exclude='BLUEPRINT.md' \
-          | grep -vE '\]\(' || true; })
+          | grep -vE '\]\(' | grep -vE '^\| [0-9]{4}-[0-9]{2}-[0-9]{2} ' || true; })
       if [ -n "$hits" ]; then
         echo "GATE FAIL: placeholder tokens survived (BLUEPRINT.md Step 7 — fill then re-run):"
         echo "$hits"

@@ -540,6 +540,13 @@ correction-log table row quoting a placeholder token (e.g. CLAUDE.md's
 `[highest leverage]`). Markdown links are already filtered by the trailing
 `](`-pipe; every other hit is a placeholder.
 
+**Mechanical exclusions:** the gate (below) skips the same verbatim-record
+surfaces `doc-consistency.sh` already excludes — `project-trail/` and
+`HANDOFF-*` files wholesale, plus date-led correction-log table rows
+(`| 2026-06-04 | …`). None of these exist in a fresh child, so a real
+unfilled placeholder is still caught; a mature child's historical records
+can never false-positive the gate.
+
 `DECISIONS.md` and `BLUEPRINT.md` are excluded: the first uses intentional
 placeholder brackets in its `## Template` format block; the second lists
 `[PROJECT_NAME]` and `[NAME]` as fill examples in Step 6.

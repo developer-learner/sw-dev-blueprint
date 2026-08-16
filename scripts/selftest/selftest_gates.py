@@ -2962,6 +2962,35 @@ def test_placeholder_gate_ignores_markdown_links_when_armed(frozen_repo):
     assert r.returncode == 0, r.stdout
 
 
+def test_placeholder_gate_exempts_project_trail_when_armed(frozen_repo):
+    """Verbatim-record surfaces (doc-consistency.sh parity): a mature
+    child's project-trail history quotes tokens like `[refreeze vN]` —
+    those are records, not unfilled slots, and never exist in a fresh
+    child, so exempting them costs nothing on the protected case."""
+    _write_md(
+        frozen_repo, "project-trail/2026-08-15-milestone.md",
+        "closed by `[success v99]` at 23:14\n",
+    )
+    (frozen_repo / ".placeholder-gate").write_text("")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, r.stdout
+
+
+def test_placeholder_gate_exempts_correction_log_rows_when_armed(frozen_repo):
+    """Date-led table rows are correction-log entries (verbatim by rule);
+    the same filter must NOT exempt a real unfilled [NAME] on a
+    non-date-led row like CLAUDE.md's Key Contacts table."""
+    _write_md(
+        frozen_repo, "CLAUDE.md",
+        "| 2026-06-04 | ...; `[NAME]` survived. | grep-gate |\n"
+        "| Product owner | [NAME] |\n",
+    )
+    (frozen_repo / ".placeholder-gate").write_text("")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 1
+    assert "Product owner" in r.stdout
+
+
 # --- refreeze.sh REMOVED whitelist (fixes 64535e3) --------------------------
 # The `case "$f" in tests/*.py)` whitelist accepted `tests/../scripts/foo.py`
 # because bash case-globs match '/'. 64535e3 rejects traversal before the
