@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-160 — 2026-08-15 — Placeholder gate mechanized: bootstrap arms .placeholder-gate; phase-gate enforces Step 7
+
+**Decision:** BLUEPRINT.md Step 7's placeholder grep is no longer judgment-only. `bootstrap.sh` creates `.placeholder-gate` before its baseline commit (which is exempt — the hook is not yet enabled when bootstrap commits the skeleton baseline), and from then on `phase-gate.sh manifest` — the mode the pre-commit hook and the orchestrator pre-flight both run — fails any commit whose tree still carries a Step-7 hit (same command, same exclusions: md/json, markdown links filtered, DECISIONS.md/BLUEPRINT.md exempt). The template repo itself never runs bootstrap.sh, so its intentional skeleton rows can never trip the gate; a derived repo is on the enforced side from its first bootstrap. Four selftests pin the behavior: dormant without marker, blocks hits when armed, passes clean when armed, ignores markdown links.
+
+**Alternatives considered:** (a) Leaving Step 7 procedural — rejected (2026-08-15 PM ruling): the meta-rule treats an unmechanized rule as a suggestion, and the re-verification explicitly called the missing fail-closed mechanism. (b) Unconditional enforcement in phase-gate — rejected: the template repo's own commits would fail on its skeletons; the marker is the discriminator. (c) Wiring into bootstrap's fill step only — rejected: bootstrap runs at Step 4, before fill; enforcement belongs at the commit door.
+
+**Reason:** A third-party re-verification confirmed the gate existed but could not find a mechanical failure path for unfilled slots; the repo's own correction-log meta-rule (a rule that cannot be enforced mechanically is a suggestion) demands the gate fail on its own.
+
+**Do not suggest:** exempting skeleton files from the gate (they are the Step-6 fill contract — a derived repo must fill them); deleting `.placeholder-gate` from a child to quiet the gate (silent fail-open; the marker is the enforcement switch); adding the marker to the template manifest (it is a marker, not control-plane logic, and the template repo never carries one).
+
 ## D-159 — 2026-08-15 — README file tree completed; placeholder gate re-verified
 
 **Decision:** `README.md`'s file tree now lists all 11 `docs/` files (BROWSER-ORACLE-DESIGN, CEO-PLAYBOOK, CONDUCTOR-ROLE, DEV-VM-SETUP, SANDBOX-VALIDATION were missing — DEV-VM-SETUP is referenced by the README itself). A third-party re-verification of the remediation batches independently confirmed the D-153 placeholder gate: it exists as BLUEPRINT.md Step 7 (a real fail-and-return gate with the hardened regex, markdown-link filter, and the two documented verbatim-record exceptions), and a live run against the template repo is clean except the Step-6 skeleton rows and the two exceptions — the gate's purpose is a derived repo after fill, and the template's skeletons are its fill targets by design.

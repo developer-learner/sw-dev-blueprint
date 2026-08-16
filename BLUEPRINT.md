@@ -543,6 +543,13 @@ correction-log table row quoting a placeholder token (e.g. CLAUDE.md's
 `DECISIONS.md` and `BLUEPRINT.md` are excluded: the first uses intentional
 placeholder brackets in its `## Template` format block; the second lists
 `[PROJECT_NAME]` and `[NAME]` as fill examples in Step 6.
+
+**Mechanical backstop (D-160):** `bootstrap.sh` creates `.placeholder-gate`
+before its baseline commit, and from then on `phase-gate.sh manifest` (which
+the pre-commit hook and the orchestrator pre-flight both run) fails any
+commit whose tree still contains a Step-7 hit — the gate above is no longer
+judgment-only. The template repo itself never runs bootstrap.sh, so its
+intentional skeleton rows are exempt by construction.
 Everything else must be clean.
 
 ### Step 8 — First commit and push

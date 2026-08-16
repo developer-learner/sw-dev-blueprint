@@ -135,7 +135,26 @@ case "$PHASE" in
     fi
     ;;
   manifest)
-    # Integrity checks above are the whole job.
+    # Integrity checks above are the whole job. Plus the placeholder-
+    # completeness gate (D-160): BLUEPRINT.md Step 7 mechanized. Active only
+    # when bootstrap.sh's marker exists — the template repo never runs
+    # bootstrap.sh, so its intentional skeleton rows ([PROJECT_NAME], stack
+    # examples, task templates) cannot trip the gate; a derived repo is on
+    # the enforced side from its first bootstrap, so its first commit cannot
+    # carry an unfilled placeholder. Same command + exclusions as Step 7:
+    # md/json, markdown links filtered, DECISIONS.md/BLUEPRINT.md excluded
+    # (intentional bracket content).
+    if [ -f .placeholder-gate ]; then
+      hits=$({ grep -rnE '\[[A-Z][A-Za-z0-9_ ]+\]|\[[A-Z][a-z]+ [a-z]|\[[a-z][a-z_]+ [a-z]' . \
+          --include='*.md' --include='*.json' --exclude-dir=.git \
+          --exclude='DECISIONS.md' --exclude='BLUEPRINT.md' \
+          | grep -vE '\]\(' || true; })
+      if [ -n "$hits" ]; then
+        echo "GATE FAIL: placeholder tokens survived (BLUEPRINT.md Step 7 — fill then re-run):"
+        echo "$hits"
+        exit 1
+      fi
+    fi
     ;;
   *)
     echo "usage: phase-gate.sh <em|task|manifest> [phase-start-ref] [task-target]"

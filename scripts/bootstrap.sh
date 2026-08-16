@@ -85,6 +85,17 @@ if [ ! -f .env ] && [ -f .env.example ]; then
   echo ".env created — fill in your values before running"
 fi
 
+# --- Placeholder-completeness gate marker (D-160) ---
+# BLUEPRINT.md Step 7 becomes MECHANICAL once this marker exists: phase-gate
+# (and via it, the pre-commit hook) fails any commit that still carries a
+# placeholder token. Created BEFORE the baseline commit so it is tracked from
+# the start — the baseline commit itself is exempt (the hook is not yet
+# enabled below), which is correct: it is the skeleton baseline by design.
+# The template repo never runs bootstrap.sh, so its intentional skeleton
+# rows never trip the gate.
+: > .placeholder-gate
+echo "🏷️  Placeholder gate armed — surviving placeholder tokens now fail commits (BLUEPRINT.md Step 7)"
+
 # --- Git ---
 if [ ! -d .git ]; then
   echo "📁 Initializing git repo..."

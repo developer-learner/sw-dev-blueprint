@@ -2919,6 +2919,49 @@ def test_phase_gate_gitignored_bytecode_does_not_trip(frozen_repo):
     assert r.returncode == 0, r.stdout
 
 
+# --- placeholder-completeness gate (D-160) ---------------------------------
+# BLUEPRINT.md Step 7 mechanized: bootstrap.sh arms `.placeholder-gate`, and
+# phase-gate `manifest` fails when the tree still carries a Step-7 hit. The
+# template repo itself never runs bootstrap.sh, so its intentional skeleton
+# rows are exempt by construction — the gate is dormant without the marker.
+
+
+def _write_md(repo, name, text):
+    (repo / name).parent.mkdir(parents=True, exist_ok=True)
+    (repo / name).write_text(text)
+
+
+def test_placeholder_gate_dormant_without_marker(frozen_repo):
+    """No marker -> no enforcement: the template repo (and any repo that
+    skipped bootstrap) can carry skeleton rows without blocking commits."""
+    _write_md(frozen_repo, "docs/TEMPLATE.md", "## [PLACEHOLDER] block\n")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, r.stdout
+
+
+def test_placeholder_gate_blocks_hits_when_armed(frozen_repo):
+    _write_md(frozen_repo, "docs/TEMPLATE.md", "## [PLACEHOLDER] block\n")
+    (frozen_repo / ".placeholder-gate").write_text("")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 1
+    assert "placeholder tokens survived" in r.stdout
+    assert "PLACEHOLDER" in r.stdout
+
+
+def test_placeholder_gate_passes_clean_when_armed(frozen_repo):
+    _write_md(frozen_repo, "docs/TEMPLATE.md", "## Fully filled block\n")
+    (frozen_repo / ".placeholder-gate").write_text("")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, r.stdout
+
+
+def test_placeholder_gate_ignores_markdown_links_when_armed(frozen_repo):
+    _write_md(frozen_repo, "docs/TEMPLATE.md", "[see docs](docs/ARCHITECTURE.md)\n")
+    (frozen_repo / ".placeholder-gate").write_text("")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, r.stdout
+
+
 # --- refreeze.sh REMOVED whitelist (fixes 64535e3) --------------------------
 # The `case "$f" in tests/*.py)` whitelist accepted `tests/../scripts/foo.py`
 # because bash case-globs match '/'. 64535e3 rejects traversal before the
