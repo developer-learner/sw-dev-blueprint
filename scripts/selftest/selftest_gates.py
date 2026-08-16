@@ -3003,6 +3003,10 @@ def test_placeholder_gate_exempts_session_notes_and_archives_when_armed(frozen_r
         frozen_repo, ".em-archive/2026-08-15_plan/plan.json",
         '{"brief": "carry forward, class [SourceLink] verbatim"}\n',
     )
+    _write_md(
+        frozen_repo, ".venv-linux/lib/python3.12/site-packages/fastapi/SKILL.md",
+        "async def stream_items() -> AsyncIterable[Item]:\n",
+    )
     (frozen_repo / ".placeholder-gate").write_text("")
     r = _run_gate(frozen_repo)
     assert r.returncode == 0, r.stdout

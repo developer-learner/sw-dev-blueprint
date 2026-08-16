@@ -558,7 +558,7 @@ commit whose tree still contains a Step-7 hit on the fill surfaces — the
 gate above is no longer judgment-only. The mechanical scan applies the
 same token exclusions as the command above, plus the record/runtime
 surfaces a mature child accumulates (`project-trail/`, `.em-archive/`,
-`.pipeline-state/`, `.measurement/`, `.tpm/`, `HANDOFF-*`,
+`.pipeline-state/`, `.measurement/`, `.tpm/`, `.venv*`, `HANDOFF-*`,
 `tasks/CURRENT.md`, `tasks/BACKLOG.md`, date-led correction-log rows) —
 verbatim-history quotes like `[refreeze vN]` live there, and none of those
 surfaces exist in a fresh child, so the protected case is unchanged. The
