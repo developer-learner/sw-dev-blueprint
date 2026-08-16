@@ -21,6 +21,36 @@
 
 ## Decisions
 
+## D-164 — 2026-08-15 — Multi-file transactional task groups sequenced behind measured oracle strength
+
+**Decision:** A bounded multi-file transactional task group (one model completion per file, the group validated/tested/committed/rolled back atomically) for migrations and cross-cutting refactors is a recognized gap and deliberately deferred: sequenced after oracle strength is measured (the D-161 freeze-cadence pass). The one-file containment that makes the local-coder floor fail cheaply is not widened first.
+
+**Alternatives considered:** (a) Build the group now — rejected: it widens the blast radius per completion before the oracle can be shown to catch the wider blast. (b) Reject the gap forever — rejected: migrations and cross-cutting refactors are real, unserved task shapes. (c) Multi-file without group atomicity — rejected: partial groups re-introduce the half-applied class refreeze's transactionality (D-151) exists to prevent.
+
+**Reason:** Rule 9 (gate strength ∝ blast radius) cuts both ways — widening the lane before measuring the oracle that must catch the wider blast inverts the sequence the green-suite/broken-app incidents (D-75's reason) teach.
+
+**Do not suggest:** widening the coder lane to multi-file while the frozen suite's discrimination is unmeasured; reading this deferral as approval of one-file as dogma (it is the current safe default, not a universal); building the group with per-file commits instead of group atomicity (the D-151 class).
+
+## D-163 — 2026-08-15 — Comparative evaluation deferred until independent oracle authorship exists
+
+**Decision:** A comparative benchmark (this pipeline vs. Spec Kit + a frontier agent vs. a plain Codex/Claude Code workflow, scored on hidden acceptance tests) is deferred, gated on solving independent evaluation: the hidden tests must be authored by someone other than the TPM seat. Not ranked as next work. The existing external-review commissioning pattern (REVIEW.md; the 2026-08 remediation review) is the template for that independent author — the constraint is commissioning, not engineering.
+
+**Alternatives considered:** (a) Run now with TPM-authored hidden tests on both arms — rejected: it measures oracle-authoring skill, not pipeline efficacy — self-certification. (b) Independent review for the blueprint arm only — rejected: same validity failure, asymmetric. (c) Skip the benchmark permanently — rejected: the pipeline's internal claims are evidence-backed while its comparative claim stays narrative.
+
+**Reason:** Every internal gate claim in this repo has mechanical evidence; the market-superiority claim has none. A benchmark that cannot distinguish "the pipeline wins" from "the TPM writes better tests" would fail the repo's own Rule 6 standard at benchmark scale.
+
+**Do not suggest:** running the eval with TPM-authored hidden tests and reporting "pipeline wins" (the rubber-ruler failure at benchmark scale); commissioning the eval before D-162 lands (an eval run on a tainted oracle inherits the taint); treating the eval's deferral as evidence against the pipeline's value (deferral is validity-gated, not verdict-gated).
+
+## D-162 — 2026-08-15 — TPM read wall to become structural: materialized view, not a settings allowlist
+
+**Decision:** INV-1's read side becomes structural via a materialized TPM view — a directory containing only the spec artifacts `spec_artifacts.py` describes, the frozen tests, and sanitized escalation evidence, with the agent rooted there so implementation bytes are physically absent — not by tightening `tpm-agent-settings.json`. Until the view exists, the read wall remains harness-enforced policy (the softness `tpm-agent.sh`'s own header admits), and claims of structurality are wrong.
+
+**Alternatives considered:** (a) Settings allowlist only (deny `Read(./.git/**)`, `Read(./project-trail/**)`, `Read(./.pipeline-state/**)`) — rejected as the fix: still harness-enforced policy, same softness class; the practical leak channels are human-readable evidence files, and a policy list binds only as long as the harness has no gap (the conductor-lane-breach class, project-trail/2026-07-04). (b) Run the agent inside the test sandbox with src/ unmounted — viable but heavier than needed; the materialized view reuses the pack machinery that already excludes src/ and tests/ from TPM briefs by construction. (c) Leave as-is — rejected: REVIEW.md HIGH-2 names this exact hole, and its fix remains open.
+
+**Reason:** Every other load-bearing invariant got the structural treatment (committed hooks, hash-pinned manifests, sandbox mounts, a coder with no filesystem at all); INV-1's read side is the last one enforced by a promise. A TPM that reads src/ fails softly: the suite freezes green-tinted, INV-1 is violated without any crash, and everything downstream reports healthy.
+
+**Do not suggest:** declaring the read wall structural after a settings-file edit (a tighter policy is not a boundary); building the view without sanitizing escalation evidence (project-trail/.pipeline-state quotes of implementation are the practical channel, ahead of `.git` blobs); demoting the D-38 chat air gap below fallback status before the view exists.
+
 ## D-161 — 2026-08-15 — Oracle-strength gap recorded as open: the frozen suite's discrimination is unverified (D-75 continuation)
 
 > Amended by the 2026-08-15 docs-wording commit: the Rule 5 correction below landed — BLUEPRINT.md's Rule 5 heading/table row, CLAUDE.md's guidance bullet, and new-project.sh's child CLAUDE.md template now read "binding automated completion evidence"; REVIEW.md and historical entries untouched.

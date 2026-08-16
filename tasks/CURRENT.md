@@ -75,7 +75,13 @@ names). Open queue: third batch landed same day as **D-154** (fail-open
   as the shape of any fix; Rule 5 "ground truth" wording corrected in the
   same batch — BLUEPRINT.md, CLAUDE.md, and new-project.sh's child
   CLAUDE.md template now say "binding automated completion evidence";
-  REVIEW.md and historical entries untouched).
+  REVIEW.md and historical entries untouched). **D-162/D-163/D-164**
+  (same-day batch, record-only — no code changed): TPM read wall
+  recorded as requiring a materialized view (a settings allowlist is not
+  a boundary); comparative eval deferred until independent oracle
+  authorship exists; multi-file transactional task groups sequenced
+  behind measured oracle strength. Rule 5's D-44 acceptance sentence
+  still pending.
 
 ---
 
