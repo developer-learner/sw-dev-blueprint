@@ -149,7 +149,8 @@ case "$PHASE" in
           --include='*.md' --include='*.json' --exclude-dir=.git \
           --exclude-dir=project-trail --exclude-dir=.em-archive \
           --exclude-dir=.pipeline-state --exclude-dir=.measurement \
-          --exclude-dir=.tpm --exclude-dir='.venv*' \
+          --exclude-dir=.tpm --exclude-dir='.venv*' --exclude-dir=.cache \
+          --exclude-dir=data \
           --exclude='HANDOFF-*' --exclude='CURRENT.md' --exclude='BACKLOG.md' \
           --exclude='DECISIONS.md' --exclude='BLUEPRINT.md' \
           | grep -vE '\]\(' | grep -vE '^[^:]+:[0-9]+:\| [0-9]{4}-[0-9]{2}-[0-9]{2} ' || true; })
