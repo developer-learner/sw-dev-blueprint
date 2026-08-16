@@ -2991,6 +2991,21 @@ def test_placeholder_gate_exempts_correction_log_rows_when_armed(frozen_repo):
     assert "Product owner" in r.stdout
 
 
+def test_placeholder_gate_exempts_date_led_row_alone_when_armed(frozen_repo):
+    """Absence assertion (Rule 6): the date-led row BY ITSELF must not trip
+    the gate — the mixed test above passes even if the filter is broken
+    (the Product owner row guarantees rc=1), so this is the detecting
+    direction. Grep prefixes hits with path:line:, so the filter must
+    account for `./file:NN:` before the `|`."""
+    _write_md(
+        frozen_repo, "CLAUDE.md",
+        "| 2026-06-04 | ...; `[NAME]` survived. | grep-gate |\n",
+    )
+    (frozen_repo / ".placeholder-gate").write_text("")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, r.stdout
+
+
 # --- refreeze.sh REMOVED whitelist (fixes 64535e3) --------------------------
 # The `case "$f" in tests/*.py)` whitelist accepted `tests/../scripts/foo.py`
 # because bash case-globs match '/'. 64535e3 rejects traversal before the

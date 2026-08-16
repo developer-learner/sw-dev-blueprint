@@ -149,7 +149,7 @@ case "$PHASE" in
           --include='*.md' --include='*.json' --exclude-dir=.git \
           --exclude-dir=project-trail --exclude='HANDOFF-*' \
           --exclude='DECISIONS.md' --exclude='BLUEPRINT.md' \
-          | grep -vE '\]\(' | grep -vE '^\| [0-9]{4}-[0-9]{2}-[0-9]{2} ' || true; })
+          | grep -vE '\]\(' | grep -vE '^[^:]+:[0-9]+:\| [0-9]{4}-[0-9]{2}-[0-9]{2} ' || true; })
       if [ -n "$hits" ]; then
         echo "GATE FAIL: placeholder tokens survived (BLUEPRINT.md Step 7 — fill then re-run):"
         echo "$hits"
