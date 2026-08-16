@@ -29,7 +29,7 @@ commits, not `refreeze.sh` (children's specs still freeze there)
   landed same day: **D-152** — refreeze fails fast on stock macOS (dies
   immediately without sha256sum, loud warning with coreutils — the host-run
   fixture suite stays green), and **D-153** — placeholder gate hardened
-  (lowercase-led + `[Type 1]`-class tokens caught, markdown links filtered,
+  (lowercase-led + Type-1 uppercase-class tokens caught, markdown links filtered,
   verbatim-record exceptions documented) + doc sweep (QUICKSTART Step 5
   rewritten to the D-121 auto-apply reality, .env.example dead LM
   Studio/ANTHROPIC config removed, plan.schema tests-description reworded to
@@ -55,7 +55,14 @@ names). Open queue: third batch landed same day as **D-154** (fail-open
   same-LLM TPM mode already documented (D-139 language in TPM-ROLE.md,
   both repos). Testchat: input bounds + same-origin gate on bodyless POST
   routes + stale refreeze-pending.diff removed (D-159), script paths
-  env-ified (testchat D-158, committed `a42076a`).
+  env-ified (testchat D-158, committed `a42076a`). Re-verification of the
+  whole remediation: every valid HIGH/MEDIUM finding confirmed fixed in
+  code; one substantive miss found and closed — **README file tree** now
+  lists all 11 docs/ files (D-159), and the D-153 placeholder gate was
+  independently confirmed live (BLUEPRINT.md Step 7, real and consistent;
+  template-repo hits are Step-6 skeleton rows + the two documented
+  exceptions). Open: mechanizing the placeholder gate (Rule 3
+  stop-and-ask, see D-159).
 
 ---
 

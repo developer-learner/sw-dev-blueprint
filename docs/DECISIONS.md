@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-159 — 2026-08-15 — README file tree completed; placeholder gate re-verified
+
+**Decision:** `README.md`'s file tree now lists all 11 `docs/` files (BROWSER-ORACLE-DESIGN, CEO-PLAYBOOK, CONDUCTOR-ROLE, DEV-VM-SETUP, SANDBOX-VALIDATION were missing — DEV-VM-SETUP is referenced by the README itself). A third-party re-verification of the remediation batches independently confirmed the D-153 placeholder gate: it exists as BLUEPRINT.md Step 7 (a real fail-and-return gate with the hardened regex, markdown-link filter, and the two documented verbatim-record exceptions), and a live run against the template repo is clean except the Step-6 skeleton rows and the two exceptions — the gate's purpose is a derived repo after fill, and the template's skeletons are its fill targets by design.
+
+**Alternatives considered:** (a) Adding CURRENT.md to the gate's exclusion list after a session note quoted a token class — rejected: exclusions are for intentional bracket content; the prose was reworded instead, and a derived repo's CURRENT.md should be gate-clean. (b) Mechanizing the gate (a script that exits nonzero on hits, wired into bootstrap/phase-gate) — held as a stop-and-ask: adding a new fail behavior to an existing gate is a Rule 3 change pending PM ruling.
+
+**Reason:** The D-153 sweep covered QUICKSTART/.env.example/plan.schema but missed README's file tree; the re-verification caught it, and the same pass confirmed the gate was not lost in the hardening.
+
+**Do not suggest:** removing the skeleton rows from the template to make the template repo gate-clean (they are the fill contract Step 6 targets); adding per-file exclusions beyond DECISIONS.md/BLUEPRINT.md (the maintained-list anti-pattern the 2026-06-04 correction log rejected); rewording the gate command.
+
 ## D-158 — 2026-08-15 — Manifest covers the full script inventory: bootstrap.sh and new-project.sh join the template manifest
 
 **Decision:** `scripts/.manifest-template` now lists `scripts/bootstrap.sh` and `scripts/new-project.sh` (the only two `scripts/` files absent from it), so the manifest-drift guard covers the complete control-plane script inventory. Both scripts edit the control plane (bootstrap sets `core.hooksPath`; new-project rewrites placeholders across the template), and neither was drift-checked — a drifted copy in a child would have gone uncaught by the manifest gate. `regen-manifest.sh` preserves the file list, so the coverage gap had to be closed by adding the two lines, then regenerating (64 entries).

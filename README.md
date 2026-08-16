@@ -32,12 +32,17 @@ sw-dev-blueprint/
 ├── .gitignore                 # Python + OpenCode gitignore
 │
 ├── docs/
-│   ├── ARCHITECTURE.md        # Data models, API structure, key flows
-│   ├── DECISIONS.md           # Why choices were made (prevents LLM drift)
-│   ├── PRODUCT.md             # Evergreen product context
-│   ├── TESTING.md             # Testing strategy + conventions
-│   ├── TPM-ROLE.md            # The top tier's job description
-│   └── ESCALATION.md          # Failure ladder + TPM bundle format
+│   ├── ARCHITECTURE.md           # Data models, API structure, key flows
+│   ├── BROWSER-ORACLE-DESIGN.md  # The D-58 browser oracle: how UI acceptance runs
+│   ├── CEO-PLAYBOOK.md           # CEO seat rules — decisions with numbers, inform-first
+│   ├── CONDUCTOR-ROLE.md         # The conductor seat's job description
+│   ├── DECISIONS.md              # Why choices were made (prevents LLM drift)
+│   ├── DEV-VM-SETUP.md           # Linux VM for orchestration + test execution
+│   ├── ESCALATION.md             # Failure ladder + TPM bundle format
+│   ├── PRODUCT.md                # Evergreen product context
+│   ├── SANDBOX-VALIDATION.md     # Sandbox construction + validation evidence
+│   ├── TESTING.md                # Testing strategy + conventions
+│   └── TPM-ROLE.md               # The top tier's job description
 │
 ├── tasks/
 │   ├── CURRENT.md             # Session notes — active work, halt notes
