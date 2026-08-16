@@ -2905,6 +2905,12 @@ PHASE_GATE = SCRIPTS / "phase-gate.sh"
 
 def _init_git(repo):
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    # Local identity so refreeze.sh's D-151 fail-closed preflight sees a
+    # configured machine (it reads `git config user.email`, which falls back
+    # to global config — absent on CI runners, so a fixture without local
+    # identity dies at the preflight instead of the check under test).
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"],
         cwd=repo, check=True,
