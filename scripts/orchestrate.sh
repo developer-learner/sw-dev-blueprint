@@ -673,10 +673,10 @@ fi
 export SWBP_ACTIVE_DELTA_FILES
 # END D-113 active-delta range
 
-# D-140: planning consumes every freeze's immutable instruction slice in the
-# active D-113 range, never only the newest ERD-DELTA.md. The validator owns
-# legacy Git recovery and the exact zero-work packet, so every EM surface
-# receives one shared, minimal context file.
+# D-140/D-166: planning preserves every freeze's immutable instruction slice
+# in the active D-113 range, never only the newest ERD-DELTA.md. The validator
+# owns legacy Git recovery, semantic deduplication for the model-facing view,
+# and the exact zero-work packet, so every EM surface receives one shared file.
 ACTIVE_ERD_CONTEXT="$APPROVED/ERD-DELTA.md"
 if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
   ACTIVE_ERD_CONTEXT="$STATE_DIR/active-erd-delta.md"
@@ -684,6 +684,7 @@ if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
     "${ACTIVE_DELTA_FILES[@]}" > "$ACTIVE_ERD_CONTEXT" \
     || die "could not assemble complete active milestone instructions"
 fi
+python3 "$CONTEXT_BUDGET_TOOL" warn active-erd-context "$ACTIVE_ERD_CONTEXT"
 
 ACTIVE_INVENTORY_LIST=""
 if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then

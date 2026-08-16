@@ -37,6 +37,7 @@ def test_context_budget_limits_are_explicit_and_pinned() -> None:
         "tpm-stage1": 88_000,
         "standing-summary": 8_192,
         "interface-index": 16_384,
+        "active-erd-context": 32_768,
         "em-context": 65_536,
         "escalation-shared": 32_768,
     }
@@ -110,6 +111,7 @@ def test_all_context_surfaces_are_wired_to_the_budget_tool() -> None:
 
     orchestrate = (SCRIPTS / "orchestrate.sh").read_text()
     assert 'warn standing-summary "$STANDING_SUMMARY"' in orchestrate
+    assert 'warn active-erd-context "$ACTIVE_ERD_CONTEXT"' in orchestrate
     assert "warn em-context \\" in orchestrate
     assert '"$sys_prompt" "$schema" "$LOG_DIR/em-last.prompt"' in orchestrate
     assert 'warn escalation-shared "$shared"' in orchestrate

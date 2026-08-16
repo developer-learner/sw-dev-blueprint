@@ -20,6 +20,7 @@ SURFACE_BUDGETS: dict[str, int] = {
     "tpm-stage1": 88_000,
     "standing-summary": 8_192,
     "interface-index": 16_384,
+    "active-erd-context": 32_768,
     "em-context": 65_536,
     "escalation-shared": 32_768,
 }

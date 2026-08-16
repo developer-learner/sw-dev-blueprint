@@ -47,9 +47,10 @@ Modes:
                                             inventory, including skipped freezes
                                             and a legitimate empty inventory.
   validate-plan.py --active-erd-context DELTA.json [DELTA.json ...]
-                                            print every active freeze's immutable
-                                            ERD instruction slice, minimally and
-                                            in version order.
+                                            print a semantic compact view of every
+                                            active freeze's immutable ERD
+                                            instructions: current narrative plus
+                                            deduplicated briefs, mappings, and DAG.
   validate-plan.py --synthesize-plan DELTA.json [DELTA.json ...]
                                             mechanical plan synthesis (B3-fast
                                             path): print the full plan JSON when
@@ -1806,18 +1807,13 @@ def cmd_milestone_scope(delta_paths):
 
 
 def cmd_active_erd_context(delta_paths):
-    """Emit the minimal, complete per-freeze ERD instruction packet."""
+    """Emit the compact, complete active ERD instruction packet (D-166)."""
     paths = [Path(path) for path in delta_paths]
     contracts = load_json(CONTRACTS, "frozen contracts")
     if not active_inventory_files(paths, contracts):
         print("(active milestone has no behavioral build inventory)")
         return
-    for index, (version, body) in enumerate(active_erd_delta_texts(paths)):
-        if index:
-            print()
-        label = f"v{version}" if version is not None else "unversioned"
-        print(f"## Active freeze instructions — {label}")
-        print(body.rstrip())
+    print(compact_active_erd_context(active_erd_delta_texts(paths)))
 
 
 def cmd_active_inventory(delta_paths):
@@ -1915,6 +1911,147 @@ def _parse_mapping_pins(text):
     if not m:
         return {}
     return dict(_MAP_PIN_RE.findall(text[m.end():]))
+
+
+_TOP_SECTION_RE = re.compile(r"^##\s+([^\n]+?)\s*$", re.M)
+_MAPPING_ROW_RE = re.compile(
+    r"(?m)^[ \t]*(?:[*-]\s*)?`[^`\n]+`[ \t]*(?:\n[ \t]*)?"
+    r"->[ \t]*`[^`\n]+`[ \t]*(?:\n|$)"
+)
+_DAG_EDGE_LINE_RE = re.compile(
+    r"(?m)^.*`[^`\n]+`\s+depends on\s+`[^`\n]+`.*(?:\n|$)"
+)
+_TASK_ORDER_LINE_RE = re.compile(r"(?m)^.*Task order:.*(?:\n|$)")
+_HISTORICAL_SPEC_HEADINGS = {
+    "Changed acceptance criteria",
+    "Superseded acceptance criteria",
+}
+
+
+def _top_sections(text):
+    """Return preamble plus ordered top-level Markdown sections."""
+    matches = list(_TOP_SECTION_RE.finditer(text))
+    if not matches:
+        return text.strip(), []
+    preamble = text[:matches[0].start()].strip()
+    sections = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections.append((match.group(1).strip(), text[match.end():end].strip()))
+    return preamble, sections
+
+
+def compact_active_erd_context(erd_texts):
+    """Semantically compact model-facing active-freeze instructions (D-166).
+
+    Versioned ERD deltas remain immutable and plan synthesis still consumes
+    every raw slice.  This renderer changes only the model-facing view:
+    historical preambles, changed-file inventories, and assumptions are audit
+    narrative already superseded by the current capsule and active JSON
+    inventory. Historical AC changes remain versioned; repeated coder briefs,
+    ownership pins, and DAG edges are emitted once in first-seen order. Unique
+    incremental execution instructions remain byte-for-byte present. A
+    one-freeze milestone keeps its original body.
+    """
+    texts = list(erd_texts)
+    if not texts:
+        return "(active milestone has no ERD instructions)"
+    if len(texts) == 1:
+        version, body = texts[0]
+        label = f"v{version}" if version is not None else "unversioned"
+        return f"## Active freeze instructions — {label}\n{body.rstrip()}"
+
+    retained_sections = []
+    seen_sections = set()
+    brief_rows = []
+    seen_briefs = set()
+    mapping_rows = []
+    seen_mappings = set()
+    dag_edges = []
+    seen_edges = set()
+    residual_rows = []
+    seen_residuals = set()
+    latest_preamble = ""
+
+    for index, (version, body) in enumerate(texts):
+        label = f"v{version}" if version is not None else "unversioned"
+        is_latest = index == len(texts) - 1
+        preamble, sections = _top_sections(body)
+        latest_preamble = preamble
+
+        for file_path, (task_id, brief) in _parse_brief_blocks(body).items():
+            key = (file_path, brief)
+            if key not in seen_briefs:
+                seen_briefs.add(key)
+                brief_rows.append((label, task_id, file_path, brief))
+
+        for node_id, file_path in _parse_mapping_pins(body).items():
+            key = (node_id, file_path)
+            if key not in seen_mappings:
+                seen_mappings.add(key)
+                mapping_rows.append(key)
+
+        local_briefs = _parse_brief_blocks(body)
+        for file_path, dependencies in _parse_delta_dag(body, local_briefs).items():
+            for dependency in dependencies:
+                key = (file_path, dependency)
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    dag_edges.append(key)
+
+        for heading, section_body in sections:
+            if heading == "Coder briefs (verbatim)":
+                continue
+            if heading == "Test-to-file mapping":
+                residual = _MAPPING_ROW_RE.sub("", section_body).strip()
+                if is_latest and residual and residual not in seen_residuals:
+                    seen_residuals.add(residual)
+                    residual_rows.append((label, heading, residual))
+                continue
+            if "DAG" in heading:
+                residual = _DAG_EDGE_LINE_RE.sub("", section_body)
+                residual = _TASK_ORDER_LINE_RE.sub("", residual).strip()
+                if is_latest and residual and residual not in seen_residuals:
+                    seen_residuals.add(residual)
+                    residual_rows.append((label, heading, residual))
+                continue
+            if not is_latest and heading not in _HISTORICAL_SPEC_HEADINGS:
+                continue
+            key = (heading, section_body)
+            if key not in seen_sections:
+                seen_sections.add(key)
+                retained_sections.append((label, heading, section_body))
+
+    first_version = texts[0][0]
+    last_version = texts[-1][0]
+    first_label = f"v{first_version}" if first_version is not None else "unversioned"
+    last_label = f"v{last_version}" if last_version is not None else "unversioned"
+    out = [f"## Active freeze instructions — compacted {first_label}..{last_label}"]
+    if latest_preamble:
+        out.extend(["", f"<!-- latest freeze preamble: {last_label} -->", latest_preamble])
+    for label, heading, section_body in retained_sections + residual_rows:
+        out.extend(["", f"<!-- active freeze section: {label} -->", f"## {heading}"])
+        if section_body:
+            out.extend(["", section_body])
+    if mapping_rows:
+        out.extend(["", "## Test-to-file mapping (active, deduplicated)", ""])
+        out.extend(f"* `{node_id}` -> `{file_path}`" for node_id, file_path in mapping_rows)
+    if dag_edges:
+        out.extend(["", "## Task DAG (active, deduplicated)", ""])
+        out.extend(f"`{file_path}` depends on `{dependency}`"
+                   for file_path, dependency in dag_edges)
+    if brief_rows:
+        out.extend(["", "## Coder briefs (active, deduplicated)"])
+        for label, task_id, file_path, brief in brief_rows:
+            out.extend(["", f"### {label}/{task_id} — {file_path}", "", brief])
+
+    compact = "\n".join(out).rstrip() + "\n"
+    raw = "\n\n".join(
+        f"## Active freeze instructions — "
+        f"{f'v{version}' if version is not None else 'unversioned'}\n{body.rstrip()}"
+        for version, body in texts
+    ) + "\n"
+    return compact if len(compact.encode()) <= len(raw.encode()) else raw.rstrip()
 
 
 def cmd_synthesize_plan(delta_paths):

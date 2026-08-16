@@ -200,8 +200,11 @@ decomposition itself, authored at the tier that authors the spec.
 
 Both are staged in `scripts/.approved/incoming/`, pinned together in
 `scripts/.approved/frozen-manifest` under a single freeze, and both reach
-the EM as combined context. The delta is authoritative for the current
-milestone when it explicitly supersedes standing prose. A non-behavioral
+the EM as combined context. If a milestone spans multiple freezes, the
+execution lane retains every immutable delta but deduplicates repeated briefs,
+ownership pins, and DAG edges in the model-facing view; unique incremental
+instructions remain in freeze order (D-166). The delta is authoritative for
+the current milestone when it explicitly supersedes standing prose. A non-behavioral
 freeze that refreshes `ERD.md` retires the prior delta automatically: that is
 the explicit consolidation point where the completed milestone is folded into
 standing architecture. The plan gate's `MAX_BRIEF_CHARS` overflow scan

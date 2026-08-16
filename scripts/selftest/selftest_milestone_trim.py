@@ -155,6 +155,90 @@ def test_active_inventory_and_instruction_packet_union_only_active_freezes(
     assert vp.active_erd_delta_texts([*paths, empty]) == texts
 
 
+def test_active_erd_context_deduplicates_repeated_execution_payload():
+    vp = _load_validate_plan()
+    first = """# old audit preamble
+
+## Changed acceptance criteria
+
+AC-1 adds the first behavior.
+
+## Changed files
+
+`src/work.py` had an older implementation note.
+
+## Test-to-file mapping
+
+* `tests/test_work.py::test_first` -> `src/work.py`
+
+## Task DAG
+
+`src/view.py` depends on `src/work.py`
+
+## Coder briefs (verbatim)
+
+### T1 — src/work.py
+
+Implement the shared behavior.
+
+### T2 — src/view.py
+
+Render the first behavior.
+"""
+    second = """# current audit preamble
+
+## Changed acceptance criteria
+
+AC-1 adds the first behavior.
+
+## Changed files
+
+`src/view.py` gains the second behavior.
+
+## Test-to-file mapping
+
+* `tests/test_work.py::test_first` -> `src/work.py`
+* `tests/test_view.py::test_second` -> `src/view.py`
+
+## Task DAG
+
+`src/view.py` depends on `src/work.py`
+
+## Coder briefs (verbatim)
+
+### T1 — src/work.py
+
+Implement the shared behavior.
+
+### T2 — src/view.py
+
+Render the second behavior.
+"""
+
+    compact = vp.compact_active_erd_context([(2, first), (3, second)])
+    raw_size = len(first.encode()) + len(second.encode())
+
+    assert "old audit preamble" not in compact
+    assert "current audit preamble" in compact
+    assert "older implementation note" not in compact
+    assert "gains the second behavior" in compact
+    assert compact.count("AC-1 adds the first behavior.") == 1
+    assert compact.count("Implement the shared behavior.") == 1
+    assert "Render the first behavior." in compact
+    assert "Render the second behavior." in compact
+    assert compact.count("tests/test_work.py::test_first") == 1
+    assert compact.count("tests/test_view.py::test_second") == 1
+    assert compact.count("`src/view.py` depends on `src/work.py`") == 1
+    assert len(compact.encode()) < raw_size
+
+
+def test_active_erd_context_keeps_single_freeze_body_verbatim():
+    vp = _load_validate_plan()
+    body = "# current\n\n## Changed files\n\n* `src/work.py`\n"
+    compact = vp.compact_active_erd_context([(7, body)])
+    assert compact == f"## Active freeze instructions — v7\n{body.rstrip()}"
+
+
 def test_mechanical_plan_combines_repeated_file_briefs_across_freezes(tmp_path):
     approved = tmp_path / "scripts" / ".approved"
     approved.mkdir(parents=True)
