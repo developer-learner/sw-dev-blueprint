@@ -2991,6 +2991,23 @@ def test_placeholder_gate_exempts_correction_log_rows_when_armed(frozen_repo):
     assert "Product owner" in r.stdout
 
 
+def test_placeholder_gate_exempts_session_notes_and_archives_when_armed(frozen_repo):
+    """A mature child's session notes quote commit subjects
+    (`[refreeze vN]`) and its .em-archive holds archived EM plans — both
+    are verbatim/archive surfaces that do not exist in a fresh child."""
+    _write_md(
+        frozen_repo, "tasks/CURRENT.md",
+        "## State at 2026-08-15\n- closed by `d7caf3b [refreeze v83]`\n",
+    )
+    _write_md(
+        frozen_repo, ".em-archive/2026-08-15_plan/plan.json",
+        '{"brief": "carry forward, class [SourceLink] verbatim"}\n',
+    )
+    (frozen_repo / ".placeholder-gate").write_text("")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, r.stdout
+
+
 def test_placeholder_gate_exempts_date_led_row_alone_when_armed(frozen_repo):
     """Absence assertion (Rule 6): the date-led row BY ITSELF must not trip
     the gate — the mixed test above passes even if the filter is broken

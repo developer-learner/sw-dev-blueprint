@@ -554,9 +554,16 @@ placeholder brackets in its `## Template` format block; the second lists
 **Mechanical backstop (D-160):** `bootstrap.sh` creates `.placeholder-gate`
 before its baseline commit, and from then on `phase-gate.sh manifest` (which
 the pre-commit hook and the orchestrator pre-flight both run) fails any
-commit whose tree still contains a Step-7 hit — the gate above is no longer
-judgment-only. The template repo itself never runs bootstrap.sh, so its
-intentional skeleton rows are exempt by construction.
+commit whose tree still contains a Step-7 hit on the fill surfaces — the
+gate above is no longer judgment-only. The mechanical scan applies the
+same token exclusions as the command above, plus the record/runtime
+surfaces a mature child accumulates (`project-trail/`, `.em-archive/`,
+`.pipeline-state/`, `.measurement/`, `.tpm/`, `HANDOFF-*`,
+`tasks/CURRENT.md`, `tasks/BACKLOG.md`, date-led correction-log rows) —
+verbatim-history quotes like `[refreeze vN]` live there, and none of those
+surfaces exist in a fresh child, so the protected case is unchanged. The
+template repo itself never runs bootstrap.sh, so its intentional skeleton
+rows are exempt by construction.
 Everything else must be clean.
 
 ### Step 8 — First commit and push
