@@ -46,12 +46,16 @@ names). Open queue: third batch landed same day as **D-154** (fail-open
   `$REMOVED_FILES` loops line-based with the house empty guard (space-in-path
   word-split was a wrong-path deletion), new-project.sh `LLM_HOST` override;
   the review's "remove docs/.pm-last-review" was REFUTED — it is Rule 1's
-  backstop, valid ancestor, PM-owned, kept). Remaining: manifest coverage for
-  bootstrap/new-project,
-  ledger back-port (testchat missing D-48 + D-56..D-106, 52 entries — verified
-  by padded header diff, NOT the 30-entry list some review drafts claimed),
-  same-LLM TPM mode. Testchat: input bounds, CSRF deferral, stale
-  refreeze-pending.diff (script paths env-ified as testchat D-150).
+  backstop, valid ancestor, PM-owned, kept). Remaining closed same day:
+  **D-158** — `scripts/.manifest-template` now covers the full script
+  inventory (bootstrap.sh + new-project.sh added — they were the only two
+  control-plane scripts the drift gate could not see; 64 entries after
+  regen); ledger back-port executed (testchat now mirrors D-1..D-157
+  verbatim, padded `comm` clean, testchat-local renumbered to D-158);
+  same-LLM TPM mode already documented (D-139 language in TPM-ROLE.md,
+  both repos). Testchat: input bounds + same-origin gate on bodyless POST
+  routes + stale refreeze-pending.diff removed (D-159), script paths
+  env-ified (testchat D-158, committed `a42076a`).
 
 ---
 

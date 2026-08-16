@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-158 — 2026-08-15 — Manifest covers the full script inventory: bootstrap.sh and new-project.sh join the template manifest
+
+**Decision:** `scripts/.manifest-template` now lists `scripts/bootstrap.sh` and `scripts/new-project.sh` (the only two `scripts/` files absent from it), so the manifest-drift guard covers the complete control-plane script inventory. Both scripts edit the control plane (bootstrap sets `core.hooksPath`; new-project rewrites placeholders across the template), and neither was drift-checked — a drifted copy in a child would have gone uncaught by the manifest gate. `regen-manifest.sh` preserves the file list, so the coverage gap had to be closed by adding the two lines, then regenerating (64 entries).
+
+**Alternatives considered:** (a) Leaving them out and documenting the exception — rejected: the review flagged the gap as drift-invisible, and the correction-log rule (2026-06-30) treats a vanished control-plane file as a signal, which presumes the manifest lists everything that matters. (b) Adding a separate auxiliary manifest — rejected: one manifest, one gate.
+
+**Reason:** The completeness check against the on-disk `scripts/` inventory showed exactly two absent files; both are setup/onboarding scripts that a child invokes by hand at bootstrapping time, so a stale copy is the first thing a new environment would run.
+
+**Do not suggest:** excluding them because they are "one-time" scripts (bootstrap is exactly what a fresh child runs — its drift surface is the bootstrapping gate itself); adding them to `.manifest-project` instead (they are template-owned; template sync and drift must cover them).
+
 ## D-157 — 2026-08-15 — LOW batch: parser truncation, fence-strip tolerance, lock race, REMOVED quoting, LLM host override
 
 **Decision:** Five LOW-class fixes plus one refuted finding. (1) The coder `=== FILE:` extraction in orchestrate.sh now captures content GREEDILY (`(.*)\n=== END FILE ===$` instead of lazy `(.*?)`): a file whose content legitimately contains a `=== END FILE ===` line was truncated at the first marker; greedy backtracking takes the LAST sentinel. (2) llm-call.sh's markdown fence-strip is prose-tolerant but count-guarded: exactly two fence lines anywhere in the reply (the old anchored `^...$` missed "Here is the plan:"-wrapped replies), never a global strip — a reply whose content legitimately contains fences (count ≥ 4) is untouched (the D-59 think-tag class). (3) The mkdir-fallback lock's mkdir→pid-write window is closed: a lock with no pid yet is treated as busy-and-unverifiable (fail-closed die) instead of being reclaimed as stale — a second run can no longer delete a live, still-initializing lock. (4) refreeze.sh's `$REMOVED_FILES` loops are line-based (`while IFS= read -r f` with the house empty-line guard) instead of word-splitting: a valid staged entry like `tests/My File.py` passes the shape whitelist but word-splits at apply into `rm -f tests/My` + `rm -f File.py` — deleting the wrong paths. (5) new-project.sh's LLM endpoints are `LLM_HOST`-overridable (port already was), matching orchestrate's SANDBOX_LLM_HOST pattern. REFUTED: the review's "remove tracked docs/.pm-last-review" — verified `0c9984b` is a valid ancestor (117 commits of review range, PM-advanced on 2026-08-02); it is Rule 1's documented mechanical backstop, PM-owned, and stays.
