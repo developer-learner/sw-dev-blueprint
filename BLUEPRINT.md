@@ -249,7 +249,10 @@ Never report a task complete based on your own judgment. The orchestrator
 runs the frozen suite; a task is done only when its mapped tests pass, and a
 feature is done when the delta's mapped verdict is green (D-112; the full
 frozen suite is an on-demand `--full-suite` regression check).
-"It looks correct" is not evidence. The tests are.
+"It looks correct" is not evidence. The tests are. Product acceptance
+additionally requires observable milestone validation against business
+intent — the CEO checks the milestone live (D-44); the suite is the
+completion gate, never the whole acceptance story.
 
 ### Rule 6 — Tests derive from the spec, and nobody downstream writes them
 
