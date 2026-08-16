@@ -81,7 +81,12 @@ names). Open queue: third batch landed same day as **D-154** (fail-open
   a boundary); comparative eval deferred until independent oracle
   authorship exists; multi-file transactional task groups sequenced
   behind measured oracle strength. Rule 5's D-44 acceptance sentence
-  still pending.
+  still pending. **D-162 implemented** (same day): the materialized TPM
+  view shipped — `scripts/tpm-view.sh` builds `.tpm/view/` (spec +
+  frozen tests + sanitized escalations, outbox symlinked to
+  `.tpm/outbox`), `tpm-agent.sh --view` roots the agent there with
+  `tpm-view-settings.json`; src/ physically absent; three selftests
+  (454 total).
 
 ---
 

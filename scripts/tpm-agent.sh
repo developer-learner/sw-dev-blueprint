@@ -23,18 +23,36 @@
 # hash-pinned manifests failing closed + the automatic preflight-green
 # apply in scripts/refreeze.sh (D-121, no interactive approval step).
 #
-# Usage: tpm-agent.sh   (from the project root; requires the `claude` CLI)
+# Usage: tpm-agent.sh [--view]   (from the project root; requires the `claude` CLI)
+#   default:  agent rooted at the repo root, read wall harness-enforced (D-39)
+#   --view:   build the materialized TPM view (tpm-view.sh, D-162) and root the
+#             agent there — src/ is physically absent, INV-1 read side is
+#             structural rather than a settings promise
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
 command -v claude >/dev/null 2>&1 \
   || { echo "tpm-agent: 'claude' CLI not found — install Claude Code, or use the chat-side TPM (scripts/tpm-pack.sh)" >&2; exit 1; }
 
+MODE=repo
+case "${1:-}" in
+  --view) MODE=view ;;
+  "") ;;
+  *) echo "tpm-agent: unknown option ${1} (usage: tpm-agent.sh [--view])" >&2; exit 1 ;;
+esac
+
 mkdir -p .tpm/outbox
 ALLOWED_ARTIFACTS=$(python3 scripts/spec_artifacts.py describe) || {
   echo "tpm-agent: shared spec-artifact policy unavailable" >&2
   exit 1
 }
+
+if [ "$MODE" = view ]; then
+  bash scripts/tpm-view.sh
+  cd .tpm/view
+  exec claude --settings ../../scripts/tpm-view-settings.json \
+    "You are the TPM for this project, running in AGENT MODE with a MATERIALIZED VIEW (D-162). You are rooted at .tpm/view/ — a directory holding only the spec artifacts, the frozen tests, and the sanitized escalation evidence; src/ is NOT present, by construction (oracle independence, INV-1, is structural here, not a policy promise). Before anything else, read TPM-ROLE.md in full — it is your job description and its Agent mode section governs where you write. Read the spec artifacts here; escalations are at escalations/ (BATCH.md plus per-item bundles). Write only these spec artifacts ($ALLOWED_ARTIFACTS) under outbox/ with paths preserved; outbox is a symlink to .tpm/outbox for refreeze's pickup. You run nothing: the operator installs your outbox via scripts/refreeze.sh and drives the pipeline. When ready, tell the CEO you are and ask for the business intent."
+fi
 
 exec claude --settings scripts/tpm-agent-settings.json \
   "You are the TPM for this project, running in AGENT MODE. Before anything else, read docs/TPM-ROLE.md in full — it is your job description and its Agent mode section governs where you write. Summary of your lane: read the repo freely EXCEPT src/ (never attempt it — oracle independence is the point of your role); write only these spec artifacts ($ALLOWED_ARTIFACTS) under .tpm/outbox/ with paths preserved; escalation bundles are at .pipeline-state/escalations/BATCH.md — read them yourself, no one will paste them. You run nothing: the operator installs your outbox via scripts/refreeze.sh and drives the pipeline. When ready, tell the CEO you are and ask for the business intent."

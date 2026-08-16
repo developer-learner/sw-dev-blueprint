@@ -43,6 +43,8 @@
 
 ## D-162 — 2026-08-15 — TPM read wall to become structural: materialized view, not a settings allowlist
 
+> Amended by the 2026-08-15 implementation commit: the materialized view shipped — `scripts/tpm-view.sh` builds `.tpm/view/` (spec artifacts + frozen tests + sanitized escalations + TPM-ROLE.md, outbox symlinked to `.tpm/outbox`), `scripts/tpm-agent.sh --view` roots the agent there with `scripts/tpm-view-settings.json`; src/ is physically absent. Three selftests pin the behavior.
+
 **Decision:** INV-1's read side becomes structural via a materialized TPM view — a directory containing only the spec artifacts `spec_artifacts.py` describes, the frozen tests, and sanitized escalation evidence, with the agent rooted there so implementation bytes are physically absent — not by tightening `tpm-agent-settings.json`. Until the view exists, the read wall remains harness-enforced policy (the softness `tpm-agent.sh`'s own header admits), and claims of structurality are wrong.
 
 **Alternatives considered:** (a) Settings allowlist only (deny `Read(./.git/**)`, `Read(./project-trail/**)`, `Read(./.pipeline-state/**)`) — rejected as the fix: still harness-enforced policy, same softness class; the practical leak channels are human-readable evidence files, and a policy list binds only as long as the harness has no gap (the conductor-lane-breach class, project-trail/2026-07-04). (b) Run the agent inside the test sandbox with src/ unmounted — viable but heavier than needed; the materialized view reuses the pack machinery that already excludes src/ and tests/ from TPM briefs by construction. (c) Leave as-is — rejected: REVIEW.md HIGH-2 names this exact hole, and its fix remains open.

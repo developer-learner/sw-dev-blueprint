@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "deny": [
+      "Read(./src/**)",
+      "Edit(./src/**)",
+      "Write(./src/**)",
+      "Edit(./tests/**)",
+      "Write(./tests/**)",
+      "Edit(./escalations/**)",
+      "Write(./escalations/**)",
+      "Edit(./.git/**)",
+      "Write(./.git/**)",
+      "Bash",
+      "NotebookEdit"
+    ],
+    "allow": [
+      "Read(./**)",
+      "Edit(./outbox/**)",
+      "Write(./outbox/**)"
+    ]
+  }
+}

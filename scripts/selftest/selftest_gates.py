@@ -2312,6 +2312,90 @@ def test_tpm_pack_no_delta_ships_standing_summary_not_full_erd(tmp_path):
     assert "DISTINCT_ACCUMULATED_PRODUCT_DETAIL" in r.stdout
 
 
+def run_tpm_view(tmp_path, with_escalation=True):
+    """D-162 fixture: a fake child repo with tpm-view.sh + spec_artifacts.py,
+    so the real script runs against a controlled tree."""
+    repo = tmp_path / "repo"
+    (repo / "scripts" / ".approved" / "captures").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    (repo / "docs").mkdir(parents=True)
+    (repo / ".tpm").mkdir(parents=True)
+    (repo / ".pipeline-state" / "escalations" / "t1").mkdir(parents=True)
+    for name in ("tpm-view.sh", "spec_artifacts.py"):
+        shutil.copy(SCRIPTS / name, repo / "scripts" / name)
+    (repo / "scripts" / ".approved" / "PRD.md").write_text("# PRD\n")
+    (repo / "scripts" / ".approved" / "ERD.md").write_text("# ERD\n")
+    (repo / "scripts" / ".approved" / "contracts.json").write_text("{}\n")
+    (repo / "scripts" / ".approved" / "captures" / "probe.log").write_text("raw\n")
+    (repo / "tests" / "test_a.py").write_text("def test_a(): assert 1\n")
+    (repo / "docs" / "TPM-ROLE.md").write_text("# TPM role\n")
+    if with_escalation:
+        (repo / ".pipeline-state" / "escalations" / "BATCH.md").write_text(
+            "# BATCH\nsrc/api/foo.py:12 broken\nbundle evidence text\n")
+        (repo / ".pipeline-state" / "escalations" / "t1" / "bundle.md").write_text(
+            "frozen test excerpt\nsrc/services/x.py quoted\n")
+    return subprocess.run(
+        ["bash", str(repo / "scripts" / "tpm-view.sh")],
+        capture_output=True, text=True, cwd=str(repo))
+
+
+def test_tpm_view_materializes_spec_tests_escalations_without_src(tmp_path):
+    """D-162: the materialized view carries the spec policy set, the frozen
+    tests, TPM-ROLE.md and a sanitized escalation batch — and no src/."""
+    r = run_tpm_view(tmp_path)
+    assert r.returncode == 0, r.stderr
+    view = tmp_path / "repo" / ".tpm" / "view"
+    assert (view / "PRD.md").exists()
+    assert (view / "ERD.md").exists()
+    assert (view / "contracts.json").exists()
+    assert (view / "captures" / "probe.log").exists()
+    assert (view / "tests" / "test_a.py").exists()
+    assert (view / "TPM-ROLE.md").exists()
+    assert not (view / "src").exists()
+    assert (view / "outbox").is_symlink()
+    assert (view / "outbox").resolve() \
+        == (tmp_path / "repo" / ".tpm" / "outbox").resolve()
+
+
+def test_tpm_view_sanitizes_src_lines_and_rebuild_is_deterministic(tmp_path):
+    """D-162: escalation copies drop src/ path lines; a rebuild removes
+    stale files (deterministic materialization, no accumulation)."""
+    r = run_tpm_view(tmp_path)
+    assert r.returncode == 0, r.stderr
+    view = tmp_path / "repo" / ".tpm" / "view"
+    batch = (view / "escalations" / "BATCH.md").read_text()
+    assert "src/api/foo.py:12 broken" not in batch
+    assert "bundle evidence text" in batch
+    bundle = (view / "escalations" / "t1-bundle.md").read_text()
+    assert "src/services/x.py quoted" not in bundle
+    assert "frozen test excerpt" in bundle
+    (view / "stale.md").write_text("x")
+    r2 = subprocess.run(
+        ["bash", str(tmp_path / "repo" / "scripts" / "tpm-view.sh")],
+        capture_output=True, text=True, cwd=str(tmp_path / "repo"))
+    assert r2.returncode == 0, r2.stderr
+    assert not (view / "stale.md").exists()
+
+
+def test_tpm_view_warns_and_succeeds_without_frozen_spec(tmp_path):
+    """D-162: a tree with no scripts/.approved (template repo, pre-freeze)
+    warns per absent artifact and still builds tests/ + TPM-ROLE.md."""
+    r = run_tpm_view(tmp_path)
+    assert r.returncode == 0, r.stderr
+    repo = tmp_path / "repo"
+    shutil.rmtree(repo / "scripts" / ".approved")
+    r2 = subprocess.run(
+        ["bash", str(repo / "scripts" / "tpm-view.sh")],
+        capture_output=True, text=True, cwd=str(repo))
+    assert r2.returncode == 0, r2.stderr
+    assert "no scripts/.approved/PRD.md to materialize" in r2.stderr
+    view = repo / ".tpm" / "view"
+    assert not (view / "PRD.md").exists()
+    assert (view / "tests" / "test_a.py").exists()
+    assert (view / "TPM-ROLE.md").exists()
+    assert not (view / "src").exists()
+
+
 def test_tpm_pack_generator_failure_falls_back_to_full_erd(tmp_path):
     """D-117: summary generation failure falls back to the full standing
     ERD, and the warning goes to stderr — the bundle is a verbatim relay

@@ -413,7 +413,10 @@ freeze, not after the halt.
 **Agent mode (D-39, launched via `scripts/tpm-agent.sh`):** you have direct
 repo READ access — except `src/`, which you must never read or attempt to
 read: tests you author must derive from the spec alone, and that property is
-your entire reason to exist at frontier tier (INV-1). You WRITE only under
+your entire reason to exist at frontier tier (INV-1). `tpm-agent.sh --view`
+(D-162) makes that read wall structural: you are rooted at a materialized
+`.tpm/view/` where the implementation physically is not present. You WRITE
+only under
 `.tpm/outbox/`, paths preserved (`PRD.md`, `ERD.md`, `contracts.json`,
 `tests/<file>.py`) — complete files, never fragments; the operator installs
 the outbox via `scripts/refreeze.sh .tpm/outbox`. Escalation bundles you
