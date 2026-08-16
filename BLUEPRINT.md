@@ -99,7 +99,7 @@ The full stack this system runs on. Know every object before operating it.
 | **TPM (CEO-assigned seat)** | The LLM seat that authors the spec and the test suite and answers escalation batches — who holds it per session is the CEO's call (D-139): a web chat the human operates (D-38), a scoped repo agent (D-39), or the same LLM already on the job. Never touches the repo — its output enters via `scripts/refreeze.sh`. |
 | **EM (mid-tier LLM)** | One `scripts/llm-call.sh` completion, no tools. Decomposes the frozen spec into `tasks/plan.json`; diagnoses failures on consult. The shell writes `tasks/plan.json` / `diagnosis.json` from its reply — the model never touches the filesystem. Advisory — the shell decides. |
 | **Coder (local LLM)** | One `scripts/llm-call.sh` completion, no tools. MUST be non-thinking; the CEO picks which loaded LM Studio model backs it in `~/.config/sw-dev-blueprint/models.env` — the repo never names a model. Replies with the one file its task names, sentinel-wrapped; the shell writes it to disk. |
-| **pytest / CI** | The test harness = **ground truth**, machine-readable via `.cache/test-report.json`. The suite is TPM-authored and frozen; the shell runs it. |
+| **pytest / CI** | The test harness = **binding automated completion evidence**, machine-readable via `.cache/test-report.json`. The suite is TPM-authored and frozen; the shell runs it. |
 | **The docs** | The memory layer for stateless LLMs (this file + CLAUDE.md + CONVENTIONS.md + docs/ + tasks/). |
 | **AGENTS.md** | Symlink to CLAUDE.md. OpenCode's preferred filename, kept for CEOs who use OpenCode as their conductor; symlink keeps content in sync with no duplication. |
 | **phase-gate.sh** | Mechanical lane + integrity enforcement — per-phase write whitelists, control-plane manifests, frozen-spec hashes. Fail-closed. |
@@ -243,7 +243,7 @@ When unsupervised, STOP and write a clear note in `tasks/CURRENT.md` (under
 
 The dangerous failure is acting confidently when wrong — not stopping.
 
-### Rule 5 — Tests are ground truth, not your self-assessment
+### Rule 5 — Tests are binding automated completion evidence, not your self-assessment
 
 Never report a task complete based on your own judgment. The orchestrator
 runs the frozen suite; a task is done only when its mapped tests pass, and a

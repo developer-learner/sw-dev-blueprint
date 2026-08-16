@@ -72,8 +72,10 @@ names). Open queue: third batch landed same day as **D-154** (fail-open
   vN]` prose). **D-161**: oracle-strength gap recorded as open — the
   frozen suite's discrimination is unverified (D-75 continuation: per-run
   mutation still rejected; freeze-cadence one-shot report-only pass named
-  as the shape of any fix; Rule 5 "ground truth" wording flagged as an
-  overclaim against D-44, correction deferred).
+  as the shape of any fix; Rule 5 "ground truth" wording corrected in the
+  same batch — BLUEPRINT.md, CLAUDE.md, and new-project.sh's child
+  CLAUDE.md template now say "binding automated completion evidence";
+  REVIEW.md and historical entries untouched).
 
 ---
 

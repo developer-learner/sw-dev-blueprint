@@ -105,7 +105,7 @@ Testing:      pytest
 **Operating guardrails (from hard-won failures — see BLUEPRINT.md):**
 - **Do not set a thinking model as the active model.** Thinking models leave `content` empty and put output in `reasoning_content`, which breaks parsing. The model must be non-thinking local OR frontier.
 - **CARDINAL RULE — an EM/coder failure is never re-run blind.** If an EM or coder call fails, stop and troubleshoot the root cause — read the failure message, fix the harness/context/spec — never re-run the same call expecting the model to succeed next time. One attempt per run per call; a re-run is legitimate ONLY after a root-cause fix (then exactly one clean run). Measure and test through the pipeline's own machinery (`llm-call.sh` + schema + profile budget), never a hand-rolled copy of it.
-- **Do not trust your own "it works" — only passing tests confirm success.** Run `pytest`. The tests are ground truth, not your assessment. Do not mark a task done on self-judgment.
+- **Do not trust your own "it works" — only passing tests confirm success.** Run `pytest`. The tests are binding automated completion evidence, not your assessment. Do not mark a task done on self-judgment.
 - **Do not proceed past an unreachable LM Studio or a missing service** — halt and report.
 - **Do not invent product or architecture decisions to fill an ambiguous spec** — that is the human's job. Halt and ask.
 - **Do not run destructive commands** (`rm -rf`, `git push --force`, drop tables, delete files outside the project) — halt and ask.

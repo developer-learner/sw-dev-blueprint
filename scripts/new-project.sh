@@ -88,6 +88,6 @@ Next steps (do these while awake):
    directly (D-53), no agent harness needed. A conductor (Claude Code,
    OpenCode, anything) is optional for CEO ergonomics only.
 
-Tests are ground truth (Rule 5).
+Tests are binding automated completion evidence (Rule 5).
 Two strikes on the same error then stop (Rule 2).
 DONE
