@@ -526,13 +526,19 @@ rows in tasks/ and docs/, etc.
 You cannot trust "I filled everything in." Run:
 
 ```bash
-grep -rnE '\[[A-Z][A-Z_ ]+\]|\[[A-Z][a-z]+ [a-z]' . \
+grep -rnE '\[[A-Z][A-Za-z0-9_ ]+\]|\[[A-Z][a-z]+ [a-z]|\[[a-z][a-z_]+ [a-z]' . \
   --include='*.md' --include='*.json' --exclude-dir=.git \
-  --exclude='DECISIONS.md' --exclude='BLUEPRINT.md'
+  --exclude='DECISIONS.md' --exclude='BLUEPRINT.md' \
+  | grep -vE '\]\('
 ```
 
 If it returns ANY lines, a placeholder survived — go back to Step 6,
-fill, re-run, repeat until it returns nothing.
+fill, re-run, repeat until it returns nothing. Two exceptions (prose tags,
+not placeholders, and the correction-log rule keeps them verbatim): a
+correction-log table row quoting a placeholder token (e.g. CLAUDE.md's
+`[NAME]` row) and a project-trail handoff quoting one (e.g.
+`[highest leverage]`). Markdown links are already filtered by the trailing
+`](`-pipe; every other hit is a placeholder.
 
 `DECISIONS.md` and `BLUEPRINT.md` are excluded: the first uses intentional
 placeholder brackets in its `## Template` format block; the second lists

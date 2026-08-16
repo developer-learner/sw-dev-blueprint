@@ -25,14 +25,33 @@ commits, not `refreeze.sh` (children's specs still freeze there)
   plan synthesis no longer clobbers `tasks/plan.json` (temp file + mv, reason
   readable again); **D-151** — `refreeze.sh` is now transactional (git-identity
   preflight, clean-lane guard on tests/ + scripts/.approved/, HEAD rollback +
-  unstage on a failed freeze commit). Both carry ledger entries. Open queue:
-  doc sweep (QUICKSTART y/N, .env.example, CLAUDE.md dead refs, plan.schema
-  node-id wording), curl -f preflight, check_ci_health gh auth, MEDIUM-6
-  placeholder grep hardening, manifest coverage for bootstrap/new-project,
+  unstage on a failed freeze commit). Both carry ledger entries. Second batch
+  landed same day: **D-152** — refreeze fails fast on stock macOS (dies
+  immediately without sha256sum, loud warning with coreutils — the host-run
+  fixture suite stays green), and **D-153** — placeholder gate hardened
+  (lowercase-led + `[Type 1]`-class tokens caught, markdown links filtered,
+  verbatim-record exceptions documented) + doc sweep (QUICKSTART Step 5
+  rewritten to the D-121 auto-apply reality, .env.example dead LM
+  Studio/ANTHROPIC config removed, plan.schema tests-description reworded to
+  the D-119/D-130 omit rule, live docs verified to carry no dead manifest
+names). Open queue: third batch landed same day as **D-154** (fail-open
+  pass: `curl -f` on the LLM preflight, `gh auth status` named in CI health,
+  `[plan]`/`[task]` commits no longer swallow real failures — status-guarded,
+  D-151 class), **D-155** (INV-1 cross-check scans disk for pytest-collectible
+  files — the gitignore blind spot is closed), **D-156** (mypy pinned
+  `==2.3.1` in the Containerfile — the mypy-green cache can no longer go
+  stale). Fourth batch landed same day: **D-157** (LOW batch — coder
+  `=== FILE:` extraction greedy (no more first-marker truncation), llm-call
+  fence-strip prose-tolerant + count-guarded, mkdir-lock pid-window fail-closed,
+  `$REMOVED_FILES` loops line-based with the house empty guard (space-in-path
+  word-split was a wrong-path deletion), new-project.sh `LLM_HOST` override;
+  the review's "remove docs/.pm-last-review" was REFUTED — it is Rule 1's
+  backstop, valid ancestor, PM-owned, kept). Remaining: manifest coverage for
+  bootstrap/new-project,
   ledger back-port (testchat missing D-48 + D-56..D-106, 52 entries — verified
   by padded header diff, NOT the 30-entry list some review drafts claimed),
-  .pm-last-review removal. Testchat: script paths, input bounds, CSRF deferral,
-  stale refreeze-pending.diff.
+  same-LLM TPM mode. Testchat: input bounds, CSRF deferral, stale
+  refreeze-pending.diff (script paths env-ified as testchat D-150).
 
 ---
 

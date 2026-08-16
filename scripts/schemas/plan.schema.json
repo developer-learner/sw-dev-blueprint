@@ -51,7 +51,7 @@
           "tests": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Frozen TPM test node-ids expected to pass once this task and its dependencies are done. This is the oracle PROJECTION (D-28): the EM schedules the TPM's tests onto tasks; it never authors acceptance. Across the whole plan, every frozen node-id must appear exactly once. Tasks with no covering test must have a smoke_check in contracts.json (TPM-authored)."
+            "description": "Frozen TPM test node-ids expected to pass once this task and its dependencies are done. This is the oracle PROJECTION (D-28): the EM schedules the TPM's tests onto nodes; it never authors acceptance. Across the whole plan, every frozen node-id in the plan's scope must appear exactly once — re-plan calls ship the delta-scoped union and may omit carried node-ids, which the shell routes itself (D-119/D-130); the greenfield emission carries the full list, and the validator names any node-id that must still be mapped. Tasks with no covering test must have a smoke_check in contracts.json (TPM-authored)."
           }
         }
       }

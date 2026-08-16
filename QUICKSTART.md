@@ -18,7 +18,7 @@
 | Python 3.12+ | `python3 --version` | — |
 | Podman | `podman info` | the frozen suite runs sandboxed (`--network none`, repo read-only); there is no unsandboxed fallback (D-30) |
 | ruff | `ruff --version` | the freeze gate lints staged tests and fails closed without it (D-67) |
-| A local LLM server | `curl -s http://localhost:1234/v1/models` | LM Studio, llama.cpp server, vLLM — anything OpenAI-compatible. Port 1234 assumed below; override with `SANDBOX_LLM_PORT` |
+| A local LLM server | `curl -sf http://localhost:1234/v1/models` | LM Studio, llama.cpp server, vLLM — anything OpenAI-compatible. Port 1234 assumed below; override with `SANDBOX_LLM_PORT` |
 | `gh` CLI (optional) | `gh auth status` | only used to stamp the template birth SHA; bootstrap warns and continues without it |
 
 The model matters more than the server: a **~27B-class dense, non-thinking
@@ -96,10 +96,11 @@ are pre-written; `examples/minimal-spec/README.md` explains each one.
 scripts/refreeze.sh
 ```
 
-Read the diff it shows, answer y. The spec is now version-stamped and
-hash-pinned under `scripts/.approved/` + `tests/` — from here on, no agent
-can change what "done" means. This human diff-review is THE approval gate of
-the whole system.
+The mechanical preflights ARE the verdict (D-121) — once every gate is green
+the freeze auto-applies and commits itself (`refreeze vN` message tag); use
+`scripts/refreeze.sh --diff` for a read-only preview first. The spec is now
+version-stamped and hash-pinned under `scripts/.approved/` + `tests/` —
+from here on, no agent can change what "done" means.
 
 ## Step 6 — build it
 

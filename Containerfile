@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Pytest toolchain + app deps (always installed)
 RUN pip install --no-cache-dir \
-    pytest pytest-json-report pytest-asyncio pytest-cov ruff mypy respx \
+    pytest pytest-json-report pytest-asyncio pytest-cov ruff mypy==2.3.1 respx \
     fastapi uvicorn httpx pydantic
 
 # Browser oracle (D-58): chromium + playwright baked at BUILD time — the

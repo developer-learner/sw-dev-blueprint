@@ -207,8 +207,13 @@ if profile.get("strip_think_tags", True):
         sys.exit(f"llm-call FAIL: content was only a <think> block from model '{model}'.")
 
 # Strip a single wrapping markdown fence if present (local models add them).
-m = re.match(r"^```[a-zA-Z0-9_-]*\n(.*)\n```$", content, re.DOTALL)
-if m:
-    content = m.group(1)
+# Anchored ^...$ matching missed replies wrapped in prose ("Here is the
+# plan:") — but a global strip would corrupt replies whose content
+# legitimately contains fence literals (the D-59 think-tag class), so strip
+# only when the reply carries exactly one fence pair, anywhere in it.
+if content.count("```") == 2:
+    m = re.search(r"```[a-zA-Z0-9_-]*\n(.*?)\n```", content, re.DOTALL)
+    if m:
+        content = m.group(1)
 sys.stdout.write(content)
 PYEOF

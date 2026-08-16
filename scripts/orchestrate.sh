@@ -233,7 +233,10 @@ else
   _lockdir="$STATE_DIR/.lockdir"
   if ! mkdir "$_lockdir" 2>/dev/null; then
     _owner=$(cat "$_lockdir/pid" 2>/dev/null || true)
-    if [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; then
+    if [ -z "$_owner" ]; then
+      die "another scripts/orchestrate.sh is starting (holds $_lockdir, no pid yet) — wait a moment and retry"
+    fi
+    if kill -0 "$_owner" 2>/dev/null; then
       die "another scripts/orchestrate.sh is already running (pid $_owner, holds $_lockdir) — wait for it to finish or kill it, then retry"
     fi
     # stale lock from a dead run — reclaim it
@@ -422,6 +425,10 @@ check_ci_health() {
     echo "  WARNING: CI health INCONCLUSIVE — 'gh' not installed, cannot read CI status. Proceeding."
     return 0
   fi
+  if ! timeout 10 gh auth status >/dev/null 2>&1; then
+    echo "  WARNING: CI health INCONCLUSIVE — 'gh' not authenticated ('gh auth status' fails); CI verdict unknown. Proceeding."
+    return 0
+  fi
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
   [ -n "$branch" ] && [ "$branch" != "HEAD" ] || {
     echo "  WARNING: CI health INCONCLUSIVE — detached HEAD, no branch to query. Proceeding."
@@ -532,7 +539,7 @@ fi
 # no attach protocol, no harness in between (D-53).
 : "${SANDBOX_LLM_HOST:=localhost}"
 : "${SANDBOX_LLM_PORT:=1234}"
-curl -s --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models" \
+curl -sf --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models" \
   || die "no LLM reachable at http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models — start it and retry (in the VM, set SANDBOX_LLM_HOST=host.lima.internal)"
 # The interactive/human commit path is only gated if bootstrap.sh ran. The
 # testchat M4 run proved this can be silently absent for an entire project
@@ -540,12 +547,14 @@ curl -s --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1
 # Fail closed here, same as the manifest check below.
 [ "$(git config core.hooksPath || true)" = ".githooks" ] \
   || die "core.hooksPath is not '.githooks' — run scripts/bootstrap.sh first (the pre-commit lane gate is mandatory, not optional)"
-# The orchestrator's own [plan]/[task] commits swallow failures on purpose
-# (nothing-to-commit is normal) — which also swallows a missing git identity,
-# so every commit silently no-ops (scratch-rung drill 2026-07-16: the dev VM
-# had no identity and the plan commit vanished). Fail closed here instead.
+# The orchestrator's own [plan]/[task] commits guard on
+# `git status --porcelain` — "nothing to commit" is skipped as a normal
+# no-change case, but a real commit failure (missing git identity, a hook
+# rejection) now fails the run instead of being swallowed (scratch-rung
+# drill 2026-07-16: missing git identity silently no-op'd every pipeline
+# commit in the dev VM; D-151 fixed the same class in refreeze.sh).
 { [ -n "$(git config user.email || true)" ] && [ -n "$(git config user.name || true)" ]; } \
-  || die "git identity missing — [plan]/[task] commits would silently no-op (their failures are deliberately swallowed): git config --global user.email <addr> && git config --global user.name <name>"
+  || die "git identity missing — [plan]/[task] commits would fail: git config --global user.email <addr> && git config --global user.name <name>"
 # A dirty tree poisons the lane gate: phase-gate diffs the working tree
 # against a phase-start ref, so pre-existing uncommitted changes get blamed
 # on whichever tier runs first (testchat M2: the EM was accused of touching
@@ -945,14 +954,14 @@ brief; transcribe it into working code immediately."
 import re, sys
 path, raw_path, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(raw_path).read()
-m = re.search(r"^=== FILE: (.+?) ===\n(.*?)\n=== END FILE ===$", text, re.M | re.S)
+m = re.search(r"^=== FILE: (.+?) ===\n(.*)\n=== END FILE ===$", text, re.M | re.S)
 if not m:
     # Tolerant pass (testchat M7): a local coder glued the opening sentinel to
     # the tail of its own prose ('- "hello === FILE: ... ===') and a complete,
     # well-formed file followed. Accept an opening sentinel anywhere on a line
     # — the distinctive token cannot occur in generated file content by
     # accident without the closing pair also parsing. Content rules unchanged.
-    m = re.search(r"=== FILE: (.+?) ===\n(.*?)\n=== END FILE ===$", text, re.M | re.S)
+    m = re.search(r"=== FILE: (.+?) ===\n(.*)\n=== END FILE ===$", text, re.M | re.S)
     if m:
         print("warning: opening sentinel was mid-line — accepted by tolerant pass", file=sys.stderr)
 if not m:
@@ -1324,7 +1333,11 @@ ensure_plan() {
       fi
       rm -f "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" \
         "$STATE_DIR/carried-summary.json" tasks/plan-subtree.json
-      git add tasks/plan.json && git commit -m "[plan] validated against spec v$FROZEN_V" 2>/dev/null || true
+      if [ -z "$(git status --porcelain -- tasks/plan.json 2>/dev/null)" ]; then
+        echo "plan unchanged — no [plan] commit needed"
+      else
+        git add tasks/plan.json && git commit -m "[plan] validated against spec v$FROZEN_V"
+      fi
       return 0
     fi
     verrs=$(python3 scripts/validate-plan.py 2>&1 || true)
@@ -1956,7 +1969,11 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     coder_ok=0
   fi
   if [ "$coder_ok" = "1" ]; then
-    git add "$file" && git commit -m "[task $id] attempt $((strikes + 1))" 2>/dev/null || true
+    if [ -z "$(git status --porcelain -- "$file" 2>/dev/null)" ]; then
+      echo "no change in $file — no [task] commit needed"
+    else
+      git add "$file" && git commit -m "[task $id] attempt $((strikes + 1))"
+    fi
     # D-74: lint the one file the coder wrote, BEFORE the mapped tests — lint
     # findings are exact-location retry feedback (the D-71 validator-fed
     # pattern) and cheaper than a sandbox pytest run. CI's src/ lint is dark

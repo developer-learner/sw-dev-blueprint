@@ -8,7 +8,8 @@ set -euo pipefail
 PROJECT_NAME="${1:?usage: scripts/new-project.sh <project-name> — run from inside a fresh clone of this template}"
 TARGET_DIR="$(pwd -P)"
 LLM_PORT="${SANDBOX_LLM_PORT:-1234}"
-LLM_URL="http://localhost:$LLM_PORT/v1/chat/completions"
+LLM_HOST="${LLM_HOST:-localhost}"
+LLM_URL="http://$LLM_HOST:$LLM_PORT/v1/chat/completions"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 step() { echo "--- $* ---"; }
@@ -16,7 +17,7 @@ step() { echo "--- $* ---"; }
 # Step 0: Pre-flight check (Hard Rule 1 & 4)
 # Model-agnostic: probe whatever model the CEO has loaded — never hardcode one.
 step "Pre-flight: checking local LLM at $LLM_URL ..."
-LOADED_MODELS="$(curl -s --max-time 10 "http://localhost:$LLM_PORT/v1/models" \
+LOADED_MODELS="$(curl -s --max-time 10 "http://$LLM_HOST:$LLM_PORT/v1/models" \
   | python3 -c 'import sys,json
 try:
     for m in json.load(sys.stdin)["data"]:

@@ -89,10 +89,15 @@ if [ -f "$FROZEN_VERSION" ]; then
   # and would run in the frozen suite (and the on-demand --full-suite
   # regression check). Cross-check: every git-visible
   # file (tracked + untracked, gitignore-respecting) under tests/ must be
-  # pinned. gitignored bytecode caches (__pycache__/*, .pytest_cache/*) are
-  # runtime artifacts and correctly excluded here.
+  # pinned, PLUS every pytest-collectible *.py on disk (a hand-added
+  # tests/test_*.py matching an existing ignore rule would otherwise bypass
+  # the git-visible scan entirely). gitignored bytecode caches
+  # (__pycache__/*, .pytest_cache/*) are runtime artifacts and correctly
+  # excluded here.
   pinned_tests=$(awk '{print $2}' "$FROZEN" | grep '^tests/' | sort -u || true)
-  disk_tests=$( ( git ls-files -- tests; git ls-files --others --exclude-standard -- tests ) 2>/dev/null | sort -u )
+  disk_tests=$( ( git ls-files -- tests; git ls-files --others --exclude-standard -- tests; \
+                  find tests -type f \( -name 'test_*.py' -o -name '*_test.py' -o -name 'conftest.py' \) \
+                    -not -path '*/__pycache__/*' 2>/dev/null ) | sort -u )
   unpinned=$(comm -23 <(printf '%s\n' "$disk_tests") <(printf '%s\n' "$pinned_tests"))
   if [ -n "$unpinned" ]; then
     echo "GATE FAIL: unpinned test file(s) — added outside scripts/refreeze.sh (INV-1):"

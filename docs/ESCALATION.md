@@ -114,4 +114,5 @@ dependents) is reset and re-run (D-31).
 - The orchestrator exits with code **2** when a batch is waiting — distinct
   from failure (1) and success (0) — so wrappers can detect "awaiting TPM".
 - Bundles are runtime diagnostics (`.pipeline-state/` is gitignored); the
-  durable record of the round-trip is the `[refreeze vN]` commit.
+  durable record of the round-trip is the freeze commit (`refreeze vN`
+  message tag, written by `scripts/refreeze.sh`).
