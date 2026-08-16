@@ -20,6 +20,20 @@ REVIEW, CURRENT, manifest ownership) + child sync queue
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-08-15: Adversarial review of both repos (2026-07-01 REVIEW.md follow-up)
+  produced two must-fix defects, now landed as code: **D-150** — failed B3
+  plan synthesis no longer clobbers `tasks/plan.json` (temp file + mv, reason
+  readable again); **D-151** — `refreeze.sh` is now transactional (git-identity
+  preflight, clean-lane guard on tests/ + scripts/.approved/, HEAD rollback +
+  unstage on a failed freeze commit). Both carry ledger entries. Open queue:
+  doc sweep (QUICKSTART y/N, .env.example, CLAUDE.md dead refs, plan.schema
+  node-id wording), curl -f preflight, check_ci_health gh auth, MEDIUM-6
+  placeholder grep hardening, manifest coverage for bootstrap/new-project,
+  ledger back-port (testchat missing D-48 + D-56..D-106, 52 entries — verified
+  by padded header diff, NOT the 30-entry list some review drafts claimed),
+  .pm-last-review removal. Testchat: script paths, input bounds, CSRF deferral,
+  stale refreeze-pending.diff.
+
 ---
 
 ## Escalations In Flight

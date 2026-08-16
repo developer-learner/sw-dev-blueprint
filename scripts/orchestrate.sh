@@ -1453,10 +1453,19 @@ $audit" "-"
        && [ -z "${synthesis_tried:-}" ] \
        && [ "${ACTIVE_DELTA_FILES+set}" = "set" ] && [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
       synthesis_tried=1
-      if synth_err=$(python3 scripts/validate-plan.py --synthesize-plan "${ACTIVE_DELTA_FILES[@]}" > tasks/plan.json 2>&1); then
+      # D-150: synthesize into a temp file, never straight into tasks/plan.json.
+      # A refused synthesis must leave the prior plan intact (it feeds the EM's
+      # revision loop as plan-being-revised) and its reason readable — the old
+      # `> tasks/plan.json 2>&1` clobbered the plan with the error text AND made
+      # synth_err capture nothing (both fds went to the file).
+      synth_tmp="$STATE_DIR/synthesize-plan.$$"
+      if python3 scripts/validate-plan.py --synthesize-plan "${ACTIVE_DELTA_FILES[@]}" > "$synth_tmp" 2>&1; then
+        mv "$synth_tmp" tasks/plan.json
         echo "=== B3: plan synthesized mechanically from the TPM's ERD-DELTA briefs/DAG/pins (no EM call); full gate judges it next ==="
         continue
       else
+        synth_err=$(cat "$synth_tmp" 2>/dev/null || true)
+        rm -f "$synth_tmp"
         echo "mechanical synthesis refused — TPM materials incomplete; EM full emission (reason: $(printf '%s' "$synth_err" | tr '\n' ' '))"
       fi
     fi

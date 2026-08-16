@@ -6321,12 +6321,21 @@ def test_prd_additive_guard_allows_historical_block_reflow(tmp_path):
 
 def _seed_standing_route(approved):
     """Give the freezable fixture a non-empty standing routes array so the
-    merge has a carried entry to preserve (its default contracts are empty)."""
+    merge has a carried entry to preserve (its default contracts are empty).
+    Committed like a real standing freeze — the D-151 clean-lane guard treats
+    uncommitted lane edits as an anomaly, not fixture setup."""
+    repo = approved.parents[1]
     standing = json.loads((approved / "contracts.json").read_text())
     standing["routes"] = [
         {"id": "route:GET /a", "method": "GET", "path": "/a",
          "file": "src/app.py"}]
     (approved / "contracts.json").write_text(json.dumps(standing))
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "add", "scripts/.approved/contracts.json"],
+                   cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "seed standing route"],
+                   cwd=repo, check=True)
 
 
 def test_refreeze_merges_staged_contracts_delta(freezable_repo):
@@ -6375,6 +6384,12 @@ def test_refreeze_applies_contract_removal_and_records_delta(freezable_repo):
     standing = json.loads((approved / "contracts.json").read_text())
     standing["entry_points"] = ["src.app:app"]
     (approved / "contracts.json").write_text(json.dumps(standing))
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "add", "scripts/.approved/contracts.json"],
+                   cwd=freezable_repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "seed entry point"],
+                   cwd=freezable_repo, check=True)
     (approved / "incoming" / "contracts.json").write_text(json.dumps({
         "files": ["src/app.py"], "entry_points": [], "erd_version": 2,
         "changed_files": ["src/app.py"],
