@@ -61,8 +61,19 @@ names). Open queue: third batch landed same day as **D-154** (fail-open
   lists all 11 docs/ files (D-159), and the D-153 placeholder gate was
   independently confirmed live (BLUEPRINT.md Step 7, real and consistent;
   template-repo hits are Step-6 skeleton rows + the two documented
-  exceptions). Open: mechanizing the placeholder gate (Rule 3
-  stop-and-ask, see D-159).
+  exceptions). Mechanized same day (Rule 3 ruling): **D-160** — bootstrap
+  arms `.placeholder-gate`; `phase-gate manifest` enforces Step 7 at the
+  commit door (exemptions: records/archives/runtime — project-trail,
+  .em-archive, .pipeline-state, .measurement, .tpm, .venv*, .cache, data,
+  HANDOFF-*, CURRENT/BACKLOG, DECISIONS, BLUEPRINT, date-led rows, `](`
+  links); armed and proven on testchat — planted token → GATE FAIL, and
+  arming surfaced two real residual template rows in child docs, now
+  de-bracketed (TESTING.md flake-table example, ESCALATION.md `[refreeze
+  vN]` prose). **D-161**: oracle-strength gap recorded as open — the
+  frozen suite's discrimination is unverified (D-75 continuation: per-run
+  mutation still rejected; freeze-cadence one-shot report-only pass named
+  as the shape of any fix; Rule 5 "ground truth" wording flagged as an
+  overclaim against D-44, correction deferred).
 
 ---
 
