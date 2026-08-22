@@ -35,6 +35,16 @@ Two boundaries, two jobs:
 - **D-30 Podman lanes** (inside the VM, unchanged) protect the control
   plane — tests, gates, frozen spec — from generated code.
 
+### Shared-checkout Git setup
+
+The virtiofs checkout can retain a host UID that differs from the guest user.
+Run `scripts/bootstrap.sh` from the project inside the VM: it detects Git's
+`dubious ownership` refusal and trusts only that checkout's canonical path.
+It deliberately does not trust `*` or the whole shared mount. Git authorship
+cannot be inferred safely; if the guest has no identity, bootstrap stops before
+dependency installation and prints the two scoped `git config --global`
+commands to run before retrying.
+
 No VM-in-VM concern: Podman on macOS already runs inside a hidden Linux VM
 (`podman machine`) today. This swaps the hidden VM for a visible one the
 conductors also live in. Same nesting depth as now — arguably less, since

@@ -8147,6 +8147,20 @@ def test_onboarding_prints_the_model_override_names_llm_call_reads():
         assert "SWBP_MODEL_CODER" not in source
 
 
+def test_bootstrap_scopes_vm_git_trust_and_requires_identity():
+    """A shared Lima checkout may trip Git's dubious-ownership guard.
+
+    Bootstrap may trust the explicitly selected checkout, but never all repos;
+    it must also halt rather than inventing commit authorship for the guest.
+    """
+    source = (SCRIPTS / "bootstrap.sh").read_text()
+    assert 'git config --global --add safe.directory "$root"' in source
+    assert "safe.directory '*'" not in source
+    assert 'git config user.name' in source
+    assert 'git config user.email' in source
+    assert "Git identity is missing" in source
+
+
 def test_ci_lints_template_owned_python_scripts():
     """The unconditional control-plane job must lint scripts/, where the
     gate code and its selftests live, even for an unbootstrapped skeleton.

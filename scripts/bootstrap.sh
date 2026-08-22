@@ -29,6 +29,46 @@ else
   SED_INPLACE=(sed -i '')     # BSD sed (macOS)
 fi
 
+# --- Git trust + identity preflight -----------------------------------------
+# A Lima virtiofs mount preserves the host UID on the shared checkout. When
+# that UID differs from the guest user, Git refuses the repo as "dubious
+# ownership" before bootstrap can enable hooks or make its baseline commit.
+# Invoking bootstrap is explicit trust in THIS checkout, so add only its exact
+# canonical path — never '*' or the whole shared mount. Identity is different:
+# bootstrap cannot invent a human author, so fail early with the durable guest
+# configuration command instead of discovering it after dependency installs.
+ensure_git_worktree_ready() {
+  [ -d .git ] || return 0
+  local root probe
+  root=$(pwd -P)
+  if ! probe=$(git status --porcelain 2>&1); then
+    case "$probe" in
+      *"dubious ownership"*)
+        git config --global --add safe.directory "$root"
+        git status --porcelain >/dev/null 2>&1 || {
+          echo "bootstrap: Git still refuses the trusted checkout: $root" >&2
+          exit 1
+        }
+        echo "🔐 Trusted this checkout in guest Git: $root"
+        ;;
+      *)
+        echo "bootstrap: Git cannot read this checkout: $probe" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  if [ -z "$(git config user.name || true)" ] \
+     || [ -z "$(git config user.email || true)" ]; then
+    echo "bootstrap: Git identity is missing in this environment." >&2
+    echo "  Configure it, then rerun bootstrap:" >&2
+    echo "    git config --global user.name \"Your Name\"" >&2
+    echo "    git config --global user.email \"you@example.com\"" >&2
+    exit 1
+  fi
+}
+
+ensure_git_worktree_ready
+
 # --- Replace placeholders in docs ---
 echo "📝 Updating docs with project name..."
 find . -type f \( -name "*.md" -o -name "*.yml" -o -name "*.yaml" \) \
@@ -100,6 +140,7 @@ echo "🏷️  Placeholder gate armed — surviving placeholder tokens now fail 
 if [ ! -d .git ]; then
   echo "📁 Initializing git repo..."
   git init
+  ensure_git_worktree_ready
   git add .
   git commit -m "chore: bootstrap from sw-dev-blueprint template"
 fi
