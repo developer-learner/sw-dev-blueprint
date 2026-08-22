@@ -621,11 +621,34 @@ done
 # The incoming/ staging dir is excluded from the lane by construction: it is
 # untracked in real repos (gitignored), consumed on success, and preserved
 # on failure for retry — the rollback must never touch it.
-if [ -n "$(git status --porcelain --untracked-files=no -- tests/ scripts/.approved/ ':(exclude)scripts/.approved/incoming')" ]; then
+if [ -n "$(git status --porcelain -- tests/ scripts/.approved/ ':(exclude)scripts/.approved/incoming')" ]; then
   die "frozen lane is dirty before apply (uncommitted changes in tests/ or scripts/.approved/ outside the incoming/ staging dir) — commit or stash them first; a failed freeze commit must roll back to HEAD safely"
 fi
 
 # --- Apply ---
+# Transactional apply (extends D-151): from the first mutation below until
+# the freeze commit succeeds, ANY failure — not only a failed commit — must
+# leave the frozen lane exactly as HEAD had it (the Vortex first-freeze run:
+# the M35 smoke red-check died after the apply and left tests/spec
+# half-applied). The handler chains the PREVIEW cleanup the earlier trap
+# owned, restores tracked lane files, and git-cleans files this apply
+# CREATED (new DELTA-vN.json / ERD-DELTA-vN.md are untracked if the failure
+# precedes git add). incoming/ staging is never touched: it survives a
+# failed freeze for retry.
+REFREEZE_APPLIED=0
+on_refreeze_exit() {
+  rc=$?
+  rm -rf "$PREVIEW"
+  [ "$rc" -eq 0 ] && return 0
+  [ "$REFREEZE_APPLIED" = "1" ] || return 0
+  echo "REFREEZE FAIL: failure after apply (rc=$rc) — rolling back the applied freeze to HEAD" >&2
+  git restore --source=HEAD --staged --worktree -- tests/ scripts/.approved/ ':(exclude)scripts/.approved/incoming' \
+    || echo "REFREEZE WARNING: rollback restore failed — inspect tests/ and scripts/.approved/ manually before retrying" >&2
+  git clean -f -- tests/ scripts/.approved/ ':(exclude)scripts/.approved/incoming' \
+    || echo "REFREEZE WARNING: rollback clean failed — inspect tests/ and scripts/.approved/ manually before retrying" >&2
+}
+trap on_refreeze_exit EXIT
+REFREEZE_APPLIED=1
 VERSIONED_ERD_DELTA=""
 for f in $CHANGED_DOCS; do
   if [ "$f" = "contracts.json" ]; then
@@ -799,9 +822,21 @@ fi
 if [ "$CONTRACTS_STAGED" = "1" ] && [ -f "$IN/contracts.json" ]; then
   NEW_SMOKE=$(python3 - ".pipeline-state/refreeze-old-contracts.json" "$MERGED_CONTRACTS" <<'PYEOF'
 import json, sys
-old = json.load(open(sys.argv[1])).get("smoke_checks", {})
-new = json.load(open(sys.argv[2])).get("smoke_checks", {})
-no_edit = set(json.load(open(sys.argv[2])).get("no_edit_files", []))
+
+def load(path):
+    # First freeze (v0->v1): no standing contracts.json exists yet, so the
+    # pre-apply snapshot at :587 was never created. Treat missing prior
+    # contracts as {} — every staged smoke check is then new/red-checked,
+    # which is the correct semantics for a greenfield freeze.
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {}
+
+old = load(sys.argv[1]).get("smoke_checks", {})
+new = load(sys.argv[2]).get("smoke_checks", {})
+no_edit = set(load(sys.argv[2]).get("no_edit_files", []))
 for f, cmd in sorted(new.items()):
     if f in no_edit:
         continue
@@ -869,16 +904,13 @@ for f in $CHANGED_DOCS; do git add "$APPROVED/$f"; done
 if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then git add "$APPROVED/ERD-DELTA.md"; fi
 for f in $CHANGED_CAPTURES; do git add "$APPROVED/$f"; done
 git commit -m "[refreeze v$NEW]" || {
-  # D-151: the apply above already mutated the tree; a failed commit must not
-  # leave it half-applied (a retry would freeze as vN+1 against a tree that
-  # already contains this delta — version skip plus a wrong delta). The `||`
-  # block preserves git's real exit code (`if ! cmd` would invert it).
+  # D-151, extended: the on_refreeze_exit trap owns the rollback for EVERY
+  # post-apply failure now; this block just reports and exits non-zero.
   commit_rc=$?
-  echo "REFREEZE FAIL: freeze commit failed (rc=$commit_rc) — rolling back the applied freeze to HEAD" >&2
-  git restore --source=HEAD --staged --worktree -- tests/ scripts/.approved/ ':(exclude)scripts/.approved/incoming' \
-    || echo "REFREEZE WARNING: rollback restore failed — inspect tests/ and scripts/.approved/ manually before retrying" >&2
-  exit 1
+  echo "REFREEZE FAIL: freeze commit failed (rc=$commit_rc)" >&2
+  exit "$commit_rc"
 }
+REFREEZE_APPLIED=0   # committed — the exit trap must never roll back a frozen freeze
 rm -rf "$IN"
 
 echo ""

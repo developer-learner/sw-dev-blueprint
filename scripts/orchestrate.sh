@@ -250,6 +250,11 @@ fi
 # --- state helpers (files, not shell vars: crash checkpoint per D-24) ---
 read_state()  { [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }
 write_state() { printf '%s\n' "$2" > "$STATE_DIR/$1"; }
+# Defined with the state helpers, NOT down in the plan phase: the EXIT-trap
+# metrics path (record_measurement) calls this on every termination, including
+# preflight failures that die before the plan phase is ever reached — an
+# undefined function there corrupted the metrics row and noised the log.
+plan_revisions_used() { read_state plan_revisions | grep . || echo 0; }
 tstat()       { [ -f "$TASK_STATE/$1.status" ] && cat "$TASK_STATE/$1.status" || echo pending; }
 set_tstat()   { printf '%s\n' "$2" > "$TASK_STATE/$1.status"; }
 counter()     { [ -f "$TASK_STATE/$1.$2" ] && cat "$TASK_STATE/$1.$2" || echo 0; }
@@ -1251,7 +1256,8 @@ PYEOF
 }
 
 # --- Plan phase: EM emits/revises, validator gates, bounded retries ----------
-plan_revisions_used() { read_state plan_revisions | grep . || echo 0; }
+# plan_revisions_used is defined with the state helpers (top of file): the
+# EXIT trap consumes it on early preflight failures too.
 
 # Subtree re-plan (proportionality Fix A): on a re-freeze, the EM re-plans
 # ONLY what the delta invalidated. The prior VALIDATED plan is carried

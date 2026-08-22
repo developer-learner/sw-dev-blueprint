@@ -2829,6 +2829,22 @@ __GUARD_BLOCK__
         "the ARM B guard must not have committed anything"
 
 
+def test_plan_revisions_helper_precedes_early_exit_trap():
+    """The EXIT trap runs on preflight failures, before the plan phase.
+
+    The Vortex M1 preflight exposed the ordering defect: record_measurement()
+    called plan_revisions_used(), but that helper's definition was below the
+    preflight and had not executed yet. Pin the load order directly so a
+    future source move cannot reintroduce `command not found` on early exits.
+    """
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    helper = source.index("plan_revisions_used() {")
+    exit_trap = source.index("trap 'record_exit' EXIT")
+    plan_phase = source.index("# --- Plan phase:")
+    assert helper < exit_trap < plan_phase
+    assert source.count("plan_revisions_used() {") == 1
+
+
 def test_full_suite_execution_is_confined_to_tests_directory():
     """No-argument run_tests cannot discover archives or selftests.
 
@@ -6341,6 +6357,56 @@ def test_refreeze_smoke_check_must_be_red_on_unchanged_tree(freezable_repo):
     assert "NOT RED" in r.stdout, r.stdout
 
 
+def test_refreeze_post_apply_failure_rolls_back_lane(freezable_repo):
+    """D-151 extension: the M35 smoke red-check runs AFTER the apply has
+    copied contracts/tests into the frozen lane — a die there used to leave
+    the lane half-applied (the Vortex first-freeze incident). Every
+    post-apply failure must restore tests/ and scripts/.approved/ to HEAD:
+    VERSION unchanged, no DELTA-v2.json, no new test installed, tracked lane
+    clean. The staging dir survives for retry."""
+    incoming = freezable_repo / "scripts" / ".approved" / "incoming"
+    (incoming / "tests" / "test_delta.py").write_text(
+        "def test_red_probe():\n    assert False\n")
+    (incoming / "ERD-DELTA.md").write_text(
+        VALID_ERD_DELTA + _PIN_ROW("test_red_probe"))
+    approved = freezable_repo / "scripts" / ".approved"
+    before_version = (approved / "VERSION").read_text()
+    r = _stage_contracts_smoke(
+        freezable_repo,
+        "grep -q 'def preexisting' src/app.py")   # passes -> post-apply die
+    assert r.returncode != 0, r.stdout
+    assert "rolling back the applied freeze" in r.stderr, r.stderr
+    # Lane restored to HEAD:
+    assert (approved / "VERSION").read_text() == before_version
+    assert not (approved / "DELTA-v2.json").exists()
+    assert not (freezable_repo / "tests" / "test_delta.py").exists()
+    contracts = json.loads((approved / "contracts.json").read_text())
+    assert "smoke_checks" not in contracts
+    assert "test_red_probe" not in (approved / "test-nodeids").read_text()
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no",
+         "--", "tests/", "scripts/.approved/",
+         ":(exclude)scripts/.approved/incoming"],
+        cwd=freezable_repo, capture_output=True, text=True)
+    assert dirty.stdout.strip() == "", dirty.stdout
+    # Staging preserved for retry:
+    assert (incoming / "contracts.json").is_file()
+
+
+def test_refreeze_untracked_lane_file_blocks_before_apply(freezable_repo):
+    """Rollback may git-clean files created by the failed apply, so the
+    pre-apply clean-lane guard must reject an operator's pre-existing
+    untracked file outside incoming/ rather than deleting it as collateral.
+    """
+    note = freezable_repo / "scripts" / ".approved" / "operator-note.txt"
+    note.write_text("preserve me\n")
+    r = _run_refreeze_install(freezable_repo)
+    assert r.returncode != 0, r.stdout
+    assert "frozen lane is dirty before apply" in r.stderr, r.stderr
+    assert note.read_text() == "preserve me\n"
+    assert not (freezable_repo / "tests" / "test_delta.py").exists()
+
+
 def test_refreeze_smoke_check_red_on_unchanged_tree_passes(freezable_repo):
     """A smoke check that fails on the pre-implementation tree (the file it
     probes does not exist yet) is a real gate — the freeze proceeds."""
@@ -6349,6 +6415,95 @@ def test_refreeze_smoke_check_red_on_unchanged_tree_passes(freezable_repo):
         "grep -q 'def not_implemented_yet' src/app.py")
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "red as expected" in r.stdout, r.stdout
+
+
+# --- first freeze, v0 -> v1 (end-to-end) --------------------------------------
+# A brand-new child has no scripts/.approved/VERSION, contracts.json, or
+# test-nodeids. The M35 smoke red-check consumed the pre-apply old-contracts
+# snapshot unconditionally — but at v0 that snapshot is never created (there
+# is nothing to snapshot), so the FIRST freeze of any project crashed with
+# FileNotFoundError after the apply had already mutated the frozen lane.
+
+def _install_refreeze_scripts(repo):
+    """Copy the scripts a full refreeze apply path needs into a fixture repo,
+    plus the passthrough sandbox adapter (no containers in selftests)."""
+    for name in (
+        "refreeze.sh",
+        "refreeze_delta.py",
+        "contracts-merge.py",
+        "check-prd-additive.py",
+        "check-test-surface.py",
+        "spec_artifacts.py",
+        "check-spec-delta.py",
+        "check-ac-postconditions.py",
+        "check-test-direction.py",
+        "validate-plan.py",
+    ):
+        target = repo / "scripts" / name
+        target.write_bytes((SCRIPTS / name).read_bytes())
+        if name.endswith(".sh"):
+            target.chmod(0o755)
+    schemas = repo / "scripts" / "schemas"
+    schemas.mkdir(exist_ok=True)
+    (schemas / "contracts.schema.json").write_bytes(
+        (SCRIPTS / "schemas" / "contracts.schema.json").read_bytes())
+    sandbox = repo / "scripts" / "sandbox-run.sh"
+    sandbox.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        "  case \"$1\" in --rw) shift 2 ;; --) shift; break ;; *) break ;; esac\n"
+        "done\n"
+        "exec \"$@\"\n"
+    )
+    sandbox.chmod(0o755)
+
+
+@pytest.fixture()
+def greenfield_repo(tmp_path):
+    """A brand-new child at v0: complete first-freeze staging (PRD, ERD,
+    contracts with one smoke check, one genuinely-red test), NO standing
+    frozen state whatsoever."""
+    approved = tmp_path / "scripts" / ".approved"
+    (approved / "incoming" / "tests").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    _install_refreeze_scripts(tmp_path)
+    (approved / "incoming" / "PRD.md").write_text(
+        "# PRD\nAC-1: the app exists and its symbol appears.\n")
+    (approved / "incoming" / "ERD.md").write_text(
+        "# ERD\nsrc/app.py holds the application.\n")
+    (approved / "incoming" / "contracts.json").write_text(json.dumps({
+        "files": ["src/app.py"],
+        "changed_files": ["src/app.py"],
+        "entry_points": ["src.app:app"],
+        "routes": [], "schemas": [], "errors": [],
+        "erd_version": 1,
+        # Red by construction: the probed symbol does not exist yet.
+        "smoke_checks": {"src/app.py":
+                         "grep -q 'def not_implemented_yet' src/app.py"},
+        "test_mapping": {"tests/test_delta.py::test_first": "src/app.py"},
+    }))
+    (approved / "incoming" / "tests" / "test_delta.py").write_text(
+        "def test_first():\n    assert False\n")
+    _init_git(tmp_path)
+    return tmp_path
+
+
+def test_first_freeze_v0_to_v1_succeeds(greenfield_repo):
+    """The very first freeze of a project must go through end to end: there
+    are no standing contracts to diff against, and the M35 smoke red-check
+    must treat missing prior contracts as {} (every staged check is new),
+    never crash on the absent pre-apply snapshot. Pre-fix this died with
+    FileNotFoundError AFTER the apply had mutated the frozen lane."""
+    r = _run_refreeze_install(greenfield_repo)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "smoke red-check" in r.stdout, r.stdout
+    assert "red as expected" in r.stdout, r.stdout
+    assert "FileNotFoundError" not in r.stderr, r.stderr
+    approved = greenfield_repo / "scripts" / ".approved"
+    assert (approved / "VERSION").read_text().strip() == "1"
+    delta = json.loads((approved / "DELTA-v1.json").read_text())
+    assert any("test_first" in n for n in delta["changed_tests"]), delta
 
 
 def test_refreeze_identical_staged_test_does_not_widen_delta(freezable_repo):

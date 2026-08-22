@@ -168,6 +168,13 @@ note above).
 
 ## D-151 — 2026-08-15 — Refreeze is transactional: identity preflight + clean-lane guard + HEAD rollback on a failed commit
 
+> **Amended 2026-08-22 (Vortex first freeze):** rollback now covers every
+> non-zero exit after the first apply mutation, not only `git commit` failure.
+> The clean-lane guard includes untracked files outside `incoming/`, because
+> rollback removes apply-created untracked files and must never erase an
+> operator's pre-existing file. A v0→v1 fixture pins the other exposed seam:
+> absent standing contracts mean `{}` for the smoke-check comparison.
+
 **Decision:** `scripts/refreeze.sh` can no longer leave the tree half-applied. Three additions: (1) a git-identity preflight (fail-closed, same idiom as `orchestrate.sh`'s D-30-era hooks check) runs before any mutation in auto mode — `--diff` stays read-only and skips it; (2) a clean-lane guard before the apply: `git status --porcelain --untracked-files=no -- tests/ scripts/.approved/` must be empty (untracked `incoming/` staging is excluded by design), so a rollback can never clobber pre-existing uncommitted edits to the frozen lane; (3) the freeze commit is now wrapped — on failure it restores `tests/` + `scripts/.approved/` from HEAD (`git restore --source=HEAD --staged --worktree`), unstaging the applied delta, deleting newly created files, and reverting the VERSION bump, then exits 1 with the staging dir left intact for inspection.
 
 **Alternatives considered:** (a) Commit failure left as-is (the pre-D-151 state) — rejected: the repo's own 2026-07-16 correction log documents the class (missing git identity silently no-op'd every pipeline commit in the dev VM); refreeze is the one script that mutates before committing, so the class hit it worst — a retry would freeze as vN+1 against a tree already containing the vN delta, skipping a version and wrong-diffing. (b) Snapshot-and-restore via `cp -R` of the lane before apply — rejected: git's own index/HEAD is the correct pre-image; a byte-copy snapshot duplicates state the index already owns and can silently desync. (c) `git checkout --` instead of `git restore` — same semantics; restore is the modern, explicit `--source` form. (d) A full-tree clean check — rejected: the working tree legitimately carries untracked/ignored state during runs; only the freeze's own footprint needs to be clean.
