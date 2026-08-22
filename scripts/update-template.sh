@@ -122,11 +122,25 @@ CLAIMS=$(git -C "$CLONE" log --reverse --format='— %s%n%b' "$BASE_REF..$TARGET
 [ -n "$CLAIMS" ] || CLAIMS="  (no commit-log claims available — child ref ${BASE_REF:0:12} not in this clone's history)"
 
 # --- Diff: what would change (captured, so each mode presents it its own way) ---
+# Portable SHA-256 (D-152 class): template maintenance is documented as a
+# Linux-VM operation (docs/DEV-VM-SETUP.md), but nothing structural stops a
+# host-side run. Inline copy — selftest fixtures copy scripts by bytes, so
+# keep this in sync with the helpers in manifest-drift-guard.sh,
+# regen-manifest.sh, check-drift.sh (sync-pinned by selftest_gates.py).
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  else
+    die "no sha256sum or shasum found — cannot compare hashes"
+  fi
+}
 CHANGED=""
 DIFF_TMP=$(mktemp)
 for f in $TFILES; do
-  new_h=$(git -C "$CLONE" show "$TARGET:$f" | sha256sum | cut -d' ' -f1)
-  cur_h=$([ -f "$f" ] && sha256sum "$f" | cut -d' ' -f1 || echo MISSING)
+  new_h=$(git -C "$CLONE" show "$TARGET:$f" | sha256_of)
+  cur_h=$([ -f "$f" ] && sha256_of < "$f" || echo MISSING)
   [ "$new_h" = "$cur_h" ] && continue
   CHANGED="$CHANGED $f"
   {
@@ -152,8 +166,8 @@ done
 # like any other content change instead of being swallowed by the
 # "ref advance only" shortcut.
 MANIFEST_DRIFT=""
-new_m=$(git -C "$CLONE" show "$TARGET:scripts/.manifest-template" | sha256sum | cut -d' ' -f1)
-cur_m=$([ -f scripts/.manifest-template ] && sha256sum scripts/.manifest-template | cut -d' ' -f1 || echo MISSING)
+new_m=$(git -C "$CLONE" show "$TARGET:scripts/.manifest-template" | sha256_of)
+cur_m=$([ -f scripts/.manifest-template ] && sha256_of < scripts/.manifest-template || echo MISSING)
 if [ "$new_m" != "$cur_m" ]; then
   MANIFEST_DRIFT=1
   {
@@ -194,7 +208,7 @@ done
 # The approval token (D-61): sha256 of the exact diff text. Recomputed on
 # every invocation, so --approve binds to what is true NOW — any change to
 # template or child between review and approval changes the hash, fail-closed.
-DIFF_SHA=$(sha256sum "$DIFF_TMP" | cut -d' ' -f1)
+DIFF_SHA=$(sha256_of < "$DIFF_TMP")
 
 # --- Review-bundle mode: everything a second model needs, nothing written ---
 if [ "$REVIEW" = "1" ]; then

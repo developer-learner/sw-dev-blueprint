@@ -30,6 +30,22 @@ else
 fi
 [ -d "$ROOT" ] || { echo "manifest-drift-guard: not a dir: $ROOT" >&2; exit 2; }
 
+# Portable SHA-256 over stdin (D-152 class): this guard runs from the
+# pre-commit hook wherever the CEO commits, including a stock macOS host.
+# Same digest either way. Inline copy — selftest fixtures copy scripts by
+# bytes, so keep this in sync with the helpers in regen-manifest.sh,
+# check-drift.sh, update-template.sh (sync-pinned by selftest_gates.py).
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  else
+    echo "manifest-drift-guard: no sha256sum or shasum found — cannot compare staged hashes" >&2
+    return 1
+  fi
+}
+
 check_manifest() {
   local manifest="$1"
   local label="$2"
@@ -41,7 +57,7 @@ check_manifest() {
     # the manifest; the target's own regular-file entry already covers drift.
     [ -L "$full" ] && continue
     git -C "$ROOT" diff --cached --quiet -- "$path" 2>/dev/null && continue
-    staged_hash="$(git -C "$ROOT" show :"$path" 2>/dev/null | sha256sum | awk '{print $1}')"
+    staged_hash="$(git -C "$ROOT" show :"$path" 2>/dev/null | sha256_of || true)"
     if [ -n "$staged_hash" ] && [ "$staged_hash" != "$_hash" ]; then
       WARNED=1
       echo "manifest-drift-guard ($label): STAGED change to $path without a matching manifest update." >&2

@@ -3074,6 +3074,85 @@ def test_phase_gate_shasum_only_tamper_still_detected(frozen_repo):
     assert "frozen spec tampered" in r.stdout
 
 
+# --- portable hash across the maintenance scripts (D-152 family) -------------
+# phase-gate.sh is the enforcement point, but its surrounding manifest
+# workflow runs wherever a commit happens: manifest-drift-guard.sh (pre-commit
+# advisory), regen-manifest.sh (the repair command the guard prints),
+# check-drift.sh (CI + manual), update-template.sh (template maintenance).
+# Each carries an inline copy of the portable helper — selftest fixtures copy
+# scripts by BYTES, so no shared lib — which makes silent divergence possible;
+# these tests pin both directions: every copy keeps both branches, and the
+# regen/repair path produces identical output under shasum-only PATH.
+
+_PORTABLE_HASH_SCRIPTS = [
+    "phase-gate.sh", "manifest-drift-guard.sh", "regen-manifest.sh",
+    "check-drift.sh", "update-template.sh",
+]
+
+
+def test_portable_hash_helper_present_in_every_maintenance_script():
+    """A script that loses its sha256sum branch or its shasum fallback
+    silently reintroduces the macOS brick. sandbox-run.sh is deliberately
+    absent: Linux-by-design (podman in the VM), boundary documented inline."""
+    for name in _PORTABLE_HASH_SCRIPTS:
+        text = (SCRIPTS / name).read_text()
+        assert "command -v sha256sum" in text, f"{name}: GNU branch missing"
+        assert "shasum -a 256" in text, f"{name}: shasum fallback missing"
+
+
+def test_regen_manifest_shasum_only_output_matches_gnu(tmp_path):
+    """The repair command must work on stock macOS and produce byte-identical
+    manifest lines ("<hash>  <path>") to the GNU path — a format drift here
+    would fail phase-gate's `IFS='  '` reader with confusing mismatches."""
+    repo = tmp_path
+    (repo / "scripts").mkdir()
+    target = repo / "control.txt"
+    target.write_text("payload\n")
+    expected = hashlib.sha256(target.read_bytes()).hexdigest() + "  control.txt"
+    # Manifest pre-seeded with a STALE hash: regen must overwrite it.
+    manifest = repo / "scripts" / ".manifest-project"
+    manifest.write_text(f"{'0' * 64}  control.txt\n")
+    stub = _stubbin(repo, ["bash", "rm", "mv", "wc", "tr", "shasum"])
+    env = os.environ.copy()
+    env["PATH"] = str(stub)
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "regen-manifest.sh"), str(manifest)],
+        cwd=repo, capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert manifest.read_text().strip() == expected
+
+
+def test_manifest_drift_guard_shasum_only_still_warns(tmp_path):
+    """The pre-commit advisory must detect staged-without-repin under the
+    shasum-only environment and still print the exact repair command."""
+    repo = tmp_path
+    (repo / "scripts").mkdir()
+    tracked = repo / "control.txt"
+    tracked.write_text("v1\n")
+    real = hashlib.sha256(tracked.read_bytes()).hexdigest()
+    manifest = repo / "scripts" / ".manifest-project"
+    manifest.write_text(f"{real}  control.txt\n")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    # Stage a change WITHOUT re-pinning: exactly the advisory's trigger.
+    tracked.write_text("v2\n")
+    subprocess.run(["git", "add", "control.txt"], cwd=repo, check=True)
+    stub = _stubbin(repo, ["bash", "git", "cut", "shasum"])
+    env = os.environ.copy()
+    env["PATH"] = str(stub)
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "manifest-drift-guard.sh"), "--root", str(repo)],
+        cwd=repo, capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0  # warning-only, always
+    assert "STAGED change to control.txt" in r.stderr
+    assert "scripts/regen-manifest.sh scripts/.manifest-project" in r.stderr
+
+
 # --- placeholder-completeness gate (D-160) ---------------------------------
 # BLUEPRINT.md Step 7 mechanized: bootstrap.sh arms `.placeholder-gate`, and
 # phase-gate `manifest` fails when the tree still carries a Step-7 hit. The

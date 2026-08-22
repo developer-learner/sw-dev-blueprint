@@ -30,6 +30,9 @@ REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 # Containerfile change yields a new tag, forcing a rebuild automatically —
 # the stale-image failure (TPM picks a new stack, sandbox still has the old
 # one, pytest "collects no tests") becomes structurally impossible.
+# sha256sum (not the portable shasum fallback other scripts carry): this
+# script is Linux-by-design — its whole job is podman inside the dev VM
+# (D-30/D-114; BLUEPRINT.md platform note), where coreutils always exists.
 STACK_HASH="$(cat "$REPO/Containerfile" "$REPO/requirements.txt" 2>/dev/null | sha256sum | cut -c1-12)"
 IMAGE="swbp-sandbox:$STACK_HASH"
 TIMEOUT="${SANDBOX_TIMEOUT:-1800}"

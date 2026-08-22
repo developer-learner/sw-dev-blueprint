@@ -37,8 +37,22 @@ if ! git -C "$CLONE" cat-file -e "$BIRTH^{commit}" 2>/dev/null; then
 fi
 
 # hash_at is only ever called after exists_at confirms the blob exists —
-# a failed `git show` piped into sha256sum would otherwise hash empty input.
-hash_at()   { git -C "$CLONE" show "$1:$2" | sha256sum | cut -d' ' -f1; }
+# a failed `git show` piped into the hasher would otherwise hash empty input.
+# Portable SHA-256 (D-152 class): check-drift also runs as a weekly CI job and
+# manually on any host. Inline copy — selftest fixtures copy scripts by bytes,
+# so keep this in sync with the helpers in manifest-drift-guard.sh,
+# regen-manifest.sh, update-template.sh (sync-pinned by selftest_gates.py).
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  else
+    echo "check-drift: no sha256sum or shasum found — cannot compare hashes" >&2
+    return 1
+  fi
+}
+hash_at()   { git -C "$CLONE" show "$1:$2" | sha256_of; }
 exists_at() { git -C "$CLONE" cat-file -e "$1:$2" 2>/dev/null; }
 
 # union of file lists: template@HEAD manifest + child manifest
@@ -53,7 +67,7 @@ behind=0
 echo "drift check: $REPO_SLUG  birth=${BIRTH:0:12}  head=${HEAD_REF:0:12}"
 for f in $FILES; do
   if [ -f "$f" ]; then
-    child=$(sha256sum "$f" | cut -d' ' -f1)
+    child=$(sha256_of < "$f")
   else
     child=MISSING
   fi
