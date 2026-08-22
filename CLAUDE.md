@@ -48,14 +48,34 @@ Testing:      pytest
 ├── tasks/                # EM write lane (plan.json) + session notes + backlog
 │   └── CURRENT.md        # session notes — active work, halt notes (the PRD lives in scripts/.approved/)
 ├── scripts/
-│   ├── bootstrap.sh      # one-time setup (sets core.hooksPath)
-│   ├── phase-gate.sh     # lane + integrity gate (INV-2/3, frozen spec)
-│   ├── orchestrate.sh    # shell-driven task-DAG conductor (owns all procedure)
-│   ├── validate-plan.py  # plan.json gate (atomicity, DAG, coverage, mapping)
-│   ├── refreeze.sh       # ONLY path frozen TPM artifacts change (auto-applies when all mechanical preflights are green; no human approval step, D-121)
-│   ├── check-test-surface.py  # INV-4: tests ⊆ locked surface
-│   ├── schemas/          # plan / diagnosis / contracts schemas
-│   └── .approved/        # frozen TPM spec: PRD, ERD, contracts, VERSION, hashes
+│   ├── bootstrap.sh          # one-time setup (core.hooksPath, .template-version stamp)
+│   ├── orchestrate.sh        # shell-driven task-DAG conductor (owns ALL procedure)
+│   ├── llm-call.sh           # ONE bare HTTP completion per call, no harness (D-53)
+│   ├── phase-gate.sh         # lane + integrity gate (INV-2/3, frozen spec; portable sha256)
+│   ├── validate-plan.py      # plan.json gate (atomicity, DAG, coverage, mapping)
+│   ├── apply-edit-blocks.py  # fail-closed anchored SEARCH/REPLACE applier (D-59)
+│   ├── sandbox-run.sh        # podman wrapper: read-only repo, --network none
+│   ├── refreeze.sh           # ONLY path frozen TPM artifacts change (auto-applies on green preflights, D-121)
+│   │                           + its freeze-door gates: refreeze_delta.py,
+│   │                           check-spec-delta.py, check-prd-additive.py,
+│   │                           check-ac-postconditions.py, check-swallowed-errors.py,
+│   │                           check-test-direction.py, check-test-surface.py (INV-4),
+│   │                           extract-test-functions.py, context-budget.py,
+│   │                           standing-summary.py
+│   ├── contracts-delta.py / contracts-merge.py / spec_artifacts.py
+│   │                         # contract slicing/merging + shared artifact helpers
+│   ├── completion-ledger.py / flake-ledger.py / metrics-report.py
+│   │                         # durable cross-run bookkeeping (.measurement/, D-108/D-111/D-126)
+│   ├── update-template.sh / check-drift.sh / regen-manifest.sh /
+│   │   manifest-drift-guard.sh / doc-consistency.sh
+│   │                         # fleet sync + doc guards (D-33/D-34/D-115 class)
+│   ├── tpm-pack.sh / tpm-unpack.sh / tpm-view.sh / tpm-agent.sh (+ *-settings.json)
+│   │                         # TPM shuttle: verbatim relay + scoped agent (D-49/D-139)
+│   ├── teardown.sh / status.sh / em-bench.sh / feature-summary.py
+│   │                         # housekeeping, status, EM benchmarking, milestone summary
+│   ├── selftest/             # control-plane selftests — run after ANY control-plane change
+│   ├── schemas/              # plan / diagnosis / contracts schemas
+│   └── .approved/            # frozen TPM spec: PRD, ERD, contracts, VERSION, hashes
 ├── .opencode/
 │   └── prompts/          # agent role definitions (em/coder)
 ├── .githooks/            # pre-commit gate for the interactive/human path
@@ -215,6 +235,7 @@ Seven rules for agents working in this repo, derived from failures in prior sess
 
 | Date | Mistake | Guard Added |
 |------|---------|-------------|
+| 2026-08-22 | The phase-gate portable-hash fix (shasum fallback, macOS pre-commit brick) first routed its fatal "no hasher found" message through a plain `echo` inside `hash_file()` — but the function only ever runs inside `$(...)` command substitution, so the echo was captured into `$actual` and the message vanished when `set -e` halted on the substitution's non-zero status. The gate still failed closed (rc=1), just silently — the exact confusing-halt UX the fix existed to remove. The new selftest caught it before ship; nothing live ever hit it. | Message now goes to stderr (`>&2`) with a comment explaining why, and `test_phase_gate_no_hasher_fails_closed_clearly` asserts the message reaches stderr and that no tamper-noise prints. Meta-rule, same family as the 2026-07-16 `\|\| true` row: before emitting a diagnostic from code destined for command substitution or a trap, trace where its file descriptors actually land — a message captured by the caller is a message nobody reads. |
 | 2026-08-16 | The active ERD packet treated every immutable freeze snapshot as fresh model context. Testchat v107–v113 therefore repeated the same mappings, DAG, and unchanged briefs until the ERD block alone reached about 82.5 KB and a diagnosis call measured 96.8 KB against the 65.5 KB warning budget. A tempting child-repo patch kept only the latest capsule, but that contradicts D-140's skipped-freeze recovery and can lose unique earlier work. | D-166 adds semantic compaction: raw snapshots remain immutable and authoritative; the model view keeps the current narrative, all earlier AC changes, and every unique execution brief while deduplicating pins and DAG edges. Superseded changed-file/assumption prose stays in immutable audit history, not model context. A 32,768-byte component warning fires before full EM assembly. Focused tests pin repeated-vs-unique behavior and single-freeze identity. Meta-rule: compact repeated representation, not authoritative history; a size fix must preserve the recovery invariant that created the history. |
 | 2026-08-14 | The subtree re-plan fallback (D-91) promised "two rejected merges abandon subtree mode", but the loop increments `plan_revisions` and `SUBTREE_ATTEMPTS` in lockstep before each subtree attempt (:1444/:1446), so at the default `MAX_PLAN_REVISIONS=2` the revision-cap die at :1343 always fired before the abandon branch at :1379 could ever run — the fallback was dead code, and a twice-rejected subtree planned to halt instead of widening to full emission. | D-91 amended (2026-08-14): the FIRST rejected merge abandons subtree mode, making revision two a full-plan call within the same budget; an end-to-end drive selftest pins reply-1-rejected → reply-2-is-the-full-emission prompt with the merge rejection carried as feedback. Meta-rule: every fallback's trigger must be reachable from the same counters the cap consumes — write the arithmetic once for both paths, or the branch you think is the safety net is unreachable by construction. |
 | 2026-08-14 | D-126's metrics reporter ran with `--milestone HEAD` with no proof HEAD was THIS run's `[success]` commit: the guarded commit uses `git commit ... || true`, so a failed commit (identity, hook) left HEAD on a PRIOR milestone whose subject may already match `[success] spec vN` — the row would bind a stale ref and the current milestone's row would be silently missing. | P3-5 guard in orchestrate.sh: capture the pre-commit SHA, require HEAD to advance AND the new subject to be exactly `[success] spec v$FROZEN_V`, else warn loudly and skip the row. Meta-rule: a ref-binding check must verify the ref CHANGED, not merely that it matches a pattern — subject-only matching passes against the previous commit with the same subject. |
