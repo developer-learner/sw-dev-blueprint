@@ -2933,15 +2933,18 @@ def frozen_repo(tmp_path):
 
     (tmp_path / "tests" / "test_x.py").write_text("def test_ok(): pass\n")
     (tmp_path / "scripts" / ".approved" / "VERSION").write_text("1\n")
-    frozen_hash = subprocess.check_output(
-        ["sha256sum", "tests/test_x.py"], cwd=tmp_path, text=True,
-    )
-    (tmp_path / "scripts" / ".approved" / "frozen-manifest").write_text(frozen_hash)
 
-    cp_hash = subprocess.check_output(
-        ["sha256sum", "scripts/phase-gate.sh"], cwd=tmp_path, text=True,
-    )
-    (tmp_path / "scripts" / ".manifest-template").write_text(cp_hash)
+    # Hash via hashlib, not the sha256sum binary — this fixture must build on
+    # a stock macOS host too (the very platform whose missing sha256sum the
+    # portable hash_file() below exists for). Format matches sha256sum output.
+    def _hash(rel):
+        return hashlib.sha256((tmp_path / rel).read_bytes()).hexdigest() + \
+            "  " + rel
+
+    (tmp_path / "scripts" / ".approved" / "frozen-manifest").write_text(
+        _hash("tests/test_x.py") + "\n")
+    (tmp_path / "scripts" / ".manifest-template").write_text(
+        _hash("scripts/phase-gate.sh") + "\n")
     (tmp_path / "scripts" / ".manifest-project").write_text("")
 
     _init_git(tmp_path)
@@ -3007,6 +3010,68 @@ def test_phase_gate_gitignored_bytecode_does_not_trip(frozen_repo):
     (frozen_repo / "tests" / "__pycache__" / "test_x.cpython-314.pyc").write_bytes(b"\x00")
     r = _run_gate(frozen_repo)
     assert r.returncode == 0, r.stdout
+
+
+# --- portable hash in phase-gate.sh (D-152 failure class) --------------------
+# The gate runs from the pre-commit hook wherever the CEO commits, including a
+# stock macOS host that ships shasum but not sha256sum. The old bare
+# `sha256sum` call resolved empty there and every pinned file "mismatched" —
+# a fail-closed brick with a misleading tamper message that invites loosening
+# the gate. These pin the fallback both ways via a PATH stubbin (house pattern
+# from the 2026-07-27 housekeeping incident): every external command the gate
+# needs is symlinked into a shadow dir, minus the hasher being simulated away.
+
+_GATE_CMDS = ["bash", "awk", "comm", "cut", "find", "git", "grep", "sort"]
+
+
+def _stubbin(tmp_path, cmds):
+    """PATH-shadow dir symlinking exactly `cmds` (resolved on the host)."""
+    stub = tmp_path / f".stubbin-{'-'.join(cmds)}"
+    stub.mkdir()
+    for c in cmds:
+        resolved = shutil.which(c)
+        assert resolved, f"host lacks {c}; stubbin fixture cannot run"
+        os.symlink(resolved, stub / c)
+    return stub
+
+
+def _run_gate_with_path(repo, bin_dir):
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir)
+    return subprocess.run(
+        ["bash", "scripts/phase-gate.sh", "manifest", "HEAD"],
+        cwd=repo, capture_output=True, text=True, env=env,
+    )
+
+
+def test_phase_gate_shasum_only_environment_passes(frozen_repo):
+    """No sha256sum on PATH, shasum present — the stock-macOS shape: the
+    fallback must produce identical verdicts (green here; the tamper case is
+    covered by the binary-present tests above)."""
+    r = _run_gate_with_path(frozen_repo, _stubbin(frozen_repo,
+                                                  [*_GATE_CMDS, "shasum"]))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_phase_gate_no_hasher_fails_closed_clearly(frozen_repo):
+    """Neither binary exists — fail closed WITH the clear message naming the
+    missing tool, never a hash-mismatch noise wall that reads as tampering.
+    The message must reach stderr: hash_file runs inside $(...), so a stdout
+    echo would be captured and swallowed by the set -e halt."""
+    r = _run_gate_with_path(frozen_repo, _stubbin(frozen_repo, _GATE_CMDS))
+    assert r.returncode == 1
+    assert "no sha256sum or shasum found" in r.stderr
+    assert "tampered" not in (r.stdout + r.stderr)
+
+
+def test_phase_gate_shasum_only_tamper_still_detected(frozen_repo):
+    """The fallback must not just pass — it must detect. Tampering under the
+    shasum-only environment fails with the same verdict as the GNU path."""
+    (frozen_repo / "tests" / "test_x.py").write_text("def test_ok(): return 42\n")
+    r = _run_gate_with_path(frozen_repo, _stubbin(frozen_repo,
+                                                  [*_GATE_CMDS, "shasum"]))
+    assert r.returncode == 1
+    assert "frozen spec tampered" in r.stdout
 
 
 # --- placeholder-completeness gate (D-160) ---------------------------------

@@ -24,6 +24,24 @@ set -e
 PHASE="$1"
 PHASE_START="${2:-HEAD}"
 
+# Portable SHA-256 (D-152 failure class): this gate also runs from the
+# pre-commit hook wherever the CEO commits, including a stock macOS host
+# that ships shasum but not sha256sum. Same digest either way; fail closed
+# with a clear message if neither binary exists. MISSING semantics for an
+# absent file are preserved by the callers below.
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1
+  else
+    # >&2: hash_file runs inside $(...) — a plain echo would be captured by
+    # the caller and swallowed when set -e halts on the non-zero status.
+    echo "GATE FAIL: no sha256sum or shasum found — cannot verify integrity" >&2
+    exit 1
+  fi
+}
+
 # Control-plane hash check, split by ownership (D-33):
 #   .manifest-template — template-owned logic; drift against the template repo
 #                        is computed over exactly this list (check-drift.sh)
@@ -37,8 +55,8 @@ for MANIFEST in scripts/.manifest-template scripts/.manifest-project; do
   while IFS='  ' read -r expected_hash path; do
     [ -z "$expected_hash" ] && continue
     [ -z "$path" ] && continue
-    if actual=$(sha256sum -- "$path" 2>/dev/null); then
-      actual="${actual%% *}"
+    if [ -f "$path" ]; then
+      actual=$(hash_file "$path")
     else
       actual="MISSING"
     fi
@@ -74,8 +92,8 @@ if [ -f "$FROZEN_VERSION" ]; then
     case "$path" in
       */__pycache__/*|*/.pytest_cache/*) continue ;;
     esac
-    if actual=$(sha256sum -- "$path" 2>/dev/null); then
-      actual="${actual%% *}"
+    if [ -f "$path" ]; then
+      actual=$(hash_file "$path")
     else
       actual="MISSING"
     fi
