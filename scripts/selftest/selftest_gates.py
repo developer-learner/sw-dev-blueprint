@@ -6493,8 +6493,11 @@ def test_first_freeze_v0_to_v1_succeeds(greenfield_repo):
     """The very first freeze of a project must go through end to end: there
     are no standing contracts to diff against, and the M35 smoke red-check
     must treat missing prior contracts as {} (every staged check is new),
-    never crash on the absent pre-apply snapshot. Pre-fix this died with
-    FileNotFoundError AFTER the apply had mutated the frozen lane."""
+    never crash on the absent pre-apply snapshot. Its whole-project ERD must
+    also become the immutable v1 instruction snapshot, so the active-range
+    planner can consume a clean v1 freeze without requiring duplicate TPM
+    staging. Pre-fix the freeze died on missing old contracts; after that was
+    repaired, planning died on the missing ERD-DELTA-v1.md snapshot."""
     r = _run_refreeze_install(greenfield_repo)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "smoke red-check" in r.stdout, r.stdout
@@ -6504,6 +6507,20 @@ def test_first_freeze_v0_to_v1_succeeds(greenfield_repo):
     assert (approved / "VERSION").read_text().strip() == "1"
     delta = json.loads((approved / "DELTA-v1.json").read_text())
     assert any("test_first" in n for n in delta["changed_tests"]), delta
+    assert not (approved / "ERD-DELTA.md").exists(), (
+        "v1 still must not require or invent a mutable milestone delta")
+    assert (approved / "ERD-DELTA-v1.md").read_text() == \
+        (approved / "ERD.md").read_text()
+    manifest = (approved / "frozen-manifest").read_text()
+    assert "scripts/.approved/ERD-DELTA-v1.md" in manifest, manifest
+    active = subprocess.run(
+        [sys.executable, "scripts/validate-plan.py", "--active-erd-context",
+         "scripts/.approved/DELTA-v1.json"],
+        cwd=greenfield_repo, capture_output=True, text=True,
+    )
+    assert active.returncode == 0, (active.stdout, active.stderr)
+    assert active.stdout.startswith("## Active freeze instructions — v1\n")
+    assert active.stdout.endswith((approved / "ERD.md").read_text())
 
 
 def test_refreeze_identical_staged_test_does_not_widen_delta(freezable_repo):

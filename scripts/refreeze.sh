@@ -660,6 +660,14 @@ done
 if [ -f "$IN/ERD-DELTA.md" ]; then
   VERSIONED_ERD_DELTA="$APPROVED/ERD-DELTA-v$NEW.md"
   cp "$IN/ERD-DELTA.md" "$VERSIONED_ERD_DELTA"
+elif [ "$V" -eq 0 ]; then
+  # The first freeze is a whole-project instruction slice, so its complete
+  # ERD is also the immutable v1 delta snapshot. v1 deliberately does not
+  # require the TPM to duplicate that content in ERD-DELTA.md, but D-140's
+  # active-range planner still requires a versioned snapshot for every
+  # meaningful modern freeze.
+  VERSIONED_ERD_DELTA="$APPROVED/ERD-DELTA-v$NEW.md"
+  cp "$APPROVED/ERD.md" "$VERSIONED_ERD_DELTA"
 fi
 if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then
   rm -f "$APPROVED/ERD-DELTA.md"
