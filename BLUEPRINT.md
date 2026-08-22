@@ -144,7 +144,7 @@ path.
 | Order | File | Purpose | Trigger |
 |-------|------|---------|---------|
 | 14 | `docs/ESCALATION.md` | The failure ladder + TPM bundle format | First run that exits 2 |
-| 15 | `docs/DECISIONS.md` | Why choices were made (the ladder: D-26..D-84) | Before suggesting alternatives |
+| 15 | `docs/DECISIONS.md` | Why choices were made (the decision ledger) | Before suggesting alternatives |
 | 16 | `scripts/orchestrate.sh` + `scripts/phase-gate.sh` | The procedure owner + the gate | Before hand-running the pipeline internals |
 | 17 | `docs/CONDUCTOR-ROLE.md` | System prompt for the conductor seat | Setting up a conductor |
 | 18 | `opencode.json` + `.opencode/prompts/*.md` | OpenCode conductor config (optional, D-53) + the EM/coder prompt surface read by `scripts/llm-call.sh` | Conductor setup; prompt work |
