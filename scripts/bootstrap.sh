@@ -38,24 +38,25 @@ fi
 # bootstrap cannot invent a human author, so fail early with the durable guest
 # configuration command instead of discovering it after dependency installs.
 ensure_git_worktree_ready() {
-  [ -d .git ] || return 0
   local root probe
   root=$(pwd -P)
-  if ! probe=$(git status --porcelain 2>&1); then
-    case "$probe" in
-      *"dubious ownership"*)
-        git config --global --add safe.directory "$root"
-        git status --porcelain >/dev/null 2>&1 || {
-          echo "bootstrap: Git still refuses the trusted checkout: $root" >&2
+  if [ -d .git ]; then
+    if ! probe=$(git status --porcelain 2>&1); then
+      case "$probe" in
+        *"dubious ownership"*)
+          git config --global --add safe.directory "$root"
+          git status --porcelain >/dev/null 2>&1 || {
+            echo "bootstrap: Git still refuses the trusted checkout: $root" >&2
+            exit 1
+          }
+          echo "🔐 Trusted this checkout in guest Git: $root"
+          ;;
+        *)
+          echo "bootstrap: Git cannot read this checkout: $probe" >&2
           exit 1
-        }
-        echo "🔐 Trusted this checkout in guest Git: $root"
-        ;;
-      *)
-        echo "bootstrap: Git cannot read this checkout: $probe" >&2
-        exit 1
-        ;;
-    esac
+          ;;
+      esac
+    fi
   fi
   if [ -z "$(git config user.name || true)" ] \
      || [ -z "$(git config user.email || true)" ]; then
