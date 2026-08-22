@@ -48,7 +48,8 @@ Testing:      pytest
 ├── tasks/                # EM write lane (plan.json) + session notes + backlog
 │   └── CURRENT.md        # session notes — active work, halt notes (the PRD lives in scripts/.approved/)
 ├── scripts/
-│   ├── bootstrap.sh          # one-time setup (core.hooksPath, .template-version stamp)
+│   ├── bootstrap.sh / new-project.sh
+│   │                         # one-time setup (core.hooksPath, .template-version stamp; new-project.sh is deleted at Step-4 cleanup)
 │   ├── orchestrate.sh        # shell-driven task-DAG conductor (owns ALL procedure)
 │   ├── llm-call.sh           # ONE bare HTTP completion per call, no harness (D-53)
 │   ├── phase-gate.sh         # lane + integrity gate (INV-2/3, frozen spec; portable sha256)
@@ -69,8 +70,8 @@ Testing:      pytest
 │   ├── update-template.sh / check-drift.sh / regen-manifest.sh /
 │   │   manifest-drift-guard.sh / doc-consistency.sh
 │   │                         # fleet sync + doc guards (D-33/D-34/D-115 class)
-│   ├── tpm-pack.sh / tpm-unpack.sh / tpm-view.sh / tpm-agent.sh (+ *-settings.json)
-│   │                         # TPM shuttle: verbatim relay + scoped agent (D-49/D-139)
+│   ├── tpm-pack.sh / tpm-unpack.sh / tpm-view.sh / tpm-agent.sh / tpm-lint.sh (+ *-settings.json)
+│   │                         # TPM shuttle: verbatim relay, scoped agent, staged-spec lint (D-49/D-139)
 │   ├── teardown.sh / status.sh / em-bench.sh / feature-summary.py
 │   │                         # housekeeping, status, EM benchmarking, milestone summary
 │   ├── selftest/             # control-plane selftests — run after ANY control-plane change
