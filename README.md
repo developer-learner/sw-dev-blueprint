@@ -191,24 +191,15 @@ see BLUEPRINT.md Rule 9.
    Save them under `scripts/.approved/incoming/` and run `scripts/refreeze.sh`:
    `--diff` previews; the freeze auto-applies on green preflights (D-121) —
    the spec is version-stamped, hash-pinned; no agent can touch it.
-2. **`scripts/orchestrate.sh`** — drives everything: the EM emits a validated
-   task plan, the coder receives one prompt per task (host-side HTTP, no
-   filesystem access — the shell writes the reply to disk), mapped frozen
-   tests then run **inside** a read-only-repo sandbox (`--network none`,
-   `.cache/` writable), lane gates re-check after every phase, and the
-   feature is done when the delta's mapped verdict is green (D-112; the
-   full frozen suite is an on-demand `--full-suite` regression check).
-   Exit 2 means an
-   escalation batch is waiting in `.pipeline-state/escalations/BATCH.md` —
-   paste it into the TPM chat, stage the returned delta, refreeze, re-run.
+2. **`scripts/orchestrate.sh`** — drives everything end to end: validated
+   plan → one coder call per task → mapped frozen tests in the sandbox →
+   gates after every phase. Exit 2 means an escalation batch is waiting in
+   `.pipeline-state/escalations/BATCH.md` — paste it into the TPM chat,
+   stage the returned delta, refreeze, re-run.
+   Tier detail and Hard Rules: **BLUEPRINT.md**; failure ladder: `docs/ESCALATION.md`.
 
 > **Platform:** orchestration and operational refreezes run on Linux (a Lima
 > VM on Apple Silicon works). Generated tests never execute on macOS.
-
-Neither EM nor coder has any tool or filesystem access at all (D-53) — the
-orchestrator reads whatever context a call needs, sends ONE HTTP completion
-via `scripts/llm-call.sh`, and writes the reply to disk itself. There is no
-agent harness anywhere in this path.
 
 ---
 

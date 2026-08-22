@@ -150,31 +150,22 @@ the TPM web chat (see `docs/TPM-ROLE.md`) and enter via `scripts/refreeze.sh`.
 | **EM** (mid-tier LLM) | one HTTP completion via `scripts/llm-call.sh` (D-53) | `tasks/plan.json` (decomposition), `tasks/diagnosis.json` (consults) — the shell writes both, not the model | `tasks/**` only |
 | **Coder** (local LLM) | one HTTP completion via `scripts/llm-call.sh` (D-53) | one file per task, sentinel-wrapped in the reply | that one file only (gate-enforced) |
 
-Which actual model backs EM/coder is never recorded in this repo: the CEO
-maps roles to models in `~/.config/sw-dev-blueprint/models.env` (D-53,
-succeeding D-41's `opencode.json` mapping). The blueprint constrains model
-*class* only (frontier / mid / local non-thinking), never model identity.
-No mapping for a role is a hard halt, never a silent substitution.
+Model identity never lives in this repo: roles map to models in
+`~/.config/sw-dev-blueprint/models.env` (CEO-owned, D-53). Model *class*
+is constrained (frontier / mid / local non-thinking), never identity; no
+mapping for a role is a hard halt, never a silent substitution.
 
-Tests are **run by the shell** (`pytest --json-report`, parsed by
-`scripts/orchestrate.sh`) — there is no test agent. The shell orchestrator is
-the only actor with procedural authority: it validates the plan, walks the
-DAG, runs gates and acceptance, owns all state and escalation counters
-(D-26). The EM advises at exactly two shell-initiated points; it never drives.
-Neither EM nor coder has any tool or filesystem access — the orchestrator
-gathers whatever context a call needs into the prompt and writes the reply to
-disk itself (D-53); there is no agent harness in the execution loop at all,
-only in the CEO-facing conductor seat, which never touches trusted state.
+The shell owns ALL procedure: `scripts/orchestrate.sh` validates the plan,
+walks the DAG, runs gates and acceptance, and owns every escalation counter
+(D-26). EM and coder are one bare HTTP completion each — no tools, no
+filesystem access; the shell writes every artifact from their replies
+(D-53). Tests are run by the shell; there is no test agent.
 
-**The loop (all steps conductor-driven; the CEO only talks):**
-TPM spec frozen (`refreeze.sh` — applies automatically when every
-mechanical preflight is green, D-95/D-121; `--diff` shows a read-only
-preview) → `scripts/orchestrate.sh` → EM emits plan → validated → coder executes
-one task at a time → mapped frozen tests + gate after each →
-delta-mapped verdict green = done (D-112; the full frozen suite is an
-on-demand `--full-suite` regression check). Failures climb the escalation ladder (`docs/ESCALATION.md`);
-spec problems come back as a batched bundle for the TPM seat and
-re-enter via `refreeze.sh`.
+Loop, failure paths, freeze mechanics: BLUEPRINT.md ("The System in One
+Diagram", "Hard Rules") and `docs/ESCALATION.md`. In short: refreeze
+auto-applies on green preflights (D-95/D-121) → orchestrate → plan gate →
+one task per coder call, mapped frozen tests after each → delta-mapped
+verdict green = done (D-112).
 
 ---
 
