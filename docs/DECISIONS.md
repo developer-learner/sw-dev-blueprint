@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-168 — 2026-08-22 — Runs execute from an immutable snapshot of the child's pinned plane ref, never from moving symlink targets
+
+**Decision:** `orchestrate.sh` treats the child's `.template-version ref=<sha>` (D-33) as the sole run authority. Before any project mutation, the entry guard materializes that exact commit into a content-addressed snapshot (`$XDG_CACHE_HOME/swbp-plane/<sha>`, rebuilt only when absent) and re-execs itself from it with CWD unchanged (project root). Inside the snapshot every helper resolves via `$PLANE_DIR`, and the run's commits gate through the snapshot's own `.githooks` via a process-scoped `GIT_CONFIG_COUNT` `core.hooksPath` override — which required `.githooks/pre-commit` to become self-resolving (`$HOOK_TREE`), so interactive child-side commits keep gating through the tree the hook file actually lives in. Resume re-materializes or reuses the same recorded sha; `.pipeline-state/plane-sha` mismatch with a re-stamped ref is a hard stop (no mid-milestone adoption). Blueprint HEAD movement relative to the pin is telemetry appended to `.measurement/plane-drift.log`; the new version becomes eligible only at the next explicit `update-template.sh` adoption. The run's plane sha is recorded durably in exit measurements and in the `[success] spec vN (plane <sha12>)` subject.
+
+**Alternatives considered:** (a) A drift alarm alone — rejected by ruling: it permits mixed control-plane versions within one run and merely makes the eventual failure louder. (b) Repointing the child's symlinks for the run's duration — rejected: mutates project state to protect project state, and races concurrent adoptions. (c) Vendoring the whole plane into each child at birth — rejected: abandons the single-source control plane and reintroduces per-child patch drift that update-template exists to prevent.
+
+**Reason:** Vortex's first milestone ran while the blueprint advanced six commits mid-flight; hash manifests made the resulting pin-drift loud but still cost a failed launch cycle, and nothing would have stopped a *partial* mixed-version run had the drift landed between two gates instead of at one. Symlink execution makes "which code am I running?" unanswerable mid-run; content-addressed snapshots make it a constant.
+
+**Do not suggest:** silently adopting a newer ref on resume; executing any helper outside the snapshot during a run; treating drift records as failures; removing the DRYRUN escape hatch used by selftests.
+
 ## D-167 — 2026-08-22 — Initial freeze snapshots the whole-project ERD as its immutable v1 instruction slice
 
 **Decision:** When a v0→v1 freeze does not stage the optional `ERD-DELTA.md`, `refreeze.sh` copies the newly installed complete `ERD.md` to hash-pinned `ERD-DELTA-v1.md`. It does not create the mutable standing `ERD-DELTA.md`. An explicitly staged v1 delta still wins and is snapshotted unchanged. The existing rule remains: a first freeze is a whole-project spec and does not make the TPM duplicate the ERD as a separate delta artifact.

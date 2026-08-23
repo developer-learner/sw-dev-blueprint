@@ -8,18 +8,30 @@
 # spec (both fail-closed).
 #
 # Enabled by: git config core.hooksPath .githooks   (bootstrap.sh does this)
+#
+# Self-resolving (D-168): gates always execute this hook's OWN tree, so a run
+# executing from a D-168 plane snapshot gates its commits through the
+# snapshot's copies — while an interactive commit reached via a child's
+# symlinked .githooks resolves to the blueprint those symlinks serve. Either
+# way the gate code and the manifest expectations it enforces come from one
+# coherent tree, never mixed.
 set -e
 cd "$(git rev-parse --show-toplevel)"
+# Self-resolving without readlink -f (unavailable on stock macOS < 13):
+# walk the symlink chain manually, POSIX-only.
+HOOK_TARGET="$0"
+while [ -L "$HOOK_TARGET" ]; do
+  _link="$(readlink "$HOOK_TARGET")"
+  case $_link in
+    /*) HOOK_TARGET="$_link" ;;
+    *) HOOK_TARGET="$(dirname "$HOOK_TARGET")/$_link" ;;
+  esac
+done
+HOOK_TREE="$(cd "$(dirname "$HOOK_TARGET")/.." && pwd -P)"
 
-# doc-consistency (2026-08-07): warning-only scan for retired-decision prose.
-# Non-blocking — exits 0 regardless; do not let it fail the commit.
-bash scripts/doc-consistency.sh || true
+bash "$HOOK_TREE/scripts/doc-consistency.sh" || true
 
-# manifest-drift-guard (2026-08-08): advisory warning when a STAGED
-# control-plane file changes without a matching manifest update, printing
-# the exact regen-manifest.sh command. Warning-only, exit 0 — the manifest
-# gate below stays the enforcement point.
-bash scripts/manifest-drift-guard.sh || true
+bash "$HOOK_TREE/scripts/manifest-drift-guard.sh" || true
 
 phase=$(cat .pipeline-state/phase 2>/dev/null || true)
 target=$(cat .pipeline-state/task_target 2>/dev/null || true)
@@ -27,14 +39,14 @@ target=$(cat .pipeline-state/task_target 2>/dev/null || true)
 case "$phase" in
   task)
     [ -n "$target" ] || { echo "pre-commit: task phase active but no task_target recorded"; exit 1; }
-    exec bash scripts/phase-gate.sh task HEAD "$target"
+    exec bash "$HOOK_TREE/scripts/phase-gate.sh" task HEAD "$target"
     ;;
   em)
-    exec bash scripts/phase-gate.sh em HEAD
+    exec bash "$HOOK_TREE/scripts/phase-gate.sh" em HEAD
     ;;
   *)
     # No active phase (or a stale build/test/architect from before the
     # 2026-07-22 retirement): integrity checks only.
-    exec bash scripts/phase-gate.sh manifest HEAD
+    exec bash "$HOOK_TREE/scripts/phase-gate.sh" manifest HEAD
     ;;
 esac
