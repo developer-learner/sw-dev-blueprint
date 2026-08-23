@@ -539,13 +539,6 @@ python3 -c "import json, hashlib" 2>/dev/null || die "python3 json/hashlib requi
 if [ "${SANDBOX:-1}" != "1" ]; then
   die "SANDBOX must be 1 (test/smoke execution runs untrusted generated code — containerization is mandatory, AC9)"
 fi
-# Fail fast on an unreachable local LLM (Hard Rule 4) rather than deep inside
-# the first EM call. Model calls happen directly against this endpoint now —
-# no attach protocol, no harness in between (D-53).
-: "${SANDBOX_LLM_HOST:=localhost}"
-: "${SANDBOX_LLM_PORT:=1234}"
-curl -sf --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models" \
-  || die "no LLM reachable at http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models — start it and retry (in the VM, set SANDBOX_LLM_HOST=host.lima.internal)"
 # The interactive/human commit path is only gated if bootstrap.sh ran. The
 # testchat M4 run proved this can be silently absent for an entire project
 # lifetime — a conductor hand-committed src/ changes with no gate firing.
@@ -590,11 +583,21 @@ bash scripts/phase-gate.sh manifest HEAD
 [ -f "$APPROVED/VERSION" ]         || die "$APPROVED/VERSION missing — run scripts/refreeze.sh"
 FROZEN_V=$(cat "$APPROVED/VERSION")
 # D-85: the external verdict. Placed after every free local check; a red CI
-# costs one bounded API call instead of anything heavier. The D-55 EM round-
-# trip smoke is NOT here — it is lazy: it fires only inside em_call, just
-# before the first real EM call of a run that actually needs the EM (P1e /
-# board finding 6). A run whose plan is mechanically synthesized (B3) never
-# calls the EM at all and therefore spends zero model calls on probing.
+# costs one bounded API call instead of anything heavier. The LLM reachability
+# probe sits here for the same reason (fail-faster reorder, vortex review
+# 2026-08-22): a dirty tree or populated staging dir should die without
+# waiting on a 5s network timeout first. The D-55 EM round-trip smoke is NOT
+# here — it is lazy: it fires only inside em_call, just before the first real
+# EM call of a run that actually needs the EM (P1e / board finding 6). A run
+# whose plan is mechanically synthesized (B3) never calls the EM at all and
+# therefore spends zero model calls on probing.
+# Fail fast on an unreachable local LLM (Hard Rule 4) rather than deep inside
+# the first EM call. Model calls happen directly against this endpoint now —
+# no attach protocol, no harness in between (D-53).
+: "${SANDBOX_LLM_HOST:=localhost}"
+: "${SANDBOX_LLM_PORT:=1234}"
+curl -sf --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models" \
+  || die "no LLM reachable at http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models — start it and retry (in the VM, set SANDBOX_LLM_HOST=host.lima.internal)"
 check_ci_health
 echo "OK (frozen spec v$FROZEN_V)"
 mark "pre-flight done (spec v$FROZEN_V)"
