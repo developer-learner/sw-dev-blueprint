@@ -95,7 +95,19 @@ pytest -x
 # Template control-plane validation (runs even before src/ exists)
 ruff check --isolated --select E4,E7,E9,F scripts/
 pytest scripts/selftest/selftest_gates.py -q
+pytest scripts/selftest/selftest_plane_snapshot.py -q
+
+# Standalone harness form (same checks, no pytest required)
+python3 scripts/selftest/selftest_plane_snapshot.py
 ```
+
+> **Collect vs standalone.** Every selftest module must expose at least one
+> pytest-collectable `test_*` entry point, even if its scenarios live behind a
+> `main()` harness. A module that only runs under `if __name__ == "__main__"`
+> is invisible to CI collection — the D-168 snapshot suite shipped that way and
+> a launch-breaking regression passed locally while 47 of 468 suite checks
+> failed against real source. Slice-level extraction tests prove the slice;
+> only whole-file execution from the real entry point proves the composition.
 
 ---
 
