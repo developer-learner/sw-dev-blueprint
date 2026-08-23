@@ -101,13 +101,15 @@ Modes:
                                             gate unchanged — the D-64 bijection is
                                             a property of the validated artifact,
                                             not of who authored which part.
-  validate-plan.py --construct-one-file PRIOR SCOPE
+  validate-plan.py --construct-one-file PRIOR SCOPE [DELTA.json ...]
                                             Cut 2: print the mechanically-
                                             constructed subtree JSON for a
                                             trivial_construct scope — the prior
-                                            task's brief, contracts and
-                                            depends_on carried through, only
-                                            tests updated to scope.map_nodeids.
+                                            task's contracts and depends_on
+                                            carried through, tests updated to
+                                            scope.map_nodeids, and any latest
+                                            TPM verbatim brief preferred over
+                                            the carried brief.
                                             Refuses (exit 1) if the scope is not
                                             trivial_construct. The output is fed
                                             to --merge-subtree exactly as an EM
@@ -2324,12 +2326,14 @@ def cmd_subtree_scope(prior_path, delta_paths):
     }, indent=2))
 
 
-def cmd_construct_one_file(prior_path, scope_path):
+def cmd_construct_one_file(prior_path, scope_path, delta_paths=()):
     """Cut 2 mechanical constructor. Reads the prior plan + subtree scope and
-    prints a subtree JSON with exactly one task — the prior task's brief,
-    contracts and depends_on carried through, tests updated to the delta's
-    scope.map_nodeids. Refuses non-trivial scopes so the eligibility check
-    lives with the scope logic (single source of truth)."""
+    prints a subtree JSON with exactly one task. Contracts and dependencies
+    carry from the prior task; tests update to scope.map_nodeids. When the
+    active delta range supplies a TPM-authored verbatim brief for this file,
+    the latest one is authoritative and replaces the carried brief. Refuses
+    non-trivial scopes so the eligibility check lives with the scope logic
+    (single source of truth)."""
     scope = load_json(Path(scope_path), "subtree scope")
     if not scope.get("trivial_construct"):
         fail(["scope is not trivial_construct — mechanical construction "
@@ -2344,11 +2348,19 @@ def cmd_construct_one_file(prior_path, scope_path):
     if prior_task is None:
         fail([f"scope.reemit references keep_id {r['keep_id']} which is not "
               f"in the prior plan"])
+    brief = prior_task["brief"]
+    if delta_paths:
+        for _, body in active_erd_delta_texts(
+            [Path(delta_path) for delta_path in delta_paths],
+        ):
+            delta_brief = _parse_brief_blocks(body).get(r["file"])
+            if delta_brief is not None:
+                brief = delta_brief[1]
     task = {
         "id": r["keep_id"],
         "file": r["file"],
         "depends_on": prior_task["depends_on"],
-        "brief": prior_task["brief"],
+        "brief": brief,
         "contracts": prior_task["contracts"],
         "tests": scope["map_nodeids"],
     }
@@ -2772,8 +2784,8 @@ def main(argv):
     if argv[0] == "--merge-subtree" and len(argv) == 4:
         cmd_merge_subtree(argv[1], argv[2], argv[3])
         return
-    if argv[0] == "--construct-one-file" and len(argv) == 3:
-        cmd_construct_one_file(argv[1], argv[2])
+    if argv[0] == "--construct-one-file" and len(argv) >= 3:
+        cmd_construct_one_file(argv[1], argv[2], argv[3:])
         return
     if argv[0] == "--repair-closures" and len(argv) <= 2:
         cmd_repair_closures(argv[1] if len(argv) == 2 else None)

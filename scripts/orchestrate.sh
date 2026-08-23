@@ -1558,7 +1558,7 @@ $audit" "-"
     if [ "${SUBTREE_MODE:-0}" = "1" ] && \
        [ "$(python3 -c "import json;print(int(json.load(open('$STATE_DIR/subtree-scope.json'))['trivial_construct']))")" = "1" ]; then
       echo "=== delta is one-file re-plan, no contract changes — subtree constructed mechanically (no EM call) ==="
-      if python3 $PLANE_DIR/scripts/validate-plan.py --construct-one-file "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" > tasks/plan-subtree.json 2> "$LOG_DIR/construct-one-file.err" \
+      if python3 $PLANE_DIR/scripts/validate-plan.py --construct-one-file "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" "${ACTIVE_DELTA_FILES[@]}" > tasks/plan-subtree.json 2> "$LOG_DIR/construct-one-file.err" \
          && merge_out=$(python3 $PLANE_DIR/scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
         echo "$merge_out"
         SUBTREE_MODE=0                  # merged plan will validate on next loop iter

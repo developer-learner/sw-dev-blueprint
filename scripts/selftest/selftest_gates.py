@@ -7783,11 +7783,11 @@ def test_subtree_scope_trivial_off_with_new_files(subtree_repo):
     assert s["trivial_construct"] is False
 
 
-def run_construct(repo):
+def run_construct(repo, *delta_paths):
     return subprocess.run(
         [sys.executable, str(VALIDATE_PLAN), "--construct-one-file",
          ".pipeline-state/plan-prior.json",
-         ".pipeline-state/subtree-scope.json"],
+         ".pipeline-state/subtree-scope.json", *delta_paths],
         cwd=repo, capture_output=True, text=True,
     )
 
@@ -7809,6 +7809,26 @@ def test_construct_one_file_carries_prior_brief_and_contracts(tmp_path):
     assert set(t["tests"]) == {                      # scope's map_nodeids
         "tests/test_b.py::test_two",
         "tests/test_b.py::test_three"}
+
+
+def test_construct_one_file_prefers_latest_tpm_verbatim_brief(tmp_path):
+    """A behavioral delta's verbatim brief is authoritative over a prior
+    task brief; carrying the old brief sends the coder to implement yesterday's
+    change and burns the ladder against tests for today's change."""
+    repo = _trivial_scope_repo(tmp_path)
+    (repo / "scripts" / ".approved" / "ERD-DELTA-v2.md").write_text(
+        "# ERD-DELTA v2\n\n"
+        "## Coder briefs (verbatim)\n\n"
+        "### T2 — src/b.py (edit existing file)\n\n"
+        "Read the 409 detail fields and render a readable conflict.\n\n"
+        "## Task DAG\n\nTask order: T2 (`src/b.py`).\n"
+    )
+    _scoped(repo, "scripts/.approved/DELTA-v2.json")
+    r = run_construct(repo, "scripts/.approved/DELTA-v2.json")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    task = json.loads(r.stdout)["tasks"][0]
+    assert task["brief"] == \
+        "Read the 409 detail fields and render a readable conflict."
 
 
 def test_construct_one_file_refuses_non_trivial_scope(subtree_repo):
