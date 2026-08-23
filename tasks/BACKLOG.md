@@ -20,6 +20,13 @@
 
 ## Up Next
 
+### Correction-log row: perl `s{}{}` interpolation eats shell vars in generated code
+**Priority:** P3 (row-writing housekeeping; the lesson is already shipped)
+**Why:** The D-168 session hit the same defect twice in one day: perl replacements like `s{x}{exec bash "$HOOK_TREE/scripts/gate.sh"}` interpolated `$HOOK_TREE`/`$PLANE_DIR` as *empty perl variables* at generation time, writing literal `/scripts/gate.sh` into orchestrate.sh and .githooks/pre-commit — caught only when a real commit failed (`/scripts/phase-gate.sh: No such file`). A commit-message note exists; the CLAUDE.md correction log does not yet carry its own row. Sibling lesson (GNU-only newline substitution inside a gate diagnostic) is already logged 2026-08-22; this row extends the meta-rule from *diagnostics* to *generated invocation paths*.
+**Rough size:** Trivial (one row)
+**Depends on:** nothing — file next time CLAUDE.md is touched for a control-plane edit
+**Filed by:** ox-alpha, 2026-08-22
+
 ### EM diagnosis hardening: denser diagnosis brief (M28 handoff item 6)
 **Priority:** P2
 **Why:** Mid-tier diagnosis is the ladder's weak rung, on record since M23 (schema-invalid diagnosis, empty task_id — gate refused correctly) and still thin on 2026-07-17 (first schema-valid production diagnosis, but rambling prose). The bounded schema-retry half already shipped (D-71: validator errors echoed back, one retry); the open half is the diagnosis BRIEF — what context makes a mid-tier model diagnose accurately (D-73's FAIL_DETAIL landed since; whether it closed the gap is unmeasured). Carried from the 07-15 open items via the M28 handoff (item 6, `tasks/HANDOFF-M28-blueprint-items.md`).
