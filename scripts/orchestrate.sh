@@ -230,7 +230,14 @@ SWBP_RUN_BUDGET="${SWBP_RUN_BUDGET:-1200}"
 SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-4096}"
 RUN_T0=$(date +%s)
 
-cd "$(cd "$(dirname "$0")/.." && pwd -P)"
+# Operate on the CHILD tree, not $0's directory. Under a D-168 plane snapshot
+# $0 is the SNAPSHOT's orchestrate.sh, so "$0/.." would cd into the snapshot
+# (the blueprint template — no app spec, and a tar extract with no .git),
+# breaking every cwd-relative read (APPROVED, git). The re-exec preserved the
+# child's cwd; resolve the child repo root from it (D-168 live-fire 2026-08-23).
+_toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$_toplevel" ] || _toplevel="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$_toplevel"
 
 # .pipeline-state/ layout (orchestrator-owned, gitignored; delete only as a
 # whole — partial deletes desync counters). Documented because a conductor

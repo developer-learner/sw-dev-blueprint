@@ -325,6 +325,8 @@ def test_whole_entrypoint_nondryrun_crosses_reexec_into_preflight(tmp_path):
     assert "=== Pre-flight ===" in combined, "the re-exec must reach pre-flight"
     assert "core.hooksPath is not" not in combined, \
         "the re-exec's hooksPath check must accept the snapshot's absolute .githooks"
+    assert "not a git repository" not in combined, \
+        "the run must operate on the CHILD tree (a git repo), not the snapshot dir"
 
 
 if __name__ == "__main__":
