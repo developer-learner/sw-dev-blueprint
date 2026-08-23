@@ -1,0 +1,7 @@
+# file	find	replacement	reason
+src/vortex/catalog.py	exclusive: bool = True	exclusive: bool = False	Default exclusivity silently inverted
+src/vortex/catalog.py	if e.public_id == public_id:	if e.public_id != public_id:	Catalog lookup returns the wrong model
+src/vortex/manager.py	* 0.8 - used	* 1.0 - used	Memory headroom policy weakened from 80 to 100 percent
+src/vortex/app.py	!= "ready":	== "ready":	Chat accepts unloaded models and rejects ready ones
+src/vortex/operations.py	"model": op.public_id	"model": op.id	Operation snapshot reports its operation ID as the model
+src/vortex/ui.py	op.state === "ready"	op.state === "done"	Operation poll waits for a terminal state the backend never emits
