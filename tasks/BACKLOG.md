@@ -20,6 +20,12 @@
 
 ## Up Next
 
+### Trim CLAUDE.md / split the decision log into DECISIONS.md
+**Priority:** P3
+**Why:** `CLAUDE.md` (~79 KB) is ~2× the master seed doc and is what every agent loads each run, so its size is a direct per-run context cost — and by BLUEPRINT.md's own standard (L729, "length is a smell to investigate") the flagship doc set should practice the context-budgeting the blueprint preaches. The `.gitignore` doctrine block already names `DECISIONS.md` as the intended home for D-entries, so the target state is documented; this task moves the decision log (D-33, D-40, D-95/96, …) out of the hot path into `DECISIONS.md` without losing history, and trims BLUEPRINT.md/CLAUDE.md accordingly. This is a curation task with real judgment (correction log, doctrine, cross-references) — do it as a focused solo change, NOT bundled into a hygiene commit, to avoid a contested rebase against active parallel sessions.
+**Rough size:** Medium (curation, not code)
+**Depends on:** a quiet window with no competing large edits to CLAUDE.md/BLUEPRINT.md
+
 ### Escalation-ladder validation: observe the first run that climbs it
 **Priority:** P2
 **Why:** D-70 (2026-07-15, CEO directive) armed the ladder — `MAX_TASK_STRIKES` now defaults to 2, ending ~23 milestones of the consult/verdict machinery as dead code. Arming is not validating (Rule 6): the item closes only when a real run exercises it. Observe on the first milestone where a task strikes twice: schema-valid diagnosis produced; `brief_wrong` revision actually changes the brief; `caps-exhausted` packages a usable TPM bundle; D-69 budget contains the total. Then the CEO calls it: validated, or fix what the run exposed.
