@@ -1168,10 +1168,11 @@ run_tests() {
   #
   # Scoped per-change (audit 2026-08-11 item 2): the whole-tree `src/` check
   # let a type error in a file the task never touched block its verdict. A
-  # targeted acceptance/verdict run (node-ids passed, $# > 0) now type-checks
-  # only the active delta's changed source files; mypy follows imports, so a
-  # reachable error in their dependency closure still surfaces — only genuinely
-  # unrelated files stop blocking. The full-suite regression check (no
+  # targeted task acceptance checks the current task file when the shell sets
+  # MYPY_TASK_FILE; mypy follows imports, so errors in its dependency closure
+  # still surface, while a later DAG task's not-yet-edited file cannot block
+  # the current task. Other targeted verdict runs check the active delta's
+  # changed source files. The full-suite regression check (no
   # node-ids) keeps the whole-tree `src/` check (fail-closed default). A
   # targeted run whose active delta changed no src/*.py has nothing new to
   # type-check: the gate is skipped (mypy:none) instead of paying whole-app
@@ -1182,7 +1183,14 @@ run_tests() {
   MYPY_OUT=""
   MYPY_RC=0
   local mypy_targets=()
-  if [ "$#" -gt 0 ] && [ "${ACTIVE_DELTA_FILES+set}" = "set" ] \
+  if [ "$#" -gt 0 ] && [ -n "${MYPY_TASK_FILE:-}" ]; then
+    case "$MYPY_TASK_FILE" in
+      src/*.py) [ -f "$MYPY_TASK_FILE" ] \
+        || die "task-scoped mypy target missing: $MYPY_TASK_FILE" ;;
+      *) die "invalid task-scoped mypy target: $MYPY_TASK_FILE" ;;
+    esac
+    mypy_targets=("$MYPY_TASK_FILE")
+  elif [ "$#" -gt 0 ] && [ "${ACTIVE_DELTA_FILES+set}" = "set" ] \
      && [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
     while IFS= read -r _mf; do
       [ -n "$_mf" ] && mypy_targets+=("$_mf")
@@ -2117,7 +2125,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     if [ "$pass" != "1" ]; then
       :  # lint evidence set above; skip tests — the retry re-runs them
     elif [ "${#mapped[@]}" -gt 0 ]; then
-      run_tests "${mapped[@]}"
+      MYPY_TASK_FILE="$file" run_tests "${mapped[@]}"
       [ "$TESTS_RC" -eq 0 ] || { pass=0; }
       evidence="mapped tests failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
     else

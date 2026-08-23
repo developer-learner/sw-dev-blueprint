@@ -40,6 +40,8 @@ def _run_twice(
     between: str = ":",
     mypy_rc: int = 0,
     second_args: str = '"tests/test_a.py::test_a"',
+    changed_files: list[str] | None = None,
+    first_prefix: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Run the extracted acceptance funnel twice over one pipeline state."""
     (tmp_path / "src").mkdir()
@@ -55,7 +57,7 @@ def _run_twice(
         "[tool.mypy]\npython_version = '3.12'\n"
     )
     (tmp_path / "delta.json").write_text(json.dumps({
-        "changed_files": ["src/a.py"],
+        "changed_files": changed_files or ["src/a.py"],
     }))
     report = tmp_path / "pass-report.json"
     report.write_text(json.dumps({
@@ -76,6 +78,8 @@ def _run_twice(
         .replace("__ORCHESTRATE__", str(ORCHESTRATE))
         .replace("__BETWEEN__", between)
         .replace("__SECOND_ARGS__", second_args)
+        .replace('run_tests "tests/test_a.py::test_a"',
+                 f'{first_prefix}run_tests "tests/test_a.py::test_a"', 1)
     )
     result = subprocess.run(
         ["bash", "-c", driver],
@@ -134,6 +138,22 @@ def test_mypy_green_is_specific_to_target_set(tmp_path: Path):
     assert len(_mypy_calls(calls)) == 2, calls
     assert "src/a.py" in _mypy_calls(calls)[0]
     assert _mypy_calls(calls)[1].endswith("src/")
+
+
+def test_task_scoped_mypy_does_not_check_later_delta_files(tmp_path: Path):
+    """A DAG task must not be blocked by a later task's not-yet-fixed file.
+    The following targeted verdict (without task scope) still checks the whole
+    active delta, so only task acceptance is narrowed."""
+    result, calls = _run_twice(
+        tmp_path,
+        changed_files=["src/a.py", "src/dependency.py"],
+        first_prefix="MYPY_TASK_FILE=src/a.py ",
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    mypy_calls = _mypy_calls(calls)
+    assert len(mypy_calls) == 2, calls
+    assert mypy_calls[0].endswith("src/a.py")
+    assert "src/dependency.py" in mypy_calls[1]
 
 
 def test_mypy_failure_is_never_cached(tmp_path: Path):
