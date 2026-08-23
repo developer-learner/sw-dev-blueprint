@@ -25,7 +25,16 @@
 # No --rw flags = fully read-only repo (test runs, smoke checks).
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
+# The immutable-plane caller executes this helper from the CHILD project while
+# the helper's own bytes live in the plane snapshot.  `$0` therefore identifies
+# the control plane, not the repository whose code/tests must be sandboxed.
+# Prefer the caller's Git root; retain the script-relative fallback for direct
+# use outside a checkout.
+if REPO="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  REPO="$(cd "$REPO" && pwd -P)"
+else
+  REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
+fi
 # Image tag = content hash of what defines it (D-50): a requirements.txt or
 # Containerfile change yields a new tag, forcing a rebuild automatically —
 # the stale-image failure (TPM picks a new stack, sandbox still has the old

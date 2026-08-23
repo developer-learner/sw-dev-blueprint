@@ -25,6 +25,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ORCHESTRATE = HERE.parent / "orchestrate.sh"
+SANDBOX_RUN = HERE.parent / "sandbox-run.sh"
 REPO = HERE.parents[1]
 
 
@@ -285,6 +286,49 @@ def test_whole_entrypoint_dryrun_stops_at_reexec_boundary(tmp_path):
         "plane-sha"
     ]
     assert "=== Pre-flight ===" not in result.stdout
+
+
+def test_snapshot_sandbox_mounts_the_child_repo(tmp_path):
+    """A helper reached through the plane must still sandbox the child tree.
+
+    A fake Podman records the final run arguments, so this crosses the real
+    sandbox-run.sh repository-selection path without requiring a VM/container.
+    """
+    child = tmp_path / "sandbox-child"
+    child.mkdir()
+    (child / "Containerfile").write_text("FROM scratch\n")
+    (child / "requirements.txt").write_text("")
+    _git(child, "init", "-q", "-b", "main")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    podman_log = tmp_path / "podman-run.args"
+    podman = fake_bin / "podman"
+    podman.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = info ]; then exit 0; fi\n"
+        "if [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit 0; fi\n"
+        "printf '%s\\n' \"$@\" > \"$PODMAN_LOG\"\n"
+    )
+    podman.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["PODMAN_LOG"] = str(podman_log)
+    result = subprocess.run(
+        ["bash", str(SANDBOX_RUN), "--", "true"],
+        cwd=child,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    args = podman_log.read_text().splitlines()
+    child_mount = f"{child.resolve()}:/work:ro,Z"
+    plane_mount = f"{REPO.resolve()}:/work:ro,Z"
+    assert child_mount in args
+    assert plane_mount not in args
 
 
 def test_whole_entrypoint_nondryrun_crosses_reexec_into_preflight(tmp_path):
