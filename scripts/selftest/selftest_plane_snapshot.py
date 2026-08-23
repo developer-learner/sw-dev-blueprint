@@ -207,6 +207,28 @@ def test_plane_snapshot_authority_immutability_drift_and_resume():
     assert main() == 0
 
 
+def _plane_ref(repo):
+    """A commit that EXISTS in the blueprint plane repo.
+
+    In the template repo `.template-version` is UNSTAMPED, so HEAD is itself a
+    real blueprint commit. In an adopted child, HEAD is a CHILD commit absent
+    from the plane; the valid plane ref is the one the child is pinned to (its
+    stamped `.template-version`). Using HEAD unconditionally made this test
+    blueprint-only — green in the template, red in every child that adopted it.
+    """
+    tv = repo / ".template-version"
+    if tv.is_file():
+        for line in tv.read_text().splitlines():
+            if line.startswith("ref="):
+                ref = line.split("=", 1)[1].strip()
+                if ref and ref != "UNSTAMPED":
+                    return ref
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
 def test_whole_entrypoint_dryrun_stops_at_reexec_boundary(tmp_path):
     """Invoke the real entrypoint, not an extracted guard.
 
@@ -216,12 +238,7 @@ def test_whole_entrypoint_dryrun_stops_at_reexec_boundary(tmp_path):
     post-guard preflight from running. The state assertion also proves no
     later pipeline checkpoint was written.
     """
-    pin = subprocess.run(
-        ["git", "-C", str(REPO), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
+    pin = _plane_ref(REPO)
     child = tmp_path / "whole-entry-child"
     (child / "scripts").mkdir(parents=True)
     (child / "scripts" / "orchestrate.sh").symlink_to(ORCHESTRATE)
