@@ -56,5 +56,5 @@ blueprint-dryrun*/
 # lives in DECISIONS.md (D-entries) and the correction log in CLAUDE.md.
 # Reference doctrine that once lived under tasks/HANDOFF-* has been moved to
 # docs/ (DEV-VM-SETUP.md, BROWSER-ORACLE-DESIGN.md); those stay tracked.
-tasks/HANDOFF-*-state.md
+tasks/HANDOFF-*
 tasks/em-ab-test.py
