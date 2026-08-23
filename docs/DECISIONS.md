@@ -21,6 +21,46 @@
 
 ## Decisions
 
+## D-169 — 2026-08-23 — Transient/environmental diagnoses halt for operator review; the shell never guesses a recovery
+
+**Decision:** The schema-bound EM diagnosis taxonomy gains
+`transient_or_environmental`. It is valid only when supplied evidence
+affirmatively identifies an external service, resource, timing,
+infrastructure, or non-reproducible condition and identifies no defect in the
+brief, decomposition, frozen contract, or frozen test. Uncertainty or absence
+of a better verdict is explicitly insufficient. The shell routes this verdict
+to a hard operator-review halt (exit 1), writes the evidence and complete
+schema-validated diagnosis to
+`.pipeline-state/operator-review/<task-id>.md`, and performs no automatic
+retry, re-probe, brief/plan revision, or TPM escalation. It resets only the
+task's strike allowance so that, after inspecting or repairing the named
+condition, an operator can explicitly re-run the normal bounded path; the
+prior failure remains in the next attempt's context.
+
+**Alternatives considered:** (a) Automatically retry once — rejected: the
+task has already consumed its two coder attempts, and an unverified third bite
+turns a diagnosis into hidden thrash. (b) Automatically re-probe the named
+environment — rejected: there is no safe generic probe across model services,
+network dependencies, resource exhaustion, timing failures, and arbitrary
+project smoke checks; inventing one would let the shell act outside the frozen
+contract. (c) Keep forcing these cases into `contract_or_test_wrong` —
+rejected: that sends a false accusation and irrelevant bundle to the TPM. (d)
+Treat every non-reproducible failure as transient — rejected: one green replay
+without controlled same-commit evidence can conceal flakes or real defects.
+
+**Reason:** The 2026-08-23 diagnosis A/B replay supplied an unchanged
+implementation that passed all focused tests and a 422 that could not be
+reproduced. Both prompt variants still blamed a higher-authority artifact
+because the three-value schema offered no truthful answer. The missing concept
+was taxonomy, not more prose. The operator owns recovery because only the
+operator can verify whether an external condition was actually repaired; the
+shell's safe action is to preserve evidence and stop.
+
+**Do not suggest:** using `transient_or_environmental` as an "unknown" bucket;
+retrying or probing from inside its routing branch; converting its halt into a
+TPM bundle; clearing the prior failure evidence before the operator-triggered
+rerun.
+
 ## D-168 — 2026-08-22 — Runs execute from an immutable snapshot of the child's pinned plane ref, never from moving symlink targets
 
 **Decision:** `orchestrate.sh` treats the child's `.template-version ref=<sha>` (D-33) as the sole run authority. Before any project mutation, the entry guard materializes that exact commit into a content-addressed snapshot (`$XDG_CACHE_HOME/swbp-plane/<sha>`, rebuilt only when absent) and re-execs itself from it with CWD unchanged (project root). Inside the snapshot every helper resolves via `$PLANE_DIR`, and the run's commits gate through the snapshot's own `.githooks` via a process-scoped `GIT_CONFIG_COUNT` `core.hooksPath` override — which required `.githooks/pre-commit` to become self-resolving (`$HOOK_TREE`), so interactive child-side commits keep gating through the tree the hook file actually lives in. Resume re-materializes or reuses the same recorded sha; `.pipeline-state/plane-sha` mismatch with a re-stamped ref is a hard stop (no mid-milestone adoption). Blueprint HEAD movement relative to the pin is telemetry appended to `.measurement/plane-drift.log`; the new version becomes eligible only at the next explicit `update-template.sh` adoption. The run's plane sha is recorded durably in exit measurements and in the `[success] spec vN (plane <sha12>)` subject.

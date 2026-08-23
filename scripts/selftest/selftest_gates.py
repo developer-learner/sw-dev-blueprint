@@ -1387,6 +1387,16 @@ def test_diagnosis_valid_brief_wrong_passes(repo):
     assert "brief_wrong" in r.stdout
 
 
+def test_diagnosis_valid_transient_or_environmental_passes(repo):
+    r = run_diagnosis(repo, {
+        "task_id": "T1",
+        "verdict": "transient_or_environmental",
+        "reason": "the exact unchanged commit passed the controlled re-probe",
+    })
+    assert r.returncode == 0, r.stderr
+    assert "transient_or_environmental" in r.stdout
+
+
 def test_plan_may_reference_ui_and_external_contract_ids(repo):
     """D-58 halt (testchat M7): the EM correctly listed the ui:* contracts a
     frontend task implements and the gate rejected them as unknown ids —
@@ -1888,6 +1898,73 @@ def test_consult_model_task_id_overwritten(tmp_path):
     r = run_consult(tmp_path, [dict(VALID_DIAG, task_id="T99")])
     assert r.returncode == 0, r.stderr
     assert consult_artifact(tmp_path)["task_id"] == "T7"
+
+
+def test_consult_transient_verdict_is_schema_valid_and_prompt_is_strict(tmp_path):
+    diag = {
+        "verdict": "transient_or_environmental",
+        "reason": "the named model service was unavailable during both attempts",
+    }
+    r = run_consult(tmp_path, [diag])
+    assert r.returncode == 0, r.stderr
+    assert consult_calls(tmp_path) == 1
+    assert "VERDICT=transient_or_environmental" in r.stdout
+    prompt = (tmp_path / "prompts" / "1").read_text()
+    assert "never use merely because the cause is uncertain" in prompt
+    assert "no automatic retry or re-probe" in prompt
+
+
+def test_transient_verdict_halts_with_operator_record_and_no_tpm_route(tmp_path):
+    """D-169: an environmental diagnosis is neither a hidden retry nor a
+    spec accusation. Execute the real halt helper under strict mode and pin
+    its operator record, reset-for-explicit-rerun behavior, and exit status."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    fn = re.search(
+        r"^halt_transient_or_environmental\(\) \{.*?^\}$",
+        source,
+        re.M | re.S,
+    )
+    assert fn, "transient/environmental halt helper not found — extractor drift"
+    assert (
+        'transient_or_environmental)\n'
+        '      halt_transient_or_environmental "$id" "$file" "$evidence" "$DIAG_FILE"'
+    ) in source
+
+    state = tmp_path / ".pipeline-state"
+    state.mkdir()
+    diag = state / "diagnosis-T7.json"
+    diag.write_text(json.dumps({
+        "task_id": "T7",
+        "verdict": "transient_or_environmental",
+        "reason": "the exact unchanged commit passed a controlled re-probe",
+    }))
+    runner = f"""#!/usr/bin/env bash
+set -euo pipefail
+cd "$1"
+STATE_DIR=.pipeline-state
+TASK_STATE="$STATE_DIR/tasks"
+FROZEN_V=12
+mkdir -p "$TASK_STATE"
+set_counter() {{ printf '%s\n' "$3" > "$TASK_STATE/$1.$2"; }}
+die() {{ echo "FAIL: $*" >&2; exit 1; }}
+{fn.group(0)}
+halt_transient_or_environmental T7 src/x.py "service unavailable" "$STATE_DIR/diagnosis-T7.json"
+"""
+    r = subprocess.run(
+        ["bash", "-c", runner, "selftest", str(tmp_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 1
+    assert "no automatic retry or re-probe" in r.stderr
+    review = state / "operator-review" / "T7.md"
+    assert review.is_file()
+    review_text = review.read_text()
+    assert "service unavailable" in review_text
+    assert "passed a controlled re-probe" in review_text
+    assert "did not retry, re-probe, revise the plan, or escalate to the TPM" in review_text
+    assert (state / "tasks" / "T7.strikes").read_text().strip() == "0"
+    assert not (state / "escalations").exists()
 
 
 def test_exhausted_brief_allowance_escalates_before_consult():

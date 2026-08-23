@@ -16,6 +16,7 @@
 | consult | task fails twice | EM writes schema-bound diagnosis (verdict+reason only — the shell stamps `task_id`); an invalid reply earns one retry carrying the validator's errors (D-71) | 1 retry, then halt |
 | `brief_wrong` | EM verdict | revised brief, strikes reset | `MAX_BRIEF_REVISIONS` (default 1) |
 | `decomposition_wrong` | EM verdict | EM re-emits plan, re-validated | `MAX_PLAN_REVISIONS` (2) |
+| `transient_or_environmental` | EM verdict backed by positive external/resource/non-reproduction evidence | **operator-review halt**; evidence preserved; no automatic retry, re-probe, plan change, or TPM escalation (D-169) | explicit operator re-run after inspection/repair |
 | spec defect (D-79) | plan budget exhausted AND the D-78 satisfiability audit of the frozen spec fails | **batched TPM bundle** — no further EM strikes, no model swaps | human round-trip |
 | `contract_or_test_wrong` / caps exhausted / spec drift | EM verdict or shell signal | **batched TPM bundle** | human round-trip |
 | PRD ambiguous | TPM (in chat) | CEO decides | human |
@@ -24,6 +25,14 @@
 tests but the final verdict run is red (in mapped scope the failures are, by
 definition, delta-dependent nodes — an inter-task coupling break). It routes
 EM→TPM and never to coder retries (D-28/D-112).
+
+"Transient/environmental" is not a fourth blame bucket for unexplained
+failures. It requires affirmative evidence of a named condition outside the
+brief, decomposition, contract, and test. The orchestrator writes
+`.pipeline-state/operator-review/<task-id>.md` and exits 1. It does not create
+a TPM batch. A later run occurs only because the operator inspected or repaired
+the condition and explicitly launched it; the task then receives the preserved
+failure context and a fresh bounded strike allowance.
 
 "Spec defect" (D-79) is the other mechanically detected case, one phase
 earlier: when the plan gate has rejected `MAX_PLAN_REVISIONS` consecutive

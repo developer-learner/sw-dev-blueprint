@@ -206,7 +206,12 @@ _DEF_RES = (
     re.compile(r"\bfunction\s+([A-Za-z_]\w*)"),
     re.compile(r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*="),
 )
-VERDICTS = {"brief_wrong", "decomposition_wrong", "contract_or_test_wrong"}
+VERDICTS = {
+    "brief_wrong",
+    "decomposition_wrong",
+    "contract_or_test_wrong",
+    "transient_or_environmental",
+}
 HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "options"}
 # Method-agnostic registration calls (Flask .route/.add_url_rule, FastAPI
 # .add_api_route) — a path literal under one of these registers the route

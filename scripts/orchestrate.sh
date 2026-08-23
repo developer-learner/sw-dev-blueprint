@@ -1700,7 +1700,7 @@ json.dump(entry, open(sys.argv[2], 'w'), indent=2)
     fi
     ctx+=("failing-test:$f")
   done
-  local instr="Task consult. Task '$id' — $evidence. Decide ONE verdict: brief_wrong (the task brief mis-specified the work — include a full revised_brief, Rule 8 discipline), decomposition_wrong (the task split/dependencies are wrong), or contract_or_test_wrong (the frozen contract or test itself is wrong — your reason becomes the evidence a human carries to the TPM, so be specific: name the contract id or test node-id and what about it is wrong). Reply with ONLY the diagnosis JSON matching the schema you were given, shaped exactly like this example: {\"verdict\": \"decomposition_wrong\", \"reason\": \"T2 imports the parser T4 creates but does not depend on T4\"}. Do NOT include a task_id field — the orchestrator records it itself."
+  local instr="Task consult. Task '$id' — $evidence. Decide ONE verdict: brief_wrong (the task brief mis-specified the work — include a full revised_brief, Rule 8 discipline), decomposition_wrong (the task split/dependencies are wrong), contract_or_test_wrong (the frozen contract or test itself is wrong — your reason becomes the evidence a human carries to the TPM, so be specific: name the contract id or test node-id and what about it is wrong), or transient_or_environmental (positive evidence identifies an external service, resource, timing, infrastructure, or non-reproducible condition and no brief/decomposition/spec defect; never use merely because the cause is uncertain — this halts for operator review with no automatic retry or re-probe). Reply with ONLY the diagnosis JSON matching the schema you were given, shaped exactly like this example: {\"verdict\": \"decomposition_wrong\", \"reason\": \"T2 imports the parser T4 creates but does not depend on T4\"}. Do NOT include a task_id field — the orchestrator records it itself."
   local attempt verrs=""
   for attempt in 1 2; do
     [ -z "$verrs" ] \
@@ -1839,6 +1839,40 @@ PYEOF
     done
   } > "$dir/bundle.md"
   echo "escalation packaged: $dir/bundle.md"
+}
+
+halt_transient_or_environmental() {  # $1 id  $2 file  $3 evidence  $4 diagnosis-file
+  local id="$1" file="$2" evidence="$3" diag="$4"
+  local review_dir="$STATE_DIR/operator-review"
+  local review="$review_dir/$id.md"
+  mkdir -p "$review_dir"
+  {
+    echo "# Operator review — transient/environmental diagnosis"
+    echo
+    echo "Task: $id"
+    echo "File: $file"
+    echo "Frozen spec: v$FROZEN_V"
+    echo
+    echo "## Evidence"
+    echo '```'
+    echo "$evidence"
+    echo '```'
+    echo
+    echo "## Schema-validated EM diagnosis"
+    echo '```json'
+    cat "$diag"
+    echo '```'
+    echo
+    echo "The shell did not retry, re-probe, revise the plan, or escalate to the TPM."
+    echo "Inspect and repair the named environment/resource condition, then explicitly"
+    echo "re-run scripts/orchestrate.sh. The task's prior failure remains appended to"
+    echo "the next attempt brief; its strike allowance resets only for that operator-run."
+  } > "$review"
+  # The current process halts below. Resetting the counter only makes a later,
+  # operator-initiated run possible; it does not schedule an automatic retry.
+  set_counter "$id" strikes 0
+  echo "operator review record: $review"
+  die "task $id diagnosed transient/environmental — no automatic retry or re-probe; inspect $review"
 }
 
 finalize_batch() {  # writes the single copy-pasteable batch and halts
@@ -2219,6 +2253,9 @@ sys.stdout.write(d['revised_brief'])" > "$BRIEF_DIR/$id"
     contract_or_test_wrong)
       package_escalation "spec-wrong" "$id" "$evidence" "$DIAG_FILE"
       set_tstat "$id" escalated
+      ;;
+    transient_or_environmental)
+      halt_transient_or_environmental "$id" "$file" "$evidence" "$DIAG_FILE"
       ;;
   esac
 done

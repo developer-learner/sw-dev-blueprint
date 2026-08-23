@@ -27,12 +27,6 @@
 **Depends on:** nothing — file next time CLAUDE.md is touched for a control-plane edit
 **Filed by:** ox-alpha, 2026-08-22
 
-### EM diagnosis taxonomy: represent transient/environmental failures
-**Priority:** P2
-**Why:** The 2026-08-23 brief A/B showed both current and denser prompts falsely assign blame when supplied evidence says the failure was transient: the three-value diagnosis schema has no honest verdict for that case. A new verdict changes routing behavior and cannot land as prompt wording alone.
-**Rough size:** Medium (schema + validator + orchestrator routing + focused selftests)
-**Depends on:** CEO decision on what evidence qualifies and whether the shell retries, re-probes, or halts for operator review; see `docs/research/2026-08-23-em-diagnosis-ab.md`
-
 ### Escalation-ladder validation: observe the first run that climbs it
 **Priority:** P2
 **Why:** D-70 (2026-07-15, CEO directive) armed the ladder — `MAX_TASK_STRIKES` now defaults to 2, ending ~23 milestones of the consult/verdict machinery as dead code. Arming is not validating (Rule 6): the item closes only when a real run exercises it. Observe on the first milestone where a task strikes twice: schema-valid diagnosis produced; `brief_wrong` revision actually changes the brief; `caps-exhausted` packages a usable TPM bundle; D-69 budget contains the total. Then the CEO calls it: validated, or fix what the run exposed.
@@ -53,6 +47,7 @@
 
 | Task | Completed | Notes |
 |------|-----------|-------|
+| EM diagnosis taxonomy: represent transient/environmental failures | 2026-08-23 | D-169 adds a positive-evidence-only verdict. The shell preserves an operator-review record and halts; it never retries, re-probes, rewrites the plan, or escalates to TPM automatically. |
 | EM diagnosis hardening: A/B denser diagnosis brief | 2026-08-23 | Three archived consults replayed through both variants: both fixed 2 schema-invalid replies; neither could honestly classify a transient failure. Dense candidate not shipped; evidence isolates the missing verdict taxonomy. |
 | 6 plumbing fixes ported from testchat M1 (fd-0, enable_thinking, error body, think-strip, mkdir, loguru) | 2026-07-03 | Commits `b73c2b7`..`5f4a59e` |
 | 3 structural gates: DAG-brief consistency, smoke_check executability, smoke_check→TPM tier | 2026-07-04 | `9b4e379` |

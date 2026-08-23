@@ -20,6 +20,13 @@ REVIEW, CURRENT, manifest ownership) + child sync queue
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-08-23: **D-169 implemented.** Diagnosis now has an explicit,
+  positive-evidence-only `transient_or_environmental` verdict. It writes a
+  preserved operator-review record and halts with no automatic retry,
+  re-probe, plan mutation, or TPM escalation; only an explicit operator rerun
+  re-enters the bounded task path. The change closes the taxonomy gap isolated
+  by the diagnosis A/B rather than shipping the denser prompt candidate.
+
 - 2026-08-15: Adversarial review of both repos (2026-07-01 REVIEW.md follow-up)
   produced two must-fix defects, now landed as code: **D-150** — failed B3
   plan synthesis no longer clobbers `tasks/plan.json` (temp file + mv, reason

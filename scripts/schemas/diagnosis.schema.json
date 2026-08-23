@@ -11,8 +11,8 @@
       "description": "The failing task id (e.g. T3), or the literal string DRIFT for a suite-red/tasks-green consult. NOT requested from the model — the orchestrator stamps it after the reply (D-71); a model-supplied value is overwritten."
     },
     "verdict": {
-      "enum": ["brief_wrong", "decomposition_wrong", "contract_or_test_wrong"],
-      "description": "brief_wrong: the task brief under-specified or mis-specified the work — supply revised_brief. decomposition_wrong: the task split itself is wrong (wrong file boundaries, missing task, bad dependency) — the orchestrator will ask for a plan re-emit. contract_or_test_wrong: the frozen spec (contracts.json entry or TPM test) is wrong — this escalates to the TPM as a batched bundle; `reason` becomes the evidence the human operator carries to the web chat."
+      "enum": ["brief_wrong", "decomposition_wrong", "contract_or_test_wrong", "transient_or_environmental"],
+      "description": "brief_wrong: the task brief under-specified or mis-specified the work — supply revised_brief. decomposition_wrong: the task split itself is wrong (wrong file boundaries, missing task, bad dependency) — the orchestrator will ask for a plan re-emit. contract_or_test_wrong: the frozen spec (contracts.json entry or TPM test) is wrong — this escalates to the TPM as a batched bundle; `reason` becomes the evidence the human operator carries to the web chat. transient_or_environmental: the supplied evidence affirmatively identifies an external, resource, service, timing, or non-reproducible condition and does not identify a brief, decomposition, contract, or test defect — the shell halts for operator review and never retries or re-probes automatically."
     },
     "reason": {
       "type": "string",
