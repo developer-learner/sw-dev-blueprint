@@ -17,7 +17,9 @@ under a live LLM is out of scope here and covered by the run machinery
 itself (drive-coder exercises orchestrate's execution path separately).
 """
 
+import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +29,18 @@ HERE = Path(__file__).resolve().parent
 ORCHESTRATE = HERE.parent / "orchestrate.sh"
 SANDBOX_RUN = HERE.parent / "sandbox-run.sh"
 REPO = HERE.parents[1]
+
+
+def _install_copied_entrypoint(child: Path) -> None:
+    """Model a normal update-template child, which owns copied plane files."""
+    scripts = child / "scripts"
+    scripts.mkdir(parents=True)
+    installed = scripts / "orchestrate.sh"
+    shutil.copy2(ORCHESTRATE, installed)
+    digest = hashlib.sha256(installed.read_bytes()).hexdigest()
+    (scripts / ".manifest-template").write_text(
+        f"{digest}  scripts/orchestrate.sh\n"
+    )
 
 
 def _extract_guard_source():
@@ -254,8 +268,7 @@ def test_whole_entrypoint_dryrun_stops_at_reexec_boundary(tmp_path):
     """
     pin = _plane_ref(REPO)
     child = tmp_path / "whole-entry-child"
-    (child / "scripts").mkdir(parents=True)
-    (child / "scripts" / "orchestrate.sh").symlink_to(ORCHESTRATE)
+    _install_copied_entrypoint(child)
     (child / ".template-version").write_text(
         f"repo=developer-learner/sw-dev-blueprint\nref={pin}\n"
     )
@@ -286,6 +299,8 @@ def test_whole_entrypoint_dryrun_stops_at_reexec_boundary(tmp_path):
         "plane-sha"
     ]
     assert "=== Pre-flight ===" not in result.stdout
+    assert not (child / ".measurement" / "plane-drift.log").exists(), \
+        "a child commit is not blueprint drift telemetry"
 
 
 def test_snapshot_sandbox_mounts_the_child_repo(tmp_path):
@@ -345,8 +360,7 @@ def test_whole_entrypoint_nondryrun_crosses_reexec_into_preflight(tmp_path):
     """
     pin = _plane_ref(REPO)
     child = tmp_path / "nondryrun-child"
-    (child / "scripts").mkdir(parents=True)
-    (child / "scripts" / "orchestrate.sh").symlink_to(ORCHESTRATE)
+    _install_copied_entrypoint(child)
     (child / ".template-version").write_text(
         f"repo=developer-learner/sw-dev-blueprint\nref={pin}\n"
     )
