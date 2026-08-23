@@ -36,7 +36,16 @@ MAX_TASK_STRIKES="${MAX_TASK_STRIKES:-2}"      # coder attempts per brief (D-70:
 MAX_BRIEF_REVISIONS="${MAX_BRIEF_REVISIONS:-1}" # EM brief_wrong rewrites per task
 MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"   # EM plan re-emits per run (validation retries + decomposition_wrong); default 2: the validator's error feedback demonstrably fixes plans on the second emit (testchat M6)
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-1800}"
-CONTEXT_BUDGET_TOOL="$PLANE_DIR/scripts/context-budget.py"
+# die() lives here — BEFORE the D-168 entry guard: the guard's failure paths
+# call it, and under `set -u` a call to a not-yet-defined function is itself
+# a fatal unbound reference. (The first D-168 cut defined die() ~240 lines
+# later; any preflight rejection would have died as "die: unbound variable"
+# instead of its message.)
+die() { echo "FAIL: $*" >&2; exit 1; }
+# PLANE_DIR must exist before ANY reference (set -u): initialized empty here,
+# set by plane_entry_guard below — snapshot root inside a snapshot, and also
+# under DRYRUN so a dry-run continuation can never build "/scripts/..." paths.
+PLANE_DIR=""
 
 # --- D-168: pinned-plane immutable snapshot (BEGIN extract markers) ----------
 # Ruling 2026-08-22: pinned ref = authority · immutable snapshot = execution ·
@@ -54,7 +63,6 @@ CONTEXT_BUDGET_TOOL="$PLANE_DIR/scripts/context-budget.py"
 #     newer plane mid-milestone is a hard stop.
 #   * Blueprint movement during the run is an informational drift record under
 #     .measurement/, eligible for adoption at the next explicit update-template.
-PLANE_DIR=""          # set inside the snapshot (root of the executing tree)
 _plane_self() {       # absolute path of this script, POSIX-only symlink walk
   # (no `readlink -f`: absent on stock macOS < 13, and the guard must run
   # wherever the child repo lives)
@@ -106,6 +114,7 @@ plane_entry_guard() { # runs BEFORE first mutation; execs or falls through
       >> .measurement/plane-drift.log
   fi
   if [ -n "${SWBP_PLANE_DRYRUN:-}" ]; then
+    PLANE_DIR="$root"
     printf 'DRYRUN exec: SWBP_PLANE_SNAPSHOT=%s SWBP_PLANE_SHA=%s bash %s/scripts/orchestrate.sh %s\n' \
       "$root" "$pin" "$root" "$*"
     return 0
@@ -117,6 +126,7 @@ plane_entry_guard() { # runs BEFORE first mutation; execs or falls through
 }
 plane_entry_guard "$@"
 # --- D-168 END ---------------------------------------------------------------
+CONTEXT_BUDGET_TOOL="$PLANE_DIR/scripts/context-budget.py"
 COMPLETION_LEDGER_TOOL="$PLANE_DIR/scripts/completion-ledger.py"
 
 # Wave 1 (D-107-class): the required plan/task keys, named verbatim in every
@@ -278,8 +288,6 @@ MEAS_DIR=".measurement"
 mkdir -p "$MEAS_DIR" 2>/dev/null || true
 [ -f "$MEAS_DIR/.gitignore" ] || printf '*\n' > "$MEAS_DIR/.gitignore" 2>/dev/null || true
 meas() { printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$1" >> "$MEAS_DIR/counters" 2>/dev/null || true; }
-
-die() { echo "FAIL: $*" >&2; exit 1; }
 
 # D-112: verdict scope. Default: milestone done = the delta's mapped
 # (dependent) tests green. --full-suite opts the verdict run into the whole

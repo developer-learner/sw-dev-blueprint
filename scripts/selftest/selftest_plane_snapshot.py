@@ -198,5 +198,12 @@ def main() -> int:
     return 1 if failures else 0
 
 
+def test_plane_snapshot_authority_immutability_drift_and_resume():
+    """Pytest entry (CI collects this module): runs every mechanism scenario
+    in main(). Kept as one composite so the synthetic plane/child fixtures
+    build once; individual failure names surface through main()'s report."""
+    assert main() == 0
+
+
 if __name__ == "__main__":
     sys.exit(main())
