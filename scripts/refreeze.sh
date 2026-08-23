@@ -94,6 +94,17 @@ V=$(cat "$APPROVED/VERSION" 2>/dev/null || echo 0)
 NEW=$((V + 1))
 mkdir -p "$APPROVED" tests
 
+# --- Staging exclusion is structural, not conventional (vortex 2026-08-22) --
+# Every lane check downstream scopes itself with ':(exclude)<staging>' and
+# trusts that exclusion; if the staging dir is NOT gitignored, staged
+# artifacts ride `git add -A` into a [refreeze] commit — they did exactly
+# that in vortex's first freeze — and orchestrate's clean-tree preflight
+# misfires on leftover staging. Verify with git itself instead of trusting
+# each child's .gitignore to be right.
+if [ -d "$IN" ] && ! git check-ignore -q "$IN"; then
+  die "$IN is not gitignored — add '$IN/' to .gitignore. The frozen lane excludes this path by name everywhere; an unignored staging dir leaks staged artifacts into freeze commits and dirties every clean-tree preflight."
+fi
+
 # --- Validate staging contents: only known artifact paths ---
 # D-104: refreeze and both TPM shuttle directions consume one policy; adding
 # an artifact at one boundary cannot silently leave another boundary stale.
