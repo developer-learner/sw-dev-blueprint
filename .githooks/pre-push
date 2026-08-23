@@ -27,6 +27,19 @@
 #   SWBP_RELEASE_SUITE_CMD      (default: the CI suite command below)
 set -u
 cd "$(git rev-parse --show-toplevel)" || exit 1
+PUSH_REPO="$(pwd -P)"
+
+# When a child uses the supported linked-template mode, this hook itself
+# resolves into the Blueprint checkout. Remember that Git repository so the
+# exact pinned plane can be materialized beside the throwaway child worktree.
+# Relative child links then resolve exactly as they do in the live checkout.
+HOOK_FILE="$(python3 - "$0" <<'PY'
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PY
+)"
+HOOK_REPO="$(git -C "$(dirname "$HOOK_FILE")" rev-parse --show-toplevel 2>/dev/null || true)"
 
 PROTECTED_REF="${SWBP_RELEASE_PROTECTED_REF:-refs/heads/main}"
 SUITE_CMD="${SWBP_RELEASE_SUITE_CMD:-pytest scripts/selftest/selftest_*.py -q}"
@@ -60,13 +73,54 @@ PARENT="$(mktemp -d "${TMPDIR:-/tmp}/release-gate.XXXXXX")" || {
   exit 1
 }
 TMPTREE="$PARENT/tree"
-cleanup() { git worktree remove --force "$TMPTREE" >/dev/null 2>&1; rm -rf "$PARENT"; }
+LINKED_PLANE=""
+cleanup() {
+  if [ -n "$LINKED_PLANE" ] && [ -n "$HOOK_REPO" ]; then
+    git -C "$HOOK_REPO" worktree remove --force "$LINKED_PLANE" >/dev/null 2>&1
+  fi
+  git -C "$PUSH_REPO" worktree remove --force "$TMPTREE" >/dev/null 2>&1
+  rm -rf "$PARENT"
+}
 trap cleanup EXIT
 
 echo "release-gate: push updates $PROTECTED_REF at $PUSH_SHA — verifying that exact commit before publication..." >&2
-if ! git worktree add --detach -q "$TMPTREE" "$PUSH_SHA" >/dev/null 2>&1; then
+if ! git -C "$PUSH_REPO" worktree add --detach -q "$TMPTREE" "$PUSH_SHA" >/dev/null 2>&1; then
   echo "release-gate: REFUSED — could not check out $PUSH_SHA for verification." >&2
   exit 1
+fi
+
+# A linked child deliberately commits relative symlinks rather than copied
+# plane files. The isolated child checkout therefore needs a sibling checkout
+# of the exact pinned Blueprint commit before its suite can run. Refuse unsafe
+# or malformed link metadata instead of silently testing some other plane.
+if [ -f "$TMPTREE/.template-link" ]; then
+  link_mode="$(sed -n 's/^mode=//p' "$TMPTREE/.template-link")"
+  link_source="$(sed -n 's/^source=//p' "$TMPTREE/.template-link")"
+  link_pin="$(sed -n 's/^ref=//p' "$TMPTREE/.template-version")"
+  if [ "$link_mode" != "linked" ] || [ -z "$link_source" ] || [ -z "$link_pin" ] || [ -z "$HOOK_REPO" ]; then
+    echo "release-gate: REFUSED — linked-template metadata or Blueprint source repository is unavailable." >&2
+    exit 1
+  fi
+  LINKED_PLANE="$(python3 - "$PARENT" "$TMPTREE" "$link_source" <<'PY'
+import os
+import sys
+
+parent = os.path.abspath(sys.argv[1])
+tree = os.path.abspath(sys.argv[2])
+source = sys.argv[3]
+candidate = os.path.abspath(os.path.join(tree, source))
+if os.path.commonpath((parent, candidate)) != parent or candidate == tree:
+    raise SystemExit(1)
+print(candidate)
+PY
+)" || {
+    echo "release-gate: REFUSED — linked-template source must resolve inside the isolated verification workspace." >&2
+    exit 1
+  }
+  if ! git -C "$HOOK_REPO" worktree add --detach -q "$LINKED_PLANE" "$link_pin" >/dev/null 2>&1; then
+    echo "release-gate: REFUSED — could not materialize pinned Blueprint commit $link_pin for linked-child verification." >&2
+    exit 1
+  fi
 fi
 
 if ( cd "$TMPTREE" && eval "$SUITE_CMD" ) >&2; then

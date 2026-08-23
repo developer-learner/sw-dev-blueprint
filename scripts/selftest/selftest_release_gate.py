@@ -129,3 +129,39 @@ def test_mixed_push_gates_on_the_main_ref(tmp_path):
     r = _run(tmp_path, stdin, suite_cmd="false")
     assert r.returncode != 0, "any ref advancing main triggers the gate"
     assert "REFUSED" in r.stderr
+
+
+def test_linked_child_materializes_exact_pinned_blueprint(tmp_path):
+    """A pushed linked child must be tested with its pinned plane present."""
+    _git(tmp_path, "init", "-q")
+    blueprint = HOOK.parent.parent
+    pin = _git(blueprint, "rev-parse", "HEAD").stdout.strip()
+    (tmp_path / "verdict").write_text("pass")
+    (tmp_path / ".template-link").write_text(
+        "mode=linked\nsource=../sw-dev-blueprint\n"
+        "exception=.github/workflows/check-drift.yml\n"
+    )
+    (tmp_path / ".template-version").write_text(
+        f"repo=Arc-Elixir/sw-dev-blueprint\nref={pin}\n"
+    )
+    (tmp_path / "plane-marker").symlink_to(
+        "../sw-dev-blueprint/scripts/orchestrate.sh"
+    )
+    _git(tmp_path, "add", "-A")
+    _git(
+        tmp_path,
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "-m",
+        "linked child",
+    )
+    child_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+
+    r = _run(tmp_path, _line(child_sha), suite_cmd="test -f plane-marker")
+
+    assert r.returncode == 0, r.stderr
+    assert "publication allowed" in r.stderr

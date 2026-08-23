@@ -102,6 +102,21 @@ cd my-new-project
 ./scripts/bootstrap.sh my-new-project
 ```
 
+Existing local children can use one shared, version-pinned Blueprint control
+plane instead of owning copied scripts:
+
+```bash
+bash /path/to/sw-dev-blueprint/scripts/link-template.sh \
+  --from /path/to/sw-dev-blueprint --dry-run
+```
+
+Apply the printed plan by rerunning without `--dry-run` (or bind review with
+`--approve <PLAN-SHA>`). The child keeps its product code, frozen spec/tests,
+project configuration, tasks, and evidence. Template-owned paths become
+relative links; the drift workflow remains a real file so GitHub can bootstrap
+the pinned Blueprint checkout in CI. Later `scripts/update-template.sh` calls
+automatically preserve linked mode.
+
 ---
 
 ## The working loop — capability ladder (D-27)

@@ -42,6 +42,53 @@ hash_file() {
   fi
 }
 
+# Official linked-plane mode: template-owned paths must be symlinks into the
+# declared Blueprint checkout, except files GitHub must read before checkout.
+# Hash verification below still pins every resolved byte to the adopted
+# `.manifest-template`; this structural pass prevents a same-byte local copy
+# from silently reintroducing per-child control-plane ownership.
+if [ -f .template-link ]; then
+  link_mode="$(grep '^mode=' .template-link | cut -d= -f2-)"
+  link_source="$(grep '^source=' .template-link | cut -d= -f2-)"
+  [ "$link_mode" = "linked" ] && [ -n "$link_source" ] || {
+    echo "GATE FAIL: malformed .template-link"
+    exit 1
+  }
+  case "$link_source" in /*) link_root="$link_source" ;; *) link_root="$(pwd -P)/$link_source" ;; esac
+  [ -d "$link_root/.git" ] || {
+    echo "GATE FAIL: linked Blueprint unavailable at $link_source"
+    exit 1
+  }
+  linked_pin="$(grep '^ref=' .template-version | cut -d= -f2 | tr -d '[:space:]')"
+  git -C "$link_root" cat-file -e "$linked_pin^{commit}" 2>/dev/null || {
+    echo "GATE FAIL: linked Blueprint lacks pinned ref $linked_pin"
+    exit 1
+  }
+  while read -r expected_hash path; do
+    [ -n "$expected_hash" ] && [ -n "$path" ] || continue
+    if grep -Fxq "exception=$path" .template-link; then
+      [ -f "$path" ] && [ ! -L "$path" ] || {
+        echo "GATE FAIL: linked-plane exception must be a real child file — $path"
+        exit 1
+      }
+      continue
+    fi
+    [ -L "$path" ] || {
+      echo "GATE FAIL: linked-plane path is not a symlink — $path"
+      exit 1
+    }
+    expected_target="$(python3 - "$link_root/$path" "$(pwd -P)/$(dirname "$path")" <<'PY'
+import os, sys
+print(os.path.relpath(sys.argv[1], sys.argv[2]))
+PY
+)"
+    [ "$(readlink "$path")" = "$expected_target" ] || {
+      echo "GATE FAIL: linked-plane path targets the wrong Blueprint file — $path"
+      exit 1
+    }
+  done < scripts/.manifest-template
+fi
+
 # Control-plane hash check, split by ownership (D-33):
 #   .manifest-template — template-owned logic; drift against the template repo
 #                        is computed over exactly this list (check-drift.sh)

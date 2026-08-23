@@ -35,14 +35,31 @@ jobs:
         env:
           TOKEN: ${{ secrets.TEMPLATE_READ_TOKEN }}
         run: |
-          if [ -n "$TOKEN" ]; then
-            git clone --quiet "https://x-access-token:${TOKEN}@github.com/${{ steps.tv.outputs.repo }}.git" .template-clone
-          else
-            git clone --quiet "https://github.com/${{ steps.tv.outputs.repo }}.git" .template-clone
+          target=.template-clone
+          if [ -f .template-link ]; then
+            source=$(grep '^source=' .template-link | cut -d= -f2-)
+            target=$(python3 - "$PWD" "$source" <<'PY'
+          import os
+          import sys
+
+          workspace = os.path.abspath(sys.argv[1])
+          parent = os.path.dirname(workspace)
+          candidate = os.path.abspath(os.path.join(workspace, sys.argv[2]))
+          if os.path.commonpath((parent, candidate)) != parent or candidate == workspace:
+              raise SystemExit("unsafe linked-template source")
+          print(candidate)
+          PY
+          )
           fi
-          git -C .template-clone fetch --quiet origin "${{ steps.tv.outputs.ref }}"
+          if [ -n "$TOKEN" ]; then
+            git clone --quiet "https://x-access-token:${TOKEN}@github.com/${{ steps.tv.outputs.repo }}.git" "$target"
+          else
+            git clone --quiet "https://github.com/${{ steps.tv.outputs.repo }}.git" "$target"
+          fi
+          git -C "$target" fetch --quiet origin "${{ steps.tv.outputs.ref }}"
+          git -C "$target" checkout --detach --quiet "${{ steps.tv.outputs.ref }}"
           set +e
-          bash scripts/check-drift.sh .template-clone
+          bash scripts/check-drift.sh "$target"
           rc=$?
           set -e
           if [ "$rc" -eq 2 ]; then

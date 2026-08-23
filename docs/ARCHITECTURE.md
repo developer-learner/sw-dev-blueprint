@@ -190,7 +190,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-85**: A red CI stops the line — pre-flight consumes the external verdict, INCONCLUSIVE when it cannot, `SWBP_SKIP_CI_CHECK=1` to override
 - **D-25**: INV-3 — decision-traceability gate (retired 2026-07-22, see D-25 amendment; keeping this section current is now a PM-review discipline)
 - **D-33**: Fleet drift — birth-SHA identity, ownership-split manifests
-- **D-34**: Template propagation — `update-template.sh` applies the refreeze pattern to the control plane
+- **D-34/D-35**: Fleet propagation — copied children use `update-template.sh`; linked children delegate to `link-template.sh` and execute one commit-pinned Blueprint plane
 - **D-101**: Template removals contribute to the approval hash and apply atomically
 - **D-36**: Gate-script self-tests (`scripts/selftest/`)
 - **D-106**: The unconditional selftest CI job lints all template-owned Python under `scripts/`

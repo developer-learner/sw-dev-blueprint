@@ -63,6 +63,19 @@ die() { echo "UPDATE-TEMPLATE FAIL: $*" >&2; exit 1; }
 # Cross-platform sed -i (GNU vs BSD/macOS)
 sed_inplace() { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
 
+# Linked children never copy template-owned bytes and, critically, never write
+# through their symlinks into the Blueprint checkout. The linked installer owns
+# link-set changes, pin advancement, the one required physical workflow, and
+# the same preview/approval modes as this updater.
+if [ -f .template-link ]; then
+  _linked_source="$(grep '^source=' .template-link | cut -d= -f2-)"
+  [ -n "$_linked_source" ] || die ".template-link has no source="
+  case "$_linked_source" in /*) _linked_abs="$_linked_source" ;; *) _linked_abs="$(pwd -P)/$_linked_source" ;; esac
+  [ -x "$_linked_abs/scripts/link-template.sh" ] \
+    || die "linked Blueprint unavailable at $_linked_source"
+  exec bash "$_linked_abs/scripts/link-template.sh" "$@"
+fi
+
 FROM=""; REF=""; DRY=0; STAMP=0; REVIEW=0; APPROVE=""; INTERACTIVE=0
 while [ $# -gt 0 ]; do
   case "$1" in
