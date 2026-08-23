@@ -20,6 +20,7 @@ exit 0
 
 DRIVER = """set -euo pipefail
 cd "__WORK__"
+PLANE_DIR=$(pwd -P)
 STATE_DIR=.pipeline-state
 ACTIVE_DELTA_FILES=("delta.json")
 mark() { :; }

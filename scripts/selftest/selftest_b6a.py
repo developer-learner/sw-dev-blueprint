@@ -48,6 +48,7 @@ set -euo pipefail
 WORK="$1"; REPO="$2"
 cd "$WORK"
 
+PLANE_DIR=$(pwd -P)
 STATE_DIR=".pipeline-state"
 ESC_DIR="$STATE_DIR/escalations"
 APPROVED="scripts/.approved"

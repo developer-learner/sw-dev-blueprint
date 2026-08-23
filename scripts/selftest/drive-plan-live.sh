@@ -54,6 +54,7 @@ git config user.email selftest@local
 git config user.name selftest
 
 # Environment the extracted functions expect (mirrors orchestrate.sh's init).
+PLANE_DIR=$(pwd -P)
 STATE_DIR=".pipeline-state"
 TASK_STATE="$STATE_DIR/tasks"
 BRIEF_DIR="$STATE_DIR/briefs"

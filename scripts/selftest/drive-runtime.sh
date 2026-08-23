@@ -14,6 +14,7 @@ WORK="${2:?workdir required}"
 REPO=$(cd "$(dirname "$0")/../.." && pwd -P)
 
 cd "$WORK"
+PLANE_DIR=$(pwd -P)
 
 extract() {
   local body

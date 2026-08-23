@@ -67,6 +67,7 @@ git -c user.email=selftest@local -c user.name=selftest add -A
 git -c user.email=selftest@local -c user.name=selftest commit -qm fixture
 
 # Environment the extracted function expects (mirrors orchestrate.sh's init).
+PLANE_DIR=$(pwd -P)
 STATE_DIR=".pipeline-state"
 TASK_STATE="$STATE_DIR/tasks"
 LOG_DIR="$STATE_DIR/logs"

@@ -2131,7 +2131,7 @@ def test_em_context_sites_use_standing_summary():
     source = (SCRIPTS / "orchestrate.sh").read_text()
     labels = re.findall(r'"standing:\$\{STANDING_SUMMARY:-\$APPROVED/ERD\.md\}"', source)
     assert len(labels) == 6, f"expected 6 standing-label sites (4 plan/drift + 2 consult branches), got {len(labels)}"
-    assert "python3 scripts/standing-summary.py" in source
+    assert "python3 $PLANE_DIR/scripts/standing-summary.py" in source
     assert 'STANDING_SUMMARY="$STATE_DIR/standing-summary.md"' in source
 
 
@@ -4236,7 +4236,7 @@ def test_orchestrate_em_context_fallbacks_are_loud(tmp_path):
                src.index("CONTRACTS_DELTA=\"$STATE_DIR/contracts-delta.json\"")]
     assert 'if [ -f "$APPROVED/ERD.md" ]' in gens
     assert "else" in gens
-    assert "python3 scripts/standing-summary.py" in gens
+    assert "python3 $PLANE_DIR/scripts/standing-summary.py" in gens
 
 
 def test_contract_id_rule_present_at_all_plan_sites():
@@ -4288,9 +4288,9 @@ def test_contract_id_rule_mirrored_in_drive_plan():
 
 def test_repair_contracts_wired_before_gate():
     orch = ORCHESTRATE.read_text()
-    closure = ("[ -f tasks/plan.json ] && python3 scripts/validate-plan.py "
+    closure = ("[ -f tasks/plan.json ] && python3 $PLANE_DIR/scripts/validate-plan.py "
                "--repair-closures tasks/plan.json || true")
-    contracts = ("[ -f tasks/plan.json ] && python3 scripts/validate-plan.py "
+    contracts = ("[ -f tasks/plan.json ] && python3 $PLANE_DIR/scripts/validate-plan.py "
                  "--repair-contracts tasks/plan.json || true")
     assert contracts in orch, "repair-contracts pre-gate call site missing"
     assert orch.count("--repair-contracts") == 1, (
@@ -4987,6 +4987,7 @@ _SCOPED_STUB = (
 _SCOPED_DRIVER = (
     "set -euo pipefail\n"
     "cd \"__WORK__\"\n"
+    "PLANE_DIR=$(pwd -P)\n"
     "mark() { :; }\n"
     "ACTIVE_DELTA_FILES=(__ACTIVE__)\n"
     "DELTA_SCOPED=1\n"
@@ -5449,6 +5450,7 @@ def _run_completion_transition(tmp_path, current_spec):
     }
     script = f"""set -euo pipefail
 mkdir -p "$TASK_STATE" "$BRIEF_DIR"
+PLANE_DIR=$(pwd -P)
 read_state() {{ [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }}
 write_state() {{ printf '%s\n' "$2" > "$STATE_DIR/$1"; }}
 set_tstat() {{ printf '%s\n' "$2" > "$TASK_STATE/$1.status"; }}

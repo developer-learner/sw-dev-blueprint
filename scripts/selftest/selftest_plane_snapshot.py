@@ -2,11 +2,12 @@
 """D-168 plane-snapshot mechanism tests: pinned ref = authority, immutable
 snapshot = execution, drift alarm = telemetry.
 
-These drive the REAL `plane_entry_guard` extracted from orchestrate.sh between
-its D-168 BEGIN/END markers (the same anti-drift extraction pattern
-drive-plan.sh uses for ensure_plan). A synthetic two-commit "blueprint" repo
-stands in for the plane; the guard runs with SWBP_PLANE_DRYRUN=1 so the re-exec
-is observed as the exact command it would become rather than performed.
+The mechanism scenarios drive the REAL `plane_entry_guard` extracted from
+orchestrate.sh between its D-168 BEGIN/END markers (the same anti-drift
+extraction pattern drive-plan.sh uses for ensure_plan). A synthetic two-commit
+"blueprint" repo stands in for the plane. A separate whole-entrypoint test
+executes the REAL orchestrate.sh prelude and guard from a child symlink, proving
+the dry-run re-exec boundary exits before any post-guard preflight or work.
 
 Scope honesty (Rule 6): these pins prove the MECHANISM — materialization,
 content-addressed reuse, authority surviving blueprint advancement, drift
@@ -24,6 +25,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ORCHESTRATE = HERE.parent / "orchestrate.sh"
+REPO = HERE.parents[1]
 
 
 def _extract_guard_source():
@@ -203,6 +205,56 @@ def test_plane_snapshot_authority_immutability_drift_and_resume():
     in main(). Kept as one composite so the synthetic plane/child fixtures
     build once; individual failure names surface through main()'s report."""
     assert main() == 0
+
+
+def test_whole_entrypoint_dryrun_stops_at_reexec_boundary(tmp_path):
+    """Invoke the real entrypoint, not an extracted guard.
+
+    The child intentionally lacks every ordinary orchestrator prerequisite.
+    A zero exit therefore proves the prelude defined the guard dependencies,
+    the guard reached the dry-run re-exec boundary, and `exit 0` prevented the
+    post-guard preflight from running. The state assertion also proves no
+    later pipeline checkpoint was written.
+    """
+    pin = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    child = tmp_path / "whole-entry-child"
+    (child / "scripts").mkdir(parents=True)
+    (child / "scripts" / "orchestrate.sh").symlink_to(ORCHESTRATE)
+    (child / ".template-version").write_text(
+        f"repo=developer-learner/sw-dev-blueprint\nref={pin}\n"
+    )
+    _git(child, "init", "-q", "-b", "main")
+
+    env = dict(os.environ)
+    env.pop("SWBP_PLANE_SNAPSHOT", None)
+    env["SWBP_PLANE_DRYRUN"] = "1"
+    env["XDG_CACHE_HOME"] = str(tmp_path / "cache")
+    result = subprocess.run(
+        ["bash", "scripts/orchestrate.sh", "--full-suite"],
+        cwd=child,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    snapshot = tmp_path / "cache" / "swbp-plane" / pin
+    expected = (
+        f"DRYRUN exec: SWBP_PLANE_SNAPSHOT={snapshot} "
+        f"SWBP_PLANE_SHA={pin} bash {snapshot}/scripts/orchestrate.sh "
+        "--full-suite"
+    )
+    assert result.stdout.strip() == expected
+    assert (child / ".pipeline-state" / "plane-sha").read_text().strip() == pin
+    assert sorted(p.name for p in (child / ".pipeline-state").iterdir()) == [
+        "plane-sha"
+    ]
+    assert "=== Pre-flight ===" not in result.stdout
 
 
 if __name__ == "__main__":
