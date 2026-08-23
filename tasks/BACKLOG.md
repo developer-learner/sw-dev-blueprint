@@ -20,11 +20,11 @@
 
 ## Up Next
 
-### EM diagnosis hardening: denser diagnosis brief (M28 handoff item 6)
+### EM diagnosis taxonomy: represent transient/environmental failures
 **Priority:** P2
-**Why:** Mid-tier diagnosis is the ladder's weak rung, on record since M23 (schema-invalid diagnosis, empty task_id — gate refused correctly) and still thin on 2026-07-17 (first schema-valid production diagnosis, but rambling prose). The bounded schema-retry half already shipped (D-71: validator errors echoed back, one retry); the open half is the diagnosis BRIEF — what context makes a mid-tier model diagnose accurately (D-73's FAIL_DETAIL landed since; whether it closed the gap is unmeasured). Carried from the 07-15 open items via the M28 handoff (item 6, `tasks/HANDOFF-M28-blueprint-items.md`).
-**Rough size:** Medium (needs bench evidence — A/B the brief against recorded consult transcripts, not intuition)
-**Depends on:** entries accumulating in `.em-archive/` (capture + replay shipped 2026-07-19; failure-path capture added same day — invalid-JSON and schema-invalid diagnoses now land in the corpus with outcome/validation metadata, and `em-bench.sh` scores them FIXED/STILL_INVALID under a variant brief, which is the A/B signal this item needs. First real entries collected in testchat's v56 run: 3 plan emissions including both 4-bit gate rejections, 1 diagnosis `verdict=brief_wrong`); then a design session on the brief variants, not a quick commit
+**Why:** The 2026-08-23 brief A/B showed both current and denser prompts falsely assign blame when supplied evidence says the failure was transient: the three-value diagnosis schema has no honest verdict for that case. A new verdict changes routing behavior and cannot land as prompt wording alone.
+**Rough size:** Medium (schema + validator + orchestrator routing + focused selftests)
+**Depends on:** CEO decision on what evidence qualifies and whether the shell retries, re-probes, or halts for operator review; see `docs/research/2026-08-23-em-diagnosis-ab.md`
 
 ### Escalation-ladder validation: observe the first run that climbs it
 **Priority:** P2
@@ -46,6 +46,7 @@
 
 | Task | Completed | Notes |
 |------|-----------|-------|
+| EM diagnosis hardening: A/B denser diagnosis brief | 2026-08-23 | Three archived consults replayed through both variants: both fixed 2 schema-invalid replies; neither could honestly classify a transient failure. Dense candidate not shipped; evidence isolates the missing verdict taxonomy. |
 | 6 plumbing fixes ported from testchat M1 (fd-0, enable_thinking, error body, think-strip, mkdir, loguru) | 2026-07-03 | Commits `b73c2b7`..`5f4a59e` |
 | 3 structural gates: DAG-brief consistency, smoke_check executability, smoke_check→TPM tier | 2026-07-04 | `9b4e379` |
 | AST-first node-id collection (D-51 revised) | 2026-07-05 | `83073f2` — fixes M3's 8/19 partial collection |
