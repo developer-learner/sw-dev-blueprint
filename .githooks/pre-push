@@ -10,15 +10,17 @@
 # refs/heads/main) runs the exact CI suite command FIRST and refuses the push
 # on any failure, or if the suite cannot run at all.
 #
+# It verifies the COMMIT BEING PUSHED, not the working tree. The tree can be
+# green (clean checkout, or unstaged edits) while a different, red SHA is what
+# actually lands on the remote — e.g. `git push origin other:main`. So the
+# hook materializes the pushed SHA into a throwaway detached worktree and runs
+# the suite THERE; the working tree's state never decides a publication.
+#
 # Enabled by: git config core.hooksPath .githooks   (bootstrap.sh does this).
 # Scope: only pushes that update the protected ref are gated; feature-branch
-# and non-release pushes pass through untouched, so day-to-day work is
-# unaffected. A deliberate operator override is `git push --no-verify` — never
-# the pipeline's path, and self-documenting in the reflog/CI when used.
-#
-# Publication always runs from a real checkout, so unlike the pre-commit gate
-# this hook needs no D-168 plane-snapshot self-resolution: it verifies the
-# working tree it is pushing from, which is exactly the tree being published.
+# and non-release pushes pass through untouched. Deliberate operator override
+# is `git push --no-verify` — never the pipeline's path, self-documenting when
+# used.
 #
 # Overridable for TESTS ONLY (see scripts/selftest/selftest_release_gate.py):
 #   SWBP_RELEASE_PROTECTED_REF  (default refs/heads/main)
@@ -33,20 +35,43 @@ ZERO="0000000000000000000000000000000000000000"
 # git feeds one line per pushed ref on stdin:
 #   <local ref> <local sha> <remote ref> <remote sha>
 gating=0
+PUSH_SHA=""
 while read -r local_ref local_sha remote_ref remote_sha; do
   remote_ref="${remote_ref:-}"
   local_sha="${local_sha:-}"
   [ -n "$remote_ref" ] || continue
   [ "$local_sha" = "$ZERO" ] && continue    # branch deletion: nothing to verify
-  [ "$remote_ref" = "$PROTECTED_REF" ] && gating=1
+  if [ "$remote_ref" = "$PROTECTED_REF" ]; then
+    gating=1
+    PUSH_SHA="$local_sha"                    # the exact commit being published
+  fi
 done
 
 [ "$gating" -eq 0 ] && exit 0
 
-echo "release-gate: push updates $PROTECTED_REF — verifying the full control-plane suite before publication..." >&2
-if eval "$SUITE_CMD" >&2; then
-  echo "release-gate: control-plane suite green — publication allowed." >&2
+if [ -z "$PUSH_SHA" ]; then
+  echo "release-gate: REFUSED — a push to $PROTECTED_REF carried no commit SHA to verify." >&2
+  exit 1
+fi
+
+# Verify the pushed COMMIT in isolation from the working tree.
+PARENT="$(mktemp -d "${TMPDIR:-/tmp}/release-gate.XXXXXX")" || {
+  echo "release-gate: REFUSED — could not create a verification workspace." >&2
+  exit 1
+}
+TMPTREE="$PARENT/tree"
+cleanup() { git worktree remove --force "$TMPTREE" >/dev/null 2>&1; rm -rf "$PARENT"; }
+trap cleanup EXIT
+
+echo "release-gate: push updates $PROTECTED_REF at $PUSH_SHA — verifying that exact commit before publication..." >&2
+if ! git worktree add --detach -q "$TMPTREE" "$PUSH_SHA" >/dev/null 2>&1; then
+  echo "release-gate: REFUSED — could not check out $PUSH_SHA for verification." >&2
+  exit 1
+fi
+
+if ( cd "$TMPTREE" && eval "$SUITE_CMD" ) >&2; then
+  echo "release-gate: control-plane suite green at $PUSH_SHA — publication allowed." >&2
   exit 0
 fi
-echo "release-gate: REFUSED — the control-plane selftest suite is not green; a release claim cannot be published on a red suite (D-168). Fix the suite, or override deliberately with 'git push --no-verify'." >&2
+echo "release-gate: REFUSED — the control-plane selftest suite is not green at the commit being pushed ($PUSH_SHA); a release claim cannot be published on a red suite (D-168). Fix the suite, or override deliberately with 'git push --no-verify'." >&2
 exit 1
