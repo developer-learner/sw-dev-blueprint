@@ -71,6 +71,11 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, str, str, list[str]]:
         f"{project_hash}  .template-version\n"
     )
     _git(child, "init", "-q", "-b", "main")
+    # link-template.sh creates a real adoption commit. Hosted CI runners have
+    # no global identity, so the fixture must provide its own repository-local
+    # author instead of inheriting a developer workstation's configuration.
+    _git(child, "config", "user.email", "fixture@example.invalid")
+    _git(child, "config", "user.name", "linked-template fixture")
     _commit(child, "copied child")
 
     (source / "scripts/tool.sh").write_text("#!/bin/sh\necho v2\n")
