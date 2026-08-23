@@ -103,7 +103,13 @@ plane_entry_guard() { # runs BEFORE first mutation; execs or falls through
   fi
   mkdir -p .pipeline-state .measurement
   local prev; prev="$(cat .pipeline-state/plane-sha 2>/dev/null || true)"
-  if [ -n "$prev" ] && [ "$prev" != "$pin" ]; then
+  # A recorded plane differing from the pin is a violation ONLY while a
+  # milestone is actually in progress (task state present). After a completed
+  # milestone or a clean adoption the record is stale, and the new pin is
+  # adopted below — blocking on the stale record alone would wedge the FIRST
+  # run after every adoption (D-168 live-fire, 2026-08-23).
+  if [ -n "$prev" ] && [ "$prev" != "$pin" ] \
+     && [ -n "$(ls -A .pipeline-state/tasks 2>/dev/null || true)" ]; then
     die "mid-milestone plane adoption forbidden (D-168): state recorded $prev, .template-version now pins $pin — finish the milestone on $prev, adopt afterwards"
   fi
   echo "$pin" > .pipeline-state/plane-sha
@@ -634,7 +640,13 @@ fi
 # testchat M4 run proved this can be silently absent for an entire project
 # lifetime — a conductor hand-committed src/ changes with no gate firing.
 # Fail closed here, same as the manifest check below.
-[ "$(git config core.hooksPath || true)" = ".githooks" ] \
+# Under a D-168 plane snapshot the re-exec points core.hooksPath at the
+# snapshot's own .githooks (an ABSOLUTE path); accept that as well as the bare
+# relative name. D-168 live-fire (2026-08-23): the re-exec failed its OWN next
+# check because this only accepted ".githooks", and the whole-entrypoint test
+# never caught it (DRYRUN exits before the re-exec).
+_hp="$(git config core.hooksPath || true)"
+{ [ "$_hp" = ".githooks" ] || [ "$_hp" = "${SWBP_PLANE_SNAPSHOT:-}/.githooks" ]; } \
   || die "core.hooksPath is not '.githooks' — run scripts/bootstrap.sh first (the pre-commit lane gate is mandatory, not optional)"
 # The orchestrator's own [plan]/[task] commits guard on
 # `git status --porcelain` — "nothing to commit" is skipped as a normal

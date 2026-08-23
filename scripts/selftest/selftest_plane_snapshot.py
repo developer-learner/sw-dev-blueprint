@@ -162,13 +162,26 @@ def main() -> int:
         stamp = child / "_cache" / "swbp-plane" / c1 / ".swbp-plane-stamped"
         check("stamped snapshot exists", stamp.exists(), str(stamp))
 
-        # 4. Mid-milestone adoption forbidden: state recorded c1, restamp to
-        #    c2 -> hard stop even though c2 now exists in the plane repo.
+        # 4. Mid-milestone adoption forbidden: a milestone is IN PROGRESS
+        #    (task state present), state recorded c1, restamp to c2 -> hard
+        #    stop even though c2 now exists in the plane repo.
+        (child / ".pipeline-state" / "tasks").mkdir(parents=True, exist_ok=True)
+        (child / ".pipeline-state" / "tasks" / "T1").write_text("in-progress")
         (child / ".template-version").write_text(f"repo=fake/plane\nref={c2}\n")
         r3 = run_guard(child)
         check("adoption blocked rc", r3.returncode == 78, r3.stderr)
         check("adoption blocked msg", "mid-milestone plane adoption forbidden"
               in r3.stderr, r3.stderr)
+
+        # 4b. After the milestone completes (no task state), the SAME stale
+        #     record must be ADOPTED, not blocked — D-168 live-fire fix
+        #     (2026-08-23): a stale plane-sha otherwise wedges the first run
+        #     after every adoption.
+        import shutil as _sh
+        _sh.rmtree(child / ".pipeline-state" / "tasks")
+        r3b = run_guard(child)
+        check("stale-record adoption allowed rc", r3b.returncode == 0, r3b.stderr)
+        check("adopts the new pin", f"SWBP_PLANE_SHA={c2}" in r3b.stdout, r3b.stdout)
 
         # 5. Unknown pin fails closed with an actionable message.
         bad = tmp / "child2"
@@ -272,6 +285,46 @@ def test_whole_entrypoint_dryrun_stops_at_reexec_boundary(tmp_path):
         "plane-sha"
     ]
     assert "=== Pre-flight ===" not in result.stdout
+
+
+def test_whole_entrypoint_nondryrun_crosses_reexec_into_preflight(tmp_path):
+    """The REAL (non-DRYRUN) re-exec must pass its OWN pre-flight.
+
+    The DRYRUN test above stops at the boundary; this one crosses it. The plane
+    re-exec points core.hooksPath at the snapshot's ABSOLUTE .githooks, so the
+    pre-flight hooksPath check must accept that path. D-168 live-fire
+    (2026-08-23): the re-exec failed its own next check because the gate only
+    accepted the literal ".githooks", and no test caught it — every DRYRUN test
+    exits before the re-exec. The bare child fails LATER (no frozen spec /
+    manifest), but it must get PAST the hooksPath gate, reaching pre-flight and
+    never dying with "core.hooksPath is not".
+    """
+    pin = _plane_ref(REPO)
+    child = tmp_path / "nondryrun-child"
+    (child / "scripts").mkdir(parents=True)
+    (child / "scripts" / "orchestrate.sh").symlink_to(ORCHESTRATE)
+    (child / ".template-version").write_text(
+        f"repo=developer-learner/sw-dev-blueprint\nref={pin}\n"
+    )
+    _git(child, "init", "-q", "-b", "main")
+    _git(child, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "init")
+    _git(child, "config", "core.hooksPath", ".githooks")
+
+    env = dict(os.environ)
+    env.pop("SWBP_PLANE_SNAPSHOT", None)
+    env.pop("SWBP_PLANE_DRYRUN", None)   # the REAL path, not the boundary preview
+    env["XDG_CACHE_HOME"] = str(tmp_path / "cache")
+    result = subprocess.run(
+        ["bash", "scripts/orchestrate.sh"],
+        cwd=child, capture_output=True, text=True, env=env,
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, "the bare child has no frozen spec; it must fail later"
+    assert "=== Pre-flight ===" in combined, "the re-exec must reach pre-flight"
+    assert "core.hooksPath is not" not in combined, \
+        "the re-exec's hooksPath check must accept the snapshot's absolute .githooks"
 
 
 if __name__ == "__main__":
