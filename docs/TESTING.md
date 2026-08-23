@@ -95,7 +95,27 @@ pytest -x
 # Template control-plane validation (runs even before src/ exists)
 ruff check --isolated --select E4,E7,E9,F scripts/
 pytest scripts/selftest/selftest_gates.py -q
+pytest scripts/selftest/selftest_plane_snapshot.py -q
+pytest scripts/selftest/selftest_mutation_pass.py -q
+
+# Standalone harness form (same checks, no pytest required)
+python3 scripts/selftest/selftest_plane_snapshot.py
 ```
+
+> **Collect vs standalone.** Every selftest module must expose at least one
+> pytest-collectable `test_*` entry point, even if its scenarios live behind a
+> `main()` harness. A module that only runs under `if __name__ == "__main__"`
+> is invisible to CI collection — the D-168 snapshot suite shipped that way and
+> a launch-breaking regression passed locally while 47 of 469 suite checks
+> failed against real source. Slice-level extraction tests prove the slice;
+> only whole-file execution from the real entry point proves the composition.
+
+> **Oracle-strength measurement (D-161).** At freeze cadence—not on every
+> run—curate a small TSV of plausible one-line defects and run
+> `scripts/mutation-pass.sh --repo <child> --mutants <file> --out <report>`.
+> The runner clones the exact child HEAD and never edits its checkout. A
+> survivor is evidence that the frozen suite does not discriminate that defect;
+> record it for the TPM, but do not fail the build or weaken D-44's live check.
 
 ---
 

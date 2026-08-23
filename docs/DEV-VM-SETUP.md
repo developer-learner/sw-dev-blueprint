@@ -135,14 +135,40 @@ Podman becomes native.
 
 ## Acceptance
 
-- A fresh `lima start <config>` + documented setup steps yields a VM where
-  all of the following hold, with **zero permission prompts** end to end:
-  - `sandbox-run.sh` lanes verified working (constraint 2).
-  - `llm-call.sh` round-trip to host LM Studio passes from inside the VM
-    and from inside the inner Podman sandbox.
-  - A derived project's `orchestrate.sh` runs a full milestone
-    unattended.
-  - `orchestrate.sh` on the macOS host refuses to run (constraint 3).
-  - TPM shuttle copy/paste works via OSC 52 from the Mac terminal.
-- New DECISIONS.md entry recording the D-53 partial reversal.
-- Host filesystem outside the shared mount untouched by anything in the VM.
+> Bookkept 2026-08-22 against recorded evidence; rows without evidence stay
+> honestly open rather than being marked done by optimism.
+
+- [x] A fresh `lima start <config>` + documented setup steps yields a VM
+      where the criteria below hold, with **zero permission prompts** end
+      to end — satisfied in operation by Vortex's unattended milestone runs.
+- [x] `sandbox-run.sh` lanes verified working (constraint 2) — testchat
+      sessions drove mapped pytest through the lanes and probed the
+      isolation surface directly (`sandbox-run.sh -- sh -c 'id -u'` → uid
+      1000, empty CapEff, no-new-privileges; testchat `tasks/CURRENT.md`
+      session notes).
+- [x] `llm-call.sh` round-trip to the host model server passes from inside
+      the VM — exercised by every milestone's pre-flight smoke since D-55,
+      including Vortex's three `[success]` runs (v1 `a6f6ec6`, v2
+      `af7a157`, v3 `891042d`). *Inner-Podman leg:* no distinct recorded
+      round-trip from inside the container itself — the lanes carry
+      network-restricted pytest, not LLM calls; stated-but-unexercised
+      until a lane genuinely needs model access.
+- [x] A derived project's `orchestrate.sh` runs a full milestone
+      unattended — Vortex v2/v3 completed end-to-end inside the dev VM
+      with zero permission prompts (`[success] spec v2` = `af7a157`,
+      `[success] spec v3` = `891042d`).
+- [x] `orchestrate.sh` on the macOS host refuses to run (constraint 3) —
+      mechanism in the `orchestrate.sh` pre-flight (`uname -s` Darwin
+      check, hard `die`); live-probed 2026-08-22 on the macOS host: fails
+      closed with the constraint-3 message before any other work.
+- [ ] TPM shuttle copy/paste works via OSC 52 from the Mac terminal —
+      **still open**: no recorded session has exercised the clipboard shim
+      from the headless guest; TPM bundles so far traveled by conductor
+      relay instead.
+- [x] New DECISIONS.md entry recording the D-53 partial reversal — D-55
+      (2026-07-05) records the cross-boundary model-access reversal and
+      the round-trip smoke that guards it.
+- [ ] Host filesystem outside the shared mount untouched by anything in
+      the VM — **still open as a verified claim**: the provisioning
+      confines VM access to the virtiofs dev mount, but no recorded
+      session has probed an out-of-mount write attempt.

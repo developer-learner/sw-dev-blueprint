@@ -96,6 +96,16 @@
 ## D-161 — 2026-08-15 — Oracle-strength gap recorded as open: the frozen suite's discrimination is unverified (D-75 continuation)
 
 > Amended by the 2026-08-15 docs-wording commit: the Rule 5 correction below landed — BLUEPRINT.md's Rule 5 heading/table row, CLAUDE.md's guidance bullet, and new-project.sh's child CLAUDE.md template now read "binding automated completion evidence"; REVIEW.md and historical entries untouched.
+>
+> Amended 2026-08-23: the sanctioned freeze-cadence measurement now exists as
+> `scripts/mutation-pass.sh`. It tests the exact committed child SHA in an
+> isolated clone, restores after every mutant, cleans the clone on every exit,
+> and remains report-only. Its first representative pass against Vortex
+> `f7257c7` killed 4 of 6 curated plausible defects and surfaced two real
+> oracle gaps (RAM headroom and operation-snapshot model identity); evidence is
+> in `docs/research/2026-08-23-d161-vortex-mutation-report.md`. This measures
+> discrimination; it does not convert survivors into a release gate or replace
+> D-44 acceptance.
 
 **Decision:** Record as an open, load-bearing gap. INV-1 hardening (D-155) guarantees the TPM did not see the implementation; it says nothing about whether the frozen suite discriminates against plausible wrong implementations. D-75 already observes each new delta's tests failing against the pre-implementation tree at freeze time (red-before-green, warn-only); nothing verifies the existing suite's discrimination, and nothing maps the suite to the spec's clauses. The per-run mutation check remains rejected — D-75 alternatives (a) stands (orders of magnitude more compute for the same signal; flags noise on healthy tests). The sanctioned shape of any future fix is a freeze-cadence, one-shot, report-only mutation pass against the frozen suite — not implemented now. Rule 5's "Tests are ground truth" (BLUEPRINT.md) is an overclaim against the D-44 reality — acceptance is the live CEO check; the suite is binding automated completion evidence. The wording correction landed the same day (see the amendment
 note above).
@@ -1400,6 +1410,8 @@ note above).
 **Alternatives considered:** (a) Default-allow bash (previous state) — rejected: bash bypasses `permission.edit`, so a conductor could `sed -i` protected files without any prompt. (b) Default-deny — rejected: the conductor legitimately needs incidental commands (installing a dep the CEO approved, starting the app for UAT); `ask` keeps those possible with the human in the loop.
 
 **Reason:** Closes the routine accident surface of D-40's honest caveat (conductor bash outside the sandbox) while keeping fail-closed backstops (hooks, manifests) as the guarantee against what slips through. OpenCode permission enforcement remains soft (D-24/D-39); this is friction + visibility, not a wall. **Unverified assumption (Rule 6, flagged by D-47 review):** whether OpenCode matches these globs against parsed sub-commands or the raw command string is untested — if raw-string, `scripts/bootstrap.sh && <anything>` would pass as allowed. Probe this in the first live conductor session before trusting the allowlist; until then treat it as friction only.
+>
+> **Probed 2026-08-22** (`docs/research/2026-08-22-d47-permission-probe.md`, opencode v1.18.19): matching is **parsed-sub-command**, not raw-string — a compound `A && B` is decomposed and rejected even when `A`'s prefix is allow-listed. The assumption is retired. The probe surfaced a worse adjacent fact: with no bash catch-all, unmatched commands are **allowed by default**, so this repo's allow list currently grants nothing it appears to gate (finding recorded; adding `"*": "ask"` is an integration decision, not taken here). Rule order also proved load-bearing: last matching rule wins.
 
 **Do not suggest:** Widening the allowlist with write-capable commands (`sed -i`, `rm`, `git push`, `pip install`) to reduce prompts; those prompts are the point.
 
