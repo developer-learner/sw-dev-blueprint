@@ -117,7 +117,9 @@ plane_entry_guard() { # runs BEFORE first mutation; execs or falls through
     PLANE_DIR="$root"
     printf 'DRYRUN exec: SWBP_PLANE_SNAPSHOT=%s SWBP_PLANE_SHA=%s bash %s/scripts/orchestrate.sh %s\n' \
       "$root" "$pin" "$root" "$*"
-    return 0
+    # EXIT, not return: a launch-proof must stop here, never fall through
+    # into real preflight/work with model calls.
+    exit 0
   fi
   exec env SWBP_PLANE_SNAPSHOT="$root" SWBP_PLANE_SHA="$pin" \
     GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath \
