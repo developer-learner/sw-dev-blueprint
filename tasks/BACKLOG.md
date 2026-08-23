@@ -20,13 +20,6 @@
 
 ## Up Next
 
-### Correction-log row: perl `s{}{}` interpolation eats shell vars in generated code
-**Priority:** P3 (row-writing housekeeping; the lesson is already shipped)
-**Why:** The D-168 session hit the same defect twice in one day: perl replacements like `s{x}{exec bash "$HOOK_TREE/scripts/gate.sh"}` interpolated `$HOOK_TREE`/`$PLANE_DIR` as *empty perl variables* at generation time, writing literal `/scripts/gate.sh` into orchestrate.sh and .githooks/pre-commit — caught only when a real commit failed (`/scripts/phase-gate.sh: No such file`). A commit-message note exists; the CLAUDE.md correction log does not yet carry its own row. Sibling lesson (GNU-only newline substitution inside a gate diagnostic) is already logged 2026-08-22; this row extends the meta-rule from *diagnostics* to *generated invocation paths*.
-**Rough size:** Trivial (one row)
-**Depends on:** nothing — file next time CLAUDE.md is touched for a control-plane edit
-**Filed by:** ox-alpha, 2026-08-22
-
 ### Escalation-ladder validation: observe the first run that climbs it
 **Priority:** P2
 **Why:** D-70 (2026-07-15, CEO directive) armed the ladder — `MAX_TASK_STRIKES` now defaults to 2, ending ~23 milestones of the consult/verdict machinery as dead code. Arming is not validating (Rule 6): the item closes only when a real run exercises it. Observe on the first milestone where a task strikes twice: schema-valid diagnosis produced; `brief_wrong` revision actually changes the brief; `caps-exhausted` packages a usable TPM bundle; D-69 budget contains the total. Then the CEO calls it: validated, or fix what the run exposed.
@@ -47,6 +40,7 @@
 
 | Task | Completed | Notes |
 |------|-----------|-------|
+| Correction-log row: Perl `s{}{}` interpolation eats shell variables in generated code | 2026-08-23 | Added to CLAUDE.md: generator-level interpolation can erase intended shell variables before the shell ever sees them; use literal patching or explicitly escape and exercise generated invocations. |
 | EM diagnosis taxonomy: represent transient/environmental failures | 2026-08-23 | D-169 adds a positive-evidence-only verdict. The shell preserves an operator-review record and halts; it never retries, re-probes, rewrites the plan, or escalates to TPM automatically. |
 | EM diagnosis hardening: A/B denser diagnosis brief | 2026-08-23 | Three archived consults replayed through both variants: both fixed 2 schema-invalid replies; neither could honestly classify a transient failure. Dense candidate not shipped; evidence isolates the missing verdict taxonomy. |
 | 6 plumbing fixes ported from testchat M1 (fd-0, enable_thinking, error body, think-strip, mkdir, loguru) | 2026-07-03 | Commits `b73c2b7`..`5f4a59e` |
