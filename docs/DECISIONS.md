@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-171 — 2026-08-24 — Retire tpm-lint.sh; the pre-ship lint is refreeze.sh --diff
+
+**Decision:** Delete `scripts/tpm-lint.sh` with its manifest entry, the CLAUDE.md tree line, and the child symlinks (via the next template re-sync). The pre-ship mechanical lint for a staged TPM bundle is `refreeze.sh --diff <staging-dir>` itself: tpm-lint was a read-only wrapper around exactly that mode, adding only a one-line verdict.
+
+**Alternatives considered:** Wire it into a live path (pre-commit, or the TPM relay checklist) instead of retiring. Rejected: its only consumer was a human about to relay a TPM bundle, and the identical verdict is one command away; standing a permanent invocation for a wrapper with zero live callers is the bloat class the 2026-08-24 gate audit exists to stop.
+
+**Reason:** Gate audit pass 1 (vortex `tasks/AUDIT-gates-2026-08-24.md`): DOC-ONLY — zero live invocations, no selftest, no DECISIONS.md birth record (its header cites D-38; its first commit in current history is the D-131 history-restore `e9c2473`). Retirement admitted under D-115 (admit/retire safeguards on measured blast radius): the blast radius is zero because the capability is byte-identical to `refreeze.sh --diff`, which stays live and selftested. Per D-34's removal rule, the tree line and the "staged-spec lint" group comment are removed in the same commit so no doc tells an operator to invoke the removed capability.
+
+**Do not suggest:** Re-adding a wrapper/alias around `refreeze.sh --diff` "for convenience"; counting tpm-lint's absence as lost coverage (the wrapped mode is the coverage, and it is live); re-opening the retire-vs-wire question without new evidence of a live caller.
+
 ## D-170 — 2026-08-24 — Direction settled: both — template at seed, builder for life
 
 **Decision:** The builder-vs-template fork is resolved as *both*: the

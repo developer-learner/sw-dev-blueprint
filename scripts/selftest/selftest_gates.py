@@ -9579,3 +9579,93 @@ def test_synthesize_plan_chain_dag_and_edge_dedupe(synth_repo):
     t1, t2 = json.loads(r.stdout)["tasks"]
     assert t1["depends_on"] == []
     assert t2["depends_on"] == ["T1"]
+
+
+# --- 2a teeth: violating-fixture tests for the three PARTIAL gates
+# (gate audit pass 2, 2026-08-24; report: tasks/AUDIT-gates-2026-08-24.md in
+# the vortex child) ---
+# Audit pass 2 classified check-ac-postconditions, check-test-direction, and
+# flake-ledger as wired and running but lacking a dedicated violating-fixture
+# test: nothing in the suite builds an input that breaks the gate's contract
+# and asserts the gate catches it. Each test below does exactly that, plus a
+# clean companion so the fixture itself is pinned.
+
+CHECK_AC_POST = SCRIPTS / "check-ac-postconditions.py"
+CHECK_TEST_DIRECTION = SCRIPTS / "check-test-direction.py"
+
+
+def _run_ac_post(tmp_path, name, text):
+    f = tmp_path / name
+    f.write_text(text)
+    return subprocess.run(
+        [sys.executable, str(CHECK_AC_POST), str(f)],
+        capture_output=True, text=True,
+    )
+
+
+def test_ac_post_state_verb_without_postcondition_fails(tmp_path):
+    r = _run_ac_post(tmp_path, "PRD.md",
+                     "## AC-1\nThe system shall terminate the process.\n")
+    assert r.returncode == 1
+    assert "AC-1: state-changing verb (terminate) " \
+           "without 'such that' post-condition clause" in r.stderr
+
+
+def test_ac_post_state_verb_with_postcondition_passes(tmp_path):
+    r = _run_ac_post(
+        tmp_path, "PRD.md",
+        "## AC-1\nThe system shall terminate the process, such that the "
+        "health endpoint returns 503.\n")
+    assert r.returncode == 0, r.stderr
+
+
+def test_ac_post_no_state_verb_passes(tmp_path):
+    r = _run_ac_post(tmp_path, "PRD.md",
+                     "## AC-1\nThe status page shows the model name.\n")
+    assert r.returncode == 0, r.stderr
+
+
+def _direction_fixture(tmp_path, carried_source):
+    approved = tmp_path / "approved"
+    staging = tmp_path / "staging"
+    repo_tests = tmp_path / "repo-tests"
+    for d in (approved, staging, repo_tests):
+        d.mkdir(parents=True)
+    (approved / "PRD.md").write_text("## AC-1\nThe daemon starts.\n")
+    (staging / "ERD-DELTA.md").write_text("## AC-2\nNew behavior.\n")
+    (repo_tests / "test_carried.py").write_text(carried_source)
+    return staging, approved, repo_tests
+
+
+def _run_test_direction(staging, approved, repo_tests):
+    return subprocess.run(
+        [sys.executable, str(CHECK_TEST_DIRECTION),
+         "--tests-dir", str(repo_tests),
+         "--staging", str(staging),
+         "--approved", str(approved),
+         "--repo-tests", str(repo_tests)],
+        capture_output=True, text=True,
+    )
+
+
+def test_test_direction_carried_cites_new_ac_fails(tmp_path):
+    staging, approved, repo_tests = _direction_fixture(
+        tmp_path, "def test_a():\n    assert 'AC-2' in SPEC\n")
+    r = _run_test_direction(staging, approved, repo_tests)
+    assert r.returncode == 1
+    assert "carried-forward test cites AC id(s) AC-2" in r.stderr
+
+
+def test_test_direction_carried_cites_only_known_ac_passes(tmp_path):
+    staging, approved, repo_tests = _direction_fixture(
+        tmp_path, "def test_a():\n    assert 'AC-1' in SPEC\n")
+    r = _run_test_direction(staging, approved, repo_tests)
+    assert r.returncode == 0, r.stderr
+
+
+def test_flake_ledger_rejects_nonpositive_spec_version(tmp_path):
+    r = _run_flake_ledger(tmp_path, "record", "--spec-version", "0",
+                          "--nodeid", "tests/test_x.py::test_y",
+                          "--isolation-passes", "1")
+    assert r.returncode == 2
+    assert "--spec-version must be positive" in r.stderr

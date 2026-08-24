@@ -18,9 +18,9 @@ Suggested green-light order: 2 → 3 (sweep, then ledger/tiering) → 4 (scope) 
 - [x] [B] Combined TODO persisted — this file
 
 ## 2. Group A — foundation batch
-- [ ] [B] 3 fixture tests (2a shortlist) — `check-ac-postconditions.py`, `check-test-direction.py`, `flake-ledger.py`; pattern exists in selftest_gates.py
-- [ ] [B] `tpm-lint.sh` — retire or wire; if retire, cite the audit report (pass 1: DOC-ONLY, zero live invocations) as the evidence; verify the D-117 citation first (D-117 = air-gapped TPM-pack fixture)
-- [ ] [B] 6 provenance backfills — `doc-consistency`, `em-bench`, `extract-test-functions`, `flake-ledger`, `manifest-drift-guard`, `tpm-lint`; lift from correction log, don't author new
+- [x] [B] 3 fixture tests (2a shortlist) — `check-ac-postconditions.py`, `check-test-direction.py`, `flake-ledger.py`; done 2026-08-24: 6 tests appended to selftest_gates.py (violation + clean companion per gate)
+- [x] [B] `tpm-lint.sh` — retired (D-171): capability lives in `refreeze.sh --diff`; evidence = audit pass 1 (DOC-ONLY, zero live invocations, no selftest); the D-117 citation was a misattribution — retirement admitted under D-115
+- [x] [B] 6 provenance backfills — done 2026-08-24: provenance section added to the audit report (first-add commits + the doc-consistency correction-log entry; tpm-lint birth = D-38 per header, first commit in current history is the D-131 restore)
 
 ## 3. Builder path — measurement (order matters)
 - [ ] [B] 2b mutation sweep across gates — one-shot first (mutate each gate's detection logic, assert its fixture test fails); run after Group A so it covers 41/41 at 2a
