@@ -21,6 +21,40 @@
 
 ## Decisions
 
+## D-170 — 2026-08-24 — Direction settled: both — template at seed, builder for life
+
+**Decision:** The builder-vs-template fork is resolved as *both*: the
+Blueprint seeds new projects as a template (born-linked: project-local
+files + symlinks, not copy-then-clean) and continues to evolve as a
+builder for the life of every linked child; control-plane work lands in
+the Blueprint and children track it. Evidence base: decision memo
+(`vortex/tasks/DECISION-MEMO-builder-vs-template-2026-08-24.md`,
+`6c07c49`) and gate audit (`vortex/tasks/AUDIT-gates-2026-08-24.md`,
+`b3f040f` + `65da200`) — 41 control-plane scripts, 40 wired to live
+paths, 38 with fixture teeth by static read; teeth-bite (2b) and
+in-the-wild utility (3) unmeasured.
+
+**Alternatives considered:** (a) Freeze as template v1.0 and stop
+evolving centrally — rejected: converts two open measurement questions
+(2b, 3) into permanent accepted risk on a codebase with a documented
+vacuous-test history. (b) Builder without the template-at-seed half —
+rejected: the seed path is where new projects actually come from, and
+copy-then-clean is the defect the born-linked pivot removes.
+
+**Reason:** The instruments that de-risk the builder path (2b mutation
+sweep, catch ledger, tiering/cost accounting) are builder deliverables;
+choosing builder funds them. Template-at-seed keeps the birth path
+clean: one template-derived file (`check-drift.yml`) stays real by
+GitHub necessity; `ci.yml`/`container-build.yml` are project-local by
+design.
+
+**Do not suggest:** Re-opening the fork as a binary choice; freezing the
+Blueprint as v1.0; retiring gates on silence (silence cannot distinguish
+dead from dormant — use teeth-proving + catch ledger + cost accounting);
+copy-then-clean seeding.
+
+---
+
 ## D-169 — 2026-08-23 — Transient/environmental diagnoses halt for operator review; the shell never guesses a recovery
 
 **Decision:** The schema-bound EM diagnosis taxonomy gains
