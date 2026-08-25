@@ -23,7 +23,7 @@ Suggested green-light order: 2 → 3 (sweep, then ledger/tiering) → 4 (scope) 
 - [x] [B] 6 provenance backfills — done 2026-08-24: provenance section added to the audit report (first-add commits + the doc-consistency correction-log entry; tpm-lint birth = D-38 per header, first commit in current history is the D-131 restore)
 
 ## 3. Builder path — measurement (order matters)
-- [ ] [B] 2b mutation sweep across gates — one-shot first (mutate each gate's detection logic, assert its fixture test fails); run after Group A so it covers 41/41 at 2a
+- [ ] [B] 2b mutation sweep across gates — one-shot first (mutate each gate's detection logic, assert its fixture test fails); run after Group A so it covers 41/41 at 2a. **Status 2026-08-25:** the in-flight run from the parallel session left no evidence (no process, no output file, VM stopped) — treat as not run. Next: author mutants for the ambiguous gates, run `scripts/mutation-pass.sh` on Blueprint HEAD with incremental `--out` to `docs/research/2026-08-24-d161-gates-mutation-report.md`. Confirm fresh-clone + `PYTHONDONTWRITEBYTECODE=1` (the documented stale-.pyc vacuity).
 - [ ] [B] Catch ledger (standing) — after the sweep; don't stand a ledger on teeth that might not bite
 - [ ] [B] Tiering + cost accounting — after the sweep; the real retirement instrument (replaces retire-on-silence)
 - [ ] [V] Vortex recording hook for the catch ledger — joins when the ledger lands
