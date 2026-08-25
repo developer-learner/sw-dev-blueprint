@@ -24,6 +24,7 @@ Suggested green-light order: 2 → 3 (sweep, then ledger/tiering) → 4 (scope) 
 
 ## 3. Builder path — measurement (order matters)
 - [x] [B] 2b mutation sweep across gates — done 2026-08-25: 6 mutants authored for the three 2a gates (`docs/research/2026-08-24-d161-gates-mutants.tsv`); `scripts/mutation-pass.sh` on HEAD `0518bad` (isolated exact-HEAD `--no-local` clone, suite runs under `PYTHONDONTWRITEBYTECODE=1` — stale-.pyc vacuity addressed); suite = full `selftest_gates.py` (428 tests, baseline green); **6/6 killed, 0 survived, 0 authoring errors**; report `docs/research/2026-08-24-d161-gates-mutation-report.md`
+- [ ] [B] 2b-ext mutation sweep across the remaining gates — scope note 2026-08-25: the 2b run above mutation-proves only the three 2a gates (6 mutants); the other gates have fixture-level teeth (audit pass 2: 38 with teeth) but no mutation proof yet. Authoring mutants for them is a separate, larger run; "verified teeth" claims must stay scoped to the three until it lands
 - [ ] [B] Catch ledger (standing) — after the sweep; don't stand a ledger on teeth that might not bite
 - [ ] [B] Tiering + cost accounting — after the sweep; the real retirement instrument (replaces retire-on-silence)
 - [ ] [V] Vortex recording hook for the catch ledger — joins when the ledger lands
