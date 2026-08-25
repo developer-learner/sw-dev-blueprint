@@ -29,6 +29,41 @@ Suggested green-light order: 2 → 3 (sweep, then ledger/tiering) → 4 (scope) 
 - [x] [B] Tiering + cost accounting — done 2026-08-25: `scripts/gate-inventory.tsv` (41 gates: kind, teeth, probe cmd), `scripts/gate-cost.py` (per-gate wall-time probe, median of N), `scripts/gate-tiering.py` (T1 core / T2 standard / T3 review / n-a; combines teeth + catch ledger + cost; fail-closed on corrupt ledger; review evidence, never a build gate). T3 names a gate for human examination, not a retirement decision (D-170). Teeth column now carries proven/partial/unproven from the 2b-ext sweep; partial treated as demonstrated teeth. 6 selftest cases; full suite 510 passed; manifest regen
 - [ ] [V] Vortex recording hook for the catch ledger — joins when the ledger lands
 
+## 3b. Oracle-gap fixes — from the 2b-ext mutation sweep (23 survivors)
+The 2b-ext sweep (45/68 killed) surfaced 23 survivors — real mutations the
+selftest suite failed to catch. Each is a **named** oracle gap, not "improve
+coverage." Grouped by fix type; do the cheap asserts (group 1) first.
+Source: `docs/research/2026-08-25-d161-gates-ext-mutation-report.md`.
+
+### Group 1 — unasserted output/exit (10) · cheapest: add the missing assert
+- [ ] [B] `new-project.sh` — assert the bootstrap pre-check message (survivor: message changed, unobserved)
+- [ ] [B] `extract-test-functions.py` — assert which leading-comment lines are included vs dropped
+- [ ] [B] `check-drift.sh` — assert BEHIND exits 2 (survivor: rc=1 instead of 2, unobserved)
+- [ ] [B] `mutation-pass.sh` — assert the baseline runs under PYTHONDONTWRITEBYTECODE=1
+- [ ] [B] `status.sh` — assert the LLM port probe uses the documented default port
+- [ ] [B] `feature-summary.py` — assert the archive time window (recent counted, old skipped)
+- [ ] [B] `feature-summary.py` — assert outcome-line parsing precedence
+- [ ] [B] `metrics-report.py` — assert waste counting (failures = waste, successes not)
+- [ ] [B] `update-template.sh` — assert "nothing to review" only when no changes exist
+- [ ] [B] `refreeze_delta.py` — assert D-140 notice fires on non-behavioral freezes only
+
+### Group 2 — unexercised branch (11) · add a fixture that drives the branch
+- [ ] [B] `new-project.sh` — fixture that triggers the thinking-model pre-flight (Hard Rule 1)
+- [ ] [B] `check-drift.sh` — fixture with matching + divergent files to exercise the sync condition
+- [ ] [B] `sandbox-run.sh` — fixture that attempts a .git/.githooks write (blocklist)
+- [ ] [B] `sandbox-run.sh` — fixture with an escape path outside the repo root
+- [ ] [B] `link-template.sh` — fixture with correct + mismatched approval hash
+- [ ] [B] `bootstrap.sh` — fixture that exercises the dubious-ownership trust path
+- [ ] [B] `llm-call.sh` — fixture with a reasoning-only reply (thinking-model detection)
+- [ ] [B] `llm-call.sh` — fixture with a seat-mismatch (wrong model)
+- [ ] [B] `tpm-agent.sh` — fixture exercising --view vs default launch
+- [ ] [B] `tpm-agent.sh` — fixture with a non-existent settings file
+- [ ] [B] `update-template.sh` — fixture with correct + mismatched approval hash
+
+### Group 3 — fixture no-op (2) · make the stub observable
+- [ ] [B] `status.sh` — stub podman so the section's presence/absence is assertable
+- [ ] [B] `teardown.sh` — stub limactl to record stop vs start so the action is assertable
+
 ## 4. Born-linked pivot
 - [ ] [B] Scope first, then build — seed path yields project-local files + links, skipping the copy. Precision: one template-derived file stays real (`check-drift.yml`, GitHub necessity); `ci.yml`/`container-build.yml` are project-local by design
 - [ ] [V] Verify vortex integrity after seed-path changes (manifest, symlinks, full suite)
