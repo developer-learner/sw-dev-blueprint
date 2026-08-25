@@ -8342,6 +8342,80 @@ def test_group2_tpm_agent_default_mode_uses_repo_settings_file(tmp_path):
     assert "tpm-agent-settings-missing.json" not in recorded, recorded
 
 
+def test_group2_check_drift_reports_in_sync(tmp_path):
+    """check-drift.sh must classify a template-owned file whose child bytes
+    equal template@HEAD bytes as IN_SYNC (exit 0). The 2b-ext survivor
+    inverted the comparison (`=` -> `!=`), which would flag an in-sync file as
+    drifted. Drives the IN_SYNC branch with a real (child, clone) pair."""
+    child = tmp_path / "child"
+    clone = tmp_path / "clone"
+    (child / "scripts").mkdir(parents=True)
+    (clone / "scripts").mkdir(parents=True)
+    hello = "#!/bin/sh\necho new-content\n"
+    # Clone: file + manifest, committed (HEAD = birth ref).
+    (clone / "scripts" / "hello.sh").write_text(hello)
+    (clone / "scripts" / "hello.sh").chmod(0o755)
+    h = subprocess.run(["sha256sum", "scripts/hello.sh"], cwd=clone,
+                       capture_output=True, text=True, check=True).stdout.split()[0]
+    (clone / "scripts" / ".manifest-template").write_text(f"{h}  scripts/hello.sh\n")
+    _init_git(clone)
+    clone_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone,
+                                capture_output=True, text=True, check=True).stdout.strip()
+    # Child: SAME file bytes as clone HEAD (IN_SYNC) + manifest + .template-version.
+    (child / "scripts" / "hello.sh").write_text(hello)
+    (child / "scripts" / "hello.sh").chmod(0o755)
+    (child / "scripts" / ".manifest-template").write_text(f"{h}  scripts/hello.sh\n")
+    (child / ".template-version").write_text(f"repo=fake/template\nref={clone_head}\n")
+    # check-drift.sh runs from its own location, so copy it into the child.
+    cd_sh = child / "scripts" / "check-drift.sh"
+    cd_sh.write_bytes((SCRIPTS / "check-drift.sh").read_bytes())
+    cd_sh.chmod(0o755)
+    r = subprocess.run(["bash", "scripts/check-drift.sh", str(clone)],
+                       cwd=child, capture_output=True, text=True)
+    # Original: all IN_SYNC (per-file lines suppressed) -> exit 0, "in sync".
+    # Mutant (inverted `=`): the in-sync file is misread as BEHIND -> exit 2,
+    # "BEHIND" printed. Both the exit code and the message distinguish them.
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "in sync with template@" in r.stdout, r.stdout
+    assert "BEHIND" not in r.stdout, r.stdout
+
+
+def test_group2_sandbox_run_refuses_dotgit_rw(tmp_path):
+    """sandbox-run.sh must refuse `--rw .git` via the control-plane blocklist
+    BEFORE podman is consulted. The 2b-ext survivor dropped .git/.githooks from
+    the blocklist, which would let an agent mount the git dir read-write."""
+    repo = tmp_path / "proj"
+    (repo / "scripts").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    # sandbox-run computes STACK_HASH from these; with pipefail+set -e a missing
+    # file would kill the script before the --rw parsing under test.
+    (repo / "Containerfile").write_text("FROM scratch\n")
+    (repo / "requirements.txt").write_text("# none\n")
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "sandbox-run.sh"), "--rw", ".git", "--", "true"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert "control plane is never agent-writable" in r.stderr, (r.stdout, r.stderr)
+
+
+def test_group2_sandbox_run_allows_valid_subdir_rw(tmp_path):
+    """sandbox-run.sh must ALLOW a valid in-repo subdir `--rw src` (it matches
+    $repo_canon/*). The 2b-ext survivor narrowed the pattern to an exact
+    $repo_canon match, which would refuse every subdir as 'escapes repo root'.
+    The original lets src through to the podman guard; the mutant refuses it."""
+    repo = tmp_path / "proj"
+    (repo / "scripts").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "Containerfile").write_text("FROM scratch\n")
+    (repo / "requirements.txt").write_text("# none\n")
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "sandbox-run.sh"), "--rw", "src", "--", "true"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert "escapes repo root" not in (r.stdout + r.stderr), (r.stdout, r.stderr)
+
+
 def test_ci_lints_template_owned_python_scripts():
     """The unconditional control-plane job must lint scripts/, where the
     gate code and its selftests live, even for an unbootstrapped skeleton.
