@@ -1,0 +1,20 @@
+# D-161 mutation-pass results
+
+- source: `/Users/arc.elixir/dev/sw-dev-blueprint@3f14f44d2f2fce11117be3c19c1ee82631be38c7` (isolated exact-HEAD clone)
+- baseline: green
+- suite: `python3 -m pytest scripts/selftest/selftest_*.py -q`
+- totals: 10 mutants; 10 killed; 0 survived; 0 authoring errors
+- enforcement: report-only; survivors are evidence for oracle improvement, never a build gate
+
+| verdict | file | mutation | reason |
+|---|---|---|---|
+| KILLED | `scripts/new-project.sh` | `[ -x scripts/bootstrap.sh ] \|\| die "scripts/bootstrap.sh missing or not executable."` → `[ -x scripts/bootstrap.sh ] \|\| die "scripts/bootstrap.sh missing."` | bootstrap pre-check message changed (teeth assert the exact onboarding output) |
+| KILLED | `scripts/extract-test-functions.py` | `if comment_line >= 0 and lines[comment_line].lstrip().startswith("#"):` → `if comment_line >= 0 and not lines[comment_line].lstrip().startswith("#"):` | leading-comment inclusion inverted: docstring-less lines pulled in, comment headers dropped |
+| KILLED | `scripts/check-drift.sh` | `status=BEHIND; behind=1` → `status=BEHIND; behind=1; rc=1` | BEHIND now fails the gate (rc=1) instead of exiting 2 |
+| KILLED | `scripts/mutation-pass.sh` | `(cd "$WORK" && PYTHONDONTWRITEBYTECODE=1 bash -c "$SUITE") > "$PASS_TMP/baseline.log" 2>&1` → `(cd "$WORK" && bash -c "$SUITE") > "$PASS_TMP/baseline.log" 2>&1` | baseline suite loses PYTHONDONTWRITEBYTECODE=1: stale .pyc vacuity returns |
+| KILLED | `scripts/status.sh` | `probe "LM Studio (default)" 1234` → `probe "LM Studio (default)" 1235` | LLM port probe moved off the documented default port |
+| KILLED | `scripts/feature-summary.py` | `if not d.is_dir() or d.stat().st_mtime < since_epoch:` → `if not d.is_dir() or d.stat().st_mtime > since_epoch:` | archive time window inverted: old EM calls counted, recent ones skipped |
+| KILLED | `scripts/feature-summary.py` | `elif line.startswith("outcome=") and outcome == "ok":` → `elif line.startswith("outcome=") and outcome != "ok":` | outcome parsing inverted: explicit outcome line only applies when a gate/verdict already set one |
+| KILLED | `scripts/metrics-report.py` | `if outcome not in ("ok", "accepted", "valid"):` → `if outcome in ("ok", "accepted", "valid"):` | waste counting inverted: successful EM calls counted as waste, failures not |
+| KILLED | `scripts/update-template.sh` | `  if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi` → `  if [ -n "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi` | no-change detection inverted: "nothing to review" reported when changes exist |
+| KILLED | `scripts/refreeze_delta.py` | `if not (delta["changed_contract_ids"] or changed_tests or inventory_files):` → `if (delta["changed_contract_ids"] or changed_tests or inventory_files):` | D-140 notice condition inverted: behavioral freezes get the no-work notice, nonbehavioral ones stay silent |

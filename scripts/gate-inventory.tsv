@@ -1,6 +1,6 @@
 gate	script	kind	mutation_status	probe_cmd
 check-ac-postconditions	scripts/check-ac-postconditions.py	hard	proven
-check-drift	scripts/check-drift.sh	hard	unproven
+check-drift	scripts/check-drift.sh	hard	proven
 check-prd-additive	scripts/check-prd-additive.py	hard	proven
 check-spec-delta	scripts/check-spec-delta.py	hard	proven
 check-swallowed-errors	scripts/check-swallowed-errors.py	hard	proven	
@@ -12,7 +12,7 @@ doc-consistency	scripts/doc-consistency.sh	soft	proven	scripts/doc-consistency.s
 flake-ledger	scripts/flake-ledger.py	hard	proven
 manifest-drift-guard	scripts/manifest-drift-guard.sh	advisory	proven	scripts/manifest-drift-guard.sh
 phase-gate	scripts/phase-gate.sh	hard	proven
-refreeze-delta	scripts/refreeze_delta.py	hard	partial
+refreeze-delta	scripts/refreeze_delta.py	hard	proven
 spec-artifacts	scripts/spec_artifacts.py	hard	proven
 validate-plan	scripts/validate-plan.py	hard	proven
 apply-edit-blocks	scripts/apply-edit-blocks.py	tool	proven
@@ -21,22 +21,22 @@ catch-ledger	scripts/catch-ledger.py	tool	n/a	python3 scripts/catch-ledger.py re
 completion-ledger	scripts/completion-ledger.py	tool	n/a	python3 scripts/completion-ledger.py latest
 context-budget	scripts/context-budget.py	tool	proven
 em-bench	scripts/em-bench.sh	manual	n/a
-extract-test-functions	scripts/extract-test-functions.py	tool	partial
-feature-summary	scripts/feature-summary.py	tool	unproven	python3 scripts/feature-summary.py
+extract-test-functions	scripts/extract-test-functions.py	tool	proven
+feature-summary	scripts/feature-summary.py	tool	proven	python3 scripts/feature-summary.py
 link-template	scripts/link-template.sh	tool	partial
 llm-call	scripts/llm-call.sh	tool	unproven
-metrics-report	scripts/metrics-report.py	tool	partial	python3 scripts/metrics-report.py --root .
-mutation-pass	scripts/mutation-pass.sh	tool	partial
-new-project	scripts/new-project.sh	tool	unproven
+metrics-report	scripts/metrics-report.py	tool	proven	python3 scripts/metrics-report.py --root .
+mutation-pass	scripts/mutation-pass.sh	tool	proven
+new-project	scripts/new-project.sh	tool	proven
 orchestrate	scripts/orchestrate.sh	orchestrator	proven
 regen-manifest	scripts/regen-manifest.sh	tool	proven
 refreeze	scripts/refreeze.sh	orchestrator	proven
 sandbox-run	scripts/sandbox-run.sh	tool	unproven
 standing-summary	scripts/standing-summary.py	tool	proven	
-status	scripts/status.sh	tool	unproven	scripts/status.sh
+status	scripts/status.sh	tool	proven	scripts/status.sh
 teardown	scripts/teardown.sh	tool	partial
 tpm-agent	scripts/tpm-agent.sh	tool	unproven
 tpm-pack	scripts/tpm-pack.sh	tool	proven
 tpm-unpack	scripts/tpm-unpack.sh	tool	proven
 tpm-view	scripts/tpm-view.sh	tool	proven
-update-template	scripts/update-template.sh	tool	unproven
+update-template	scripts/update-template.sh	tool	proven
