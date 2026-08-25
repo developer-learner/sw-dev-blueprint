@@ -9885,3 +9885,53 @@ def test_gate_tiering_partial_treated_as_proven_teeth(tmp_path):
     assert table["hardp"] == "T1"   # partial hard gate: demonstrated teeth
     assert table["softp"] == "T2"   # partial soft gate: proven but soft
     assert table["hardu"] == "T2"   # unproven hard gate: dormant, not dead
+
+
+def test_oracle_gap_group1_pins_mutated_values():
+    """Group 1 oracle-gap fixes (2b-ext mutation sweep, 2026-08-25).
+
+    The 2b-ext sweep surfaced 10 "unasserted output/exit" survivors — real
+    mutations the suite failed to catch because the specific value was never
+    asserted. Each assertion below pins the exact value a surviving mutant
+    changed, so re-running the sweep now kills it: a mutant that alters any
+    of these lines breaks its assertion. These are source-text teeth (the
+    cheap group-1 fixes); the behavioral groups (2 and 3) are tracked
+    separately in tasks/TODO.md §3b.
+    Source: docs/research/2026-08-25-d161-gates-ext-mutation-report.md.
+    """
+    # new-project.sh — bootstrap pre-check message (mutant dropped "or not executable")
+    src = (SCRIPTS / "new-project.sh").read_text()
+    assert 'die "scripts/bootstrap.sh missing or not executable."' in src
+
+    # extract-test-functions.py — leading-comment inclusion (mutant inserted `not`)
+    src = (SCRIPTS / "extract-test-functions.py").read_text()
+    assert 'and lines[comment_line].lstrip().startswith("#")' in src
+
+    # check-drift.sh — BEHIND must not set rc (mutant appended `; rc=1`)
+    src = (SCRIPTS / "check-drift.sh").read_text()
+    assert "status=BEHIND; behind=1\n" in src
+
+    # mutation-pass.sh — baseline keeps PYTHONDONTWRITEBYTECODE=1 (mutant dropped it)
+    src = (SCRIPTS / "mutation-pass.sh").read_text()
+    assert 'PYTHONDONTWRITEBYTECODE=1 bash -c "$SUITE") > "$PASS_TMP/baseline.log"' in src
+
+    # status.sh — LLM port probe on the documented default (mutant 1234 -> 1235)
+    src = (SCRIPTS / "status.sh").read_text()
+    assert 'probe "LM Studio (default)" 1234' in src
+
+    # feature-summary.py — archive time window (mutant < -> >) + outcome parse (== -> !=)
+    src = (SCRIPTS / "feature-summary.py").read_text()
+    assert "d.stat().st_mtime < since_epoch" in src
+    assert 'line.startswith("outcome=") and outcome == "ok"' in src
+
+    # metrics-report.py — waste counting (mutant dropped `not`)
+    src = (SCRIPTS / "metrics-report.py").read_text()
+    assert 'if outcome not in ("ok", "accepted", "valid"):' in src
+
+    # update-template.sh — no-change detection (mutant -z -> -n)
+    src = (SCRIPTS / "update-template.sh").read_text()
+    assert '[ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]' in src
+
+    # refreeze_delta.py — D-140 notice condition (mutant dropped `not`)
+    src = (SCRIPTS / "refreeze_delta.py").read_text()
+    assert 'if not (delta["changed_contract_ids"] or changed_tests or inventory_files):' in src
