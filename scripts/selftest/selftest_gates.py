@@ -9929,8 +9929,12 @@ def test_oracle_gap_group1_pins_mutated_values():
     assert 'if outcome not in ("ok", "accepted", "valid"):' in src
 
     # update-template.sh — no-change detection (mutant -z -> -n)
+    # Pin the FULL no-change line, not the bare "[ -z ... ]" test: that test
+    # appears 3x in this file, so a mutant inverting one -z to -n would leave
+    # the other two for a broad substring assert to match (mutant survives).
+    # The whole line is unique, so this pins exactly the mutated line.
     src = (SCRIPTS / "update-template.sh").read_text()
-    assert '[ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]' in src
+    assert 'if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then echo "control plane already matches template@${TARGET:0:12} \u2014 nothing to review"; exit 0; fi' in src
 
     # refreeze_delta.py — D-140 notice condition (mutant dropped `not`)
     src = (SCRIPTS / "refreeze_delta.py").read_text()
