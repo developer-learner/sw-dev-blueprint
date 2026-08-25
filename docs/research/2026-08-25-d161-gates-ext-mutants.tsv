@@ -1,0 +1,69 @@
+# file	find	replacement	reason
+scripts/regen-manifest.sh	[ ! -f "$path" ]	[ -f "$path" ]	missing-file check inverted: listed files absent on disk pass, present files fail the regen
+scripts/spec_artifacts.py	return 1 if invalid else 0	return 0 if invalid else 1	exit code inverted: invalid staging reports success to refreeze
+scripts/spec_artifacts.py	or any(part in {"", ".", ".."} for part in parts))	or any(part in {"", "."} for part in parts))	traversal guard drops "..": tests/../scripts paths become allowed staging artifacts
+scripts/manifest-drift-guard.sh	[ "$staged_hash" != "$_hash" ]	[ "$staged_hash" = "$_hash" ]	drift condition inverted: matching hashes warn, drifted hashes pass silently
+scripts/tpm-view.sh	grep -vE '^[[:space:]]*(src|\./src)/' "$ESC/BATCH.md" > "$VIEW/escalations/BATCH.md"	grep -E '^[[:space:]]*(src|\./src)/' "$ESC/BATCH.md" > "$VIEW/escalations/BATCH.md"	sanitization inverted: only src/ path lines kept in the TPM view, everything else dropped
+scripts/tpm-view.sh	for doc in PRD.md ERD.md ERD-DELTA.md contracts.json; do	for doc in PRD.md ERD.md ERD-DELTA.md; do	contracts.json dropped from the materialized spec-artifact set
+scripts/new-project.sh	THINKING_MODEL) die "pre-flight: THINKING MODEL loaded (content empty, reasoning present). Load the non-thinking coder model (Hard Rule 1)." ;;	THINKING_MODEL) echo "  ok: local LLM responded" ;;	thinking-model pre-flight dies become a pass: Hard Rule 1 guard removed
+scripts/new-project.sh	[ -x scripts/bootstrap.sh ] || die "scripts/bootstrap.sh missing or not executable."	[ -x scripts/bootstrap.sh ] || die "scripts/bootstrap.sh missing."	bootstrap pre-check message changed (teeth assert the exact onboarding output)
+scripts/status.sh	if [ "${STATUS:-}" = "Running" ]; then	if [ "${STATUS:-}" != "Running" ]; then	podman section condition inverted: container report shown when VM stopped, skipped when running
+scripts/extract-test-functions.py	if name in all_top and all_top[name] not in target_funcs:	if name in all_top and all_top[name] in target_funcs:	helper collection inverted: target tests collected as helpers, real helpers dropped
+scripts/extract-test-functions.py	if comment_line >= 0 and lines[comment_line].lstrip().startswith("#"):	if comment_line >= 0 and not lines[comment_line].lstrip().startswith("#"):	leading-comment inclusion inverted: docstring-less lines pulled in, comment headers dropped
+scripts/check-drift.sh	if [ "$child" = "$head_h" ]; then	if [ "$child" != "$head_h" ]; then	sync condition inverted: matching files flagged, divergent files reported IN_SYNC
+scripts/check-drift.sh	status=BEHIND; behind=1	status=BEHIND; behind=1; rc=1	BEHIND now fails the gate (rc=1) instead of exiting 2
+scripts/context-budget.py	if size > limit:	if size < limit:	budget comparison inverted: warns under budget, silent over budget
+scripts/context-budget.py	if slice_size > source_size:	if slice_size < source_size:	slice sanity check inverted: valid slices rejected, oversized slices accepted
+scripts/sandbox-run.sh	scripts|scripts/*|.git|.git/*|.githooks|.githooks/*)	scripts|scripts/*)	control-plane write blocklist narrowed: .git/.githooks become agent-writable in the sandbox
+scripts/sandbox-run.sh	"$repo_canon"/*) ;;	"$repo_canon") ;;	escape check inverted: paths outside the repo root accepted as writable mounts
+scripts/doc-consistency.sh	hits=$(grep -inE "$tok" "$ROOT/$doc" || true)	hits=$(grep -ivE "$tok" "$ROOT/$doc" || true)	token match inverted: warns on every non-matching line, silent on stale tokens
+scripts/doc-consistency.sh	if [ -n "$hits" ]; then	if [ -z "$hits" ]; then	warning trigger inverted: warns when a doc is clean, silent when it is stale
+scripts/standing-summary.py	if "architecture" not in section_heading(section).lower():	if "architecture" in section_heading(section).lower():	file-map section filter inverted: non-architecture sections summarized, architecture sections skipped
+scripts/standing-summary.py	if len(normalized) <= limit:	if len(normalized) >= limit:	truncation bound inverted: long descriptions pass untruncated, short ones get cut
+scripts/tpm-unpack.sh	if not is_allowed(path):	if is_allowed(path):	path policy inverted: disallowed paths staged, allowed paths rejected
+scripts/tpm-unpack.sh	if path in files:	if path not in files:	duplicate detection inverted: first block rejected, repeats accepted
+scripts/apply-edit-blocks.py	if n == 0:	if n > 0:	missing-anchor fail-closed removed: absent SEARCH blocks pass the pre-check
+scripts/apply-edit-blocks.py	if n > 1:	if n < 1:	ambiguous-anchor fail-closed removed: multi-match SEARCH blocks pass the pre-check
+scripts/check-prd-additive.py	if capsule and capsule not in normalize(staged):	if capsule and capsule in normalize(staged):	capsule guard inverted: staged PRD passing requires the capsule to be removed
+scripts/check-prd-additive.py	removed = sorted(standing_acs.keys() - staged_acs.keys(),	removed = sorted(standing_acs.keys() & staged_acs.keys(),	removal detection inverted: kept ACs flagged removed, actually-removed ACs pass
+scripts/teardown.sh	[ "$DRY" = "1" ] || eval "$@"	[ "$DRY" = "0" ] || eval "$@"	dry-run guard inverted: --dry-run executes, normal runs skip
+scripts/teardown.sh	    do_or_say "limactl stop dev-vm"	    do_or_say "limactl start dev-vm"	teardown starts the VM instead of stopping it
+scripts/link-template.sh	[ "$APPROVE" = "$PLAN_SHA" ] || die "approval hash mismatch; preview again"	[ "$APPROVE" != "$PLAN_SHA" ] || die "approval hash mismatch; preview again"	approval hash check inverted: correct hash rejected, mismatched hash accepted
+scripts/link-template.sh	case "$path" in ""|/*|../*|*/../*|*/..|..) die "unsafe retired path: $path" ;; esac	case "$path" in ""|/*) die "unsafe retired path: $path" ;; esac	unsafe-path glob narrowed: traversal paths (../..) accepted for retirement
+scripts/bootstrap.sh	git config --global --add safe.directory "$root"	git config --global --add safe.directory "$root-never"	dubious-ownership fix trusts the wrong path: git still refuses the checkout
+scripts/bootstrap.sh	if [ -z "$(git config user.name || true)" ] \	if [ -n "$(git config user.name || true)" ] \	identity preflight inverted: dies when identity is set, passes when missing
+scripts/mutation-pass.sh	if [ "$BASE_RC" -ne 0 ]; then	if [ "$BASE_RC" -ne 1 ]; then	red-baseline gate weakened: rc=1 baseline treated as green, pass proceeds
+scripts/mutation-pass.sh	(cd "$WORK" && PYTHONDONTWRITEBYTECODE=1 bash -c "$SUITE") > "$PASS_TMP/baseline.log" 2>&1	(cd "$WORK" && bash -c "$SUITE") > "$PASS_TMP/baseline.log" 2>&1	baseline suite loses PYTHONDONTWRITEBYTECODE=1: stale .pyc vacuity returns
+scripts/check-swallowed-errors.py	if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):	if len(node.body) == 1 and not isinstance(node.body[0], ast.Pass):	bare-pass detection inverted: real swallows pass, non-pass handlers flagged
+scripts/check-swallowed-errors.py	if not any("#" in ln for ln in span):	if any("#" in ln for ln in span):	justification-comment check inverted: commented swallows flagged, uncommented ones pass
+scripts/llm-call.sh	if not content and reasoning:	if content and reasoning:	thinking-model detection inverted: reasoning-only replies pass, normal replies die
+scripts/llm-call.sh	elif served != expect_model:	elif served == expect_model:	seat-mismatch check inverted: correct model fails, wrong model passes
+scripts/regen-manifest.sh	mv "$TMP" "$MANIFEST"	rm -f "$TMP"	regen computes new hashes but discards them: manifest never updated
+scripts/manifest-drift-guard.sh	staged_hash="$(git -C "$ROOT" show :"$path" 2>/dev/null | sha256_of || true)"	staged_hash="$(git -C "$ROOT" show "HEAD:$path" 2>/dev/null | sha256_of || true)"	compares HEAD instead of the staged index: staged-only changes pass silently
+scripts/status.sh	probe "LM Studio (default)" 1234	probe "LM Studio (default)" 1235	LLM port probe moved off the documented default port
+scripts/contracts-delta.py	if not isinstance(entry_point, str) or not entry_point.startswith("src."):	if isinstance(entry_point, str) and entry_point.startswith("src."):	entry-point validation inverted: valid src. points dropped, foreign points mapped
+scripts/contracts-delta.py	if not pin or pin in files:	if not pin or pin not in files:	slice condition inverted: entries kept when their file is absent, dropped when present
+scripts/tpm-agent.sh	if [ "$MODE" = view ]; then	if [ "$MODE" != view ]; then	view-mode branch inverted: --view launches the plain agent, default launches the view agent
+scripts/tpm-agent.sh	exec claude --settings scripts/tpm-agent-settings.json \	exec claude --settings scripts/tpm-agent-settings-missing.json \	agent launched with a non-existent settings file
+scripts/phase-gate.sh	[ "$(readlink "$path")" = "$expected_target" ] || {	[ "$(readlink "$path")" != "$expected_target" ] || {	symlink target check inverted: correct targets fail, wrong targets pass
+scripts/phase-gate.sh	if [ -f .placeholder-gate ]; then	if [ ! -f .placeholder-gate ]; then	placeholder-gate trigger inverted: placeholder scan runs when the gate file is absent
+scripts/contracts-merge.py	if eid in standing_by_id and canon(entry) == canon(standing_by_id[eid]):	if eid in standing_by_id and canon(entry) != canon(standing_by_id[eid]):	no-op gate inverted: byte-identical staged entries pass, changed entries die as no-ops
+scripts/contracts-merge.py	if canon(entry) != canon(standing_by_id[eid]):	if canon(entry) == canon(standing_by_id[eid]):	merge-integrity check inverted: altered untouched entries pass, identical ones die
+scripts/feature-summary.py	if not d.is_dir() or d.stat().st_mtime < since_epoch:	if not d.is_dir() or d.stat().st_mtime > since_epoch:	archive time window inverted: old EM calls counted, recent ones skipped
+scripts/feature-summary.py	elif line.startswith("outcome=") and outcome == "ok":	elif line.startswith("outcome=") and outcome != "ok":	outcome parsing inverted: explicit outcome line only applies when a gate/verdict already set one
+scripts/metrics-report.py	if spec is not None and (not m_spec or int(m_spec.group(1)) != spec):	if spec is not None and (not m_spec or int(m_spec.group(1)) == spec):	spec filter inverted: runs of the requested spec skipped, other specs counted
+scripts/metrics-report.py	if outcome not in ("ok", "accepted", "valid"):	if outcome in ("ok", "accepted", "valid"):	waste counting inverted: successful EM calls counted as waste, failures not
+scripts/check-spec-delta.py	if not (repo / rel).is_file() or not (repo / rel).read_bytes() == path.read_bytes():	if not (repo / rel).is_file() or not (repo / rel).read_bytes() != path.read_bytes():	byte comparison inverted: identical staged tests counted changed, real changes invisible
+scripts/check-spec-delta.py	if not re.fullmatch(r"src/.*\.py", entry.get("file", "")):	if re.fullmatch(r"src/.*\.py", entry.get("file", "")):	pin requirement inverted: src-pinned entries pass, unpinned entries flagged
+scripts/update-template.sh	[ "$APPROVE" = "$DIFF_SHA" ] || die "approval hash mismatch — expected current DIFF-SHA $DIFF_SHA	[ "$APPROVE" != "$DIFF_SHA" ] || die "approval hash mismatch — expected current DIFF-SHA $DIFF_SHA	approval hash check inverted: correct hash rejected, mismatched hash applies the diff
+scripts/update-template.sh	  if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi	  if [ -n "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then echo "control plane already matches template@${TARGET:0:12} — nothing to review"; exit 0; fi	no-change detection inverted: "nothing to review" reported when changes exist
+scripts/tpm-pack.sh	if re.match(r"^##\s+Coder briefs \(verbatim\)\s*$", line):	if re.match(r"^##\s+Coder briefs \(verbatimX\)\s*$", line):	briefs-section heading never matches: the verbatim coder briefs survive the pack
+scripts/tpm-pack.sh	if re.search(r"`[^`]+`\s+depends on\s+`[^`]+`", line):	if re.search(r"`[^`]+`\s+depends on X\s+`[^`]+`", line):	dependency pattern never matches: DAG depends-on lines survive the pack
+scripts/refreeze_delta.py	if tag == "equal":	if tag != "equal":	opcode classification inverted: equal spans treated as changes, real changes skipped
+scripts/refreeze_delta.py	if not (delta["changed_contract_ids"] or changed_tests or inventory_files):	if (delta["changed_contract_ids"] or changed_tests or inventory_files):	D-140 notice condition inverted: behavioral freezes get the no-work notice, nonbehavioral ones stay silent
+scripts/refreeze.sh	if [ -d "$IN" ] && ! git check-ignore -q "$IN"; then	if [ -d "$IN" ] && git check-ignore -q "$IN"; then	gitignore check inverted: dies when the staging dir IS ignored, passes when it is not
+scripts/refreeze.sh	if [ "$AST_COUNT" -eq 0 ]; then	if [ "$AST_COUNT" -ne 0 ]; then	AST suite check inverted: dies when test functions exist, passes on an empty suite
+scripts/orchestrate.sh	    [ "$actual" = "$expected" ] \	    [ "$actual" != "$expected" ] \	installed-plane drift check inverted: matching hashes die, drifted hashes pass
+scripts/orchestrate.sh	[ "$last_v" -le "$FROZEN_V" ] \	[ "$last_v" -ge "$FROZEN_V" ] \	prior-spec version check inverted: newer prior versions pass, older ones die
+scripts/validate-plan.py	    return t_seg == p_seg	    return t_seg != p_seg	exact segment match inverted: identical path segments fail, differing segments match
+scripts/validate-plan.py	    return order if len(order) == len(ids) else None	    return order if len(order) != len(ids) else None	cycle detection inverted: cyclic plans return an order, acyclic plans return None

@@ -9865,3 +9865,23 @@ def test_gate_tiering_fails_closed_on_malformed_ledger(tmp_path):
                   "--ledger", str(ledger), cwd=tmp_path)
     assert r.returncode == 1, (r.stdout, r.stderr)
     assert "cannot read ledger" in r.stderr
+
+
+def test_gate_tiering_partial_treated_as_proven_teeth(tmp_path):
+    # A gate that killed 1 of 2 mutants has demonstrated real teeth; the
+    # survivor is an oracle gap, not proof the gate is dead. So "partial"
+    # tiers the same as "proven" (T1 for a hard gate).
+    inv = _write_inventory(tmp_path, [
+        ("hardp", "scripts/a.py", "hard", "partial", ""),
+        ("softp", "scripts/b.py", "soft", "partial", ""),
+        ("hardu", "scripts/c.py", "hard", "unproven", ""),
+    ])
+    r = _run_tool(GATE_TIERING, "--inventory", str(inv),
+                  "--ledger", str(tmp_path / "absent.json"), cwd=tmp_path)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    table = {l.split("|")[1].strip(): l.split("|")[6].strip()
+             for l in r.stdout.splitlines()
+             if l.startswith("| hardp") or l.startswith("| softp") or l.startswith("| hardu")}
+    assert table["hardp"] == "T1"   # partial hard gate: demonstrated teeth
+    assert table["softp"] == "T2"   # partial soft gate: proven but soft
+    assert table["hardu"] == "T2"   # unproven hard gate: dormant, not dead

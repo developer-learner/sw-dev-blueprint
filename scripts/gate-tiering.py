@@ -4,7 +4,8 @@
 Retiring a gate on silence is forbidden — silence cannot distinguish a dead
 gate from a dormant one. This tool combines the three signals that can:
 
-  1. teeth-proving   — the gate's mutation status (proven / pending / n/a)
+  1. teeth-proving   — the gate's mutation status
+                       (proven / partial / unproven / pending / n/a)
   2. catch ledger    — in-the-wild catches recorded by refreeze.sh
   3. cost accounting — per-gate wall time from gate-cost.py
 
@@ -14,8 +15,8 @@ human review, never a build gate: tiering exits 0 on a successful report and
 
 Tiers
 -----
-  T1  core        proven teeth, or at least one in-the-wild catch.
-                  Keep; always run.
+  T1  core        proven teeth (all or some mutants killed), or at
+                  least one in-the-wild catch. Keep; always run.
   T2  standard    hard gate with unproven teeth and no catches yet.
                   Keep; dormant, not dead — awaiting evidence.
   T3  review      soft/advisory gate, unproven teeth, zero catches.
@@ -84,7 +85,9 @@ def read_cost(path: Path | None) -> dict[str, str]:
 def assign_tier(kind: str, mutation_status: str, catches: int) -> str:
     if kind not in TIERED_KINDS:
         return "n/a"
-    proven = mutation_status == "proven"
+    # "partial" (some mutants killed) still demonstrates real teeth —
+    # the survivor is an oracle gap to close, not proof the gate is dead.
+    proven = mutation_status in ("proven", "partial")
     if kind == "hard":
         if proven or catches > 0:
             return "T1"
