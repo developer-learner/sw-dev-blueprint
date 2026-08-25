@@ -6320,6 +6320,7 @@ def freezable_repo(tmp_path):
         "check-ac-postconditions.py",
         "check-test-direction.py",
         "validate-plan.py",
+        "catch-ledger.py",
     ):
         target = tmp_path / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
@@ -9669,3 +9670,99 @@ def test_flake_ledger_rejects_nonpositive_spec_version(tmp_path):
                           "--isolation-passes", "1")
     assert r.returncode == 2
     assert "--spec-version must be positive" in r.stderr
+
+
+# --- Catch ledger (D-170): in-the-wild gate-catch record -------------------
+# The ledger is the witness that tiering + cost accounting reads: a gate
+# that rejects a real delta is evidence of utility. Fixture failures never
+# reach it (they do not run through refreeze.sh), so teeth-proving and
+# in-the-wild utility stay separate measurements.
+
+CATCH_LEDGER = SCRIPTS / "catch-ledger.py"
+
+
+def _run_catch_ledger(tmp_path, *args):
+    return subprocess.run(
+        [sys.executable, str(CATCH_LEDGER), *args],
+        capture_output=True, text=True, cwd=tmp_path,
+    )
+
+
+def test_catch_ledger_records_counts_and_dedupes(tmp_path):
+    ledger = tmp_path / ".catch-ledger.json"
+    r = _run_catch_ledger(tmp_path, "record", "--ledger", str(ledger),
+                          "--gate", "check-ac-postconditions",
+                          "--spec-version", "2")
+    assert r.returncode == 0, r.stderr
+    # the same (gate, spec-version) twice is one catch, not two
+    r = _run_catch_ledger(tmp_path, "record", "--ledger", str(ledger),
+                          "--gate", "check-ac-postconditions",
+                          "--spec-version", "2")
+    assert r.returncode == 0, r.stderr
+    counted = _run_catch_ledger(tmp_path, "count", "--ledger", str(ledger),
+                                "--gate", "check-ac-postconditions")
+    assert counted.stdout.strip() == "1", counted.stdout
+    r = _run_catch_ledger(tmp_path, "record", "--ledger", str(ledger),
+                          "--gate", "check-ac-postconditions",
+                          "--spec-version", "3")
+    assert r.returncode == 0, r.stderr
+    counted = _run_catch_ledger(tmp_path, "count", "--ledger", str(ledger),
+                                "--gate", "check-ac-postconditions")
+    assert counted.stdout.strip() == "2", counted.stdout
+
+
+def test_catch_ledger_report_lists_gates_with_counts(tmp_path):
+    ledger = tmp_path / ".catch-ledger.json"
+    for gate, version in (("check-ac-postconditions", "2"),
+                          ("check-test-direction", "5")):
+        r = _run_catch_ledger(tmp_path, "record", "--ledger", str(ledger),
+                              "--gate", gate, "--spec-version", version)
+        assert r.returncode == 0, r.stderr
+    reported = _run_catch_ledger(tmp_path, "report", "--ledger", str(ledger))
+    assert reported.returncode == 0, reported.stderr
+    assert ("check-ac-postconditions\tcatches=1\tlatest_spec_v2"
+            in reported.stdout), reported.stdout
+    assert ("check-test-direction\tcatches=1\tlatest_spec_v5"
+            in reported.stdout), reported.stdout
+
+
+def test_catch_ledger_fails_closed_when_malformed(tmp_path):
+    ledger = tmp_path / ".catch-ledger.json"
+    ledger.write_text('{"schema_version": 1, "gates": {"x": "not a list"}}')
+    r = _run_catch_ledger(tmp_path, "count", "--ledger", str(ledger),
+                          "--gate", "x")
+    assert r.returncode == 1, (r.returncode, r.stderr)
+    assert "catch-ledger:" in r.stderr
+
+
+def test_catch_ledger_rejects_bad_gate_name(tmp_path):
+    ledger = tmp_path / ".catch-ledger.json"
+    r = _run_catch_ledger(tmp_path, "record", "--ledger", str(ledger),
+                          "--gate", "bad\ngate", "--spec-version", "1")
+    assert r.returncode == 1, (r.returncode, r.stderr)
+    assert "control character" in r.stderr
+
+
+def test_refreeze_records_catch_when_gate_rejects(freezable_repo):
+    """Wiring: a gate that rejects a real staged delta leaves a catch in the
+    ledger before refreeze dies — the record is the witness, the die is the
+    gate, and the record never masks the die."""
+    incoming = freezable_repo / "scripts" / ".approved" / "incoming"
+    (incoming / "ERD-DELTA.md").write_text(
+        "# Current milestone\n\n"
+        "## Changed acceptance criteria\n\n"
+        "## AC-1\nThe system shall terminate the process.\n\n"
+        "## Superseded acceptance criteria\n\n"
+        "None.\n\n"
+        "## Changed files\n\n"
+        "- src/app.py\n\n"
+        "## Test-to-file mapping\n\n"
+        + _PIN_ROW("test_param")
+    )
+    r = _run_refreeze_install(freezable_repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    ledger = freezable_repo / ".catch-ledger.json"
+    assert ledger.is_file(), (r.stdout, r.stderr)
+    data = json.loads(ledger.read_text())
+    assert "check-ac-postconditions" in data["gates"], data
+    assert {"spec_version": 2} in data["gates"]["check-ac-postconditions"], data

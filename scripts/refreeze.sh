@@ -94,6 +94,16 @@ V=$(cat "$APPROVED/VERSION" 2>/dev/null || echo 0)
 NEW=$((V + 1))
 mkdir -p "$APPROVED" tests
 
+# --- In-the-wild catch ledger (D-170) --------------------------------------
+# A gate that rejects a real delta is evidence of utility. Each hard gate
+# below records its catch before dying; tiering + cost accounting reads the
+# ledger. The record is best-effort and must never mask the gate's verdict —
+# the die is the gate, the ledger is the witness.
+record_catch() {
+  python3 scripts/catch-ledger.py record --gate "$1" --spec-version "$NEW" \
+    >/dev/null 2>&1 || true
+}
+
 # --- Staging exclusion is structural, not conventional (vortex 2026-08-22) --
 # Every lane check downstream scopes itself with ':(exclude)<staging>' and
 # trusts that exclusion; if the staging dir is NOT gitignored, staged
@@ -271,6 +281,7 @@ fi
 if ! SPEC_DELTA_KIND=$(python3 scripts/check-spec-delta.py \
   --staging "$IN" --approved "$APPROVED" --repo . --current-version "$V" \
   --contracts "$MERGED_CONTRACTS"); then
+  record_catch check-spec-delta
   die "current-milestone ERD delta rejected (D-107)"
 fi
 RETIRE_ERD_DELTA=0
@@ -294,7 +305,7 @@ for _s5f in PRD.md ERD-DELTA.md; do
 done
 if [ -n "$S5_FILES" ]; then
   python3 scripts/check-ac-postconditions.py $S5_FILES \
-    || die "S5 rejected: state-changing AC(s) without 'such that' post-condition clause — every AC that spawns/terminates/kills/unloads/evicts/deletes/releases/clears/cancels MUST name an observable check"
+    || { record_catch check-ac-postconditions; die "S5 rejected: state-changing AC(s) without 'such that' post-condition clause — every AC that spawns/terminates/kills/unloads/evicts/deletes/releases/clears/cancels MUST name an observable check"; }
 fi
 
 # --- D-136: PRD additive-only guard ------------------------------------------
@@ -306,7 +317,7 @@ fi
 # fires in --diff too, so the CEO never previews a lossy PRD.
 if [ -f "$IN/PRD.md" ] && [ -f "$APPROVED/PRD.md" ]; then
   python3 scripts/check-prd-additive.py "$APPROVED/PRD.md" "$IN/PRD.md" \
-    || die "PRD additive guard rejected the delta (D-136) — a staged PRD must carry the standing product capsule and every historical AC id; record supersessions in ERD-DELTA.md, do not delete the criterion"
+    || { record_catch check-prd-additive; die "PRD additive guard rejected the delta (D-136) — a staged PRD must carry the standing product capsule and every historical AC id; record supersessions in ERD-DELTA.md, do not delete the criterion"; }
 fi
 
 # --- Sanity-check incoming contracts against the schema's structural core ---
@@ -391,7 +402,7 @@ while IFS= read -r f; do [ -n "$f" ] || continue; rm -f "$PREVIEW/$f"; done <<< 
 INV4_CONTRACTS="$APPROVED/contracts.json"
 [ -f "$IN/contracts.json" ] && INV4_CONTRACTS="$MERGED_CONTRACTS"
 python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
-  || die "INV-4 rejected the delta — fix the tests or lock the surface in contracts.json, then restage"
+  || { record_catch check-test-surface; die "INV-4 rejected the delta — fix the tests or lock the surface in contracts.json, then restage"; }
 
 # --- S6: reverse-direction test lint (live tests vs NEW ACs) ------------
 # The v58 defect class (correction log 2026-07-25): the forward lints check
@@ -406,7 +417,7 @@ python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "
 # exist in testchat's live suite as of this writing).
 python3 scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
   --staging "$IN" --approved "$APPROVED" --repo-tests tests \
-  || die "S6 rejected the delta (reverse-direction lint) — see findings above; restage a URL-scoped test or re-attribute the AC"
+  || { record_catch check-test-direction; die "S6 rejected the delta (reverse-direction lint) — see findings above; restage a URL-scoped test or re-attribute the AC"; }
 
 # --- D-78: freeze-time satisfiability preflight ---
 # The plan gate's exact plan↔inventory bijection means a new route or
@@ -418,7 +429,7 @@ python3 scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
 # the diff — in --diff mode too, so the CEO never reviews a doomed delta.
 if [ -f "$IN/contracts.json" ]; then
   python3 scripts/validate-plan.py --spec-preflight "$APPROVED/contracts.json" "$MERGED_CONTRACTS" \
-    || die "satisfiability preflight rejected the delta (D-78) — add the named implementing file(s) to contracts.files (or fix the entry_point) and restage"
+    || { record_catch validate-plan; die "satisfiability preflight rejected the delta (D-78) — add the named implementing file(s) to contracts.files (or fix the entry_point) and restage"; }
 fi
 
 # --- Item 1: every changed test function must carry an owning-file pin ---
@@ -437,6 +448,7 @@ PIN_GATE_ARGS=(--old-root . --new-root "$IN")
 [ -f "$IN/ERD-DELTA.md" ] && PIN_GATE_ARGS+=(--erd-delta "$IN/ERD-DELTA.md")
 if ! python3 scripts/refreeze_delta.py pin-gate "${PIN_GATE_ARGS[@]}" \
     $CHANGED_TEST_FILES; then
+  record_catch refreeze_delta-pin-gate
   die "owning-file pin gate rejected the delta — every added or modified test function must name its owner file in contracts.test_mapping (or the ERD-DELTA '## Test-to-file mapping' section); see the listing above and restage"
 fi
 
