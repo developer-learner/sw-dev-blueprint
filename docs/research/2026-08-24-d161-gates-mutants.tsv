@@ -1,0 +1,7 @@
+# file	find	replacement	reason
+scripts/check-ac-postconditions.py	if verbs and not POST_CONDITION.search(ac_text):	if verbs and POST_CONDITION.search(ac_text):	detection inverted: flags ACs that have a post-condition, lets state-verb ACs without one pass
+scripts/check-ac-postconditions.py	return 1 if all_errors else 0	return 0 if all_errors else 1	exit code inverted: violations report success
+scripts/check-ac-postconditions.py	spawn|terminate|kill|unload|evict|delete|release|clear|cancel	spawn|kill|unload|evict|delete|release|clear|cancel	verb list loses 'terminate', the verb the 2a fixture AC uses
+scripts/flake-ledger.py	if getattr(args, "spec_version", 1) < 1:	if getattr(args, "spec_version", 1) < 0:	boundary moves from 1 to 0: spec-version 0 accepted
+scripts/check-test-direction.py	hits = sorted(set(AC_ID.findall(py.read_text())) & new)	hits = sorted(set(AC_ID.findall(py.read_text())) | new)	intersection becomes union: carried tests citing approved ACs get flagged
+scripts/check-test-direction.py	if hits:	if not hits:	finding condition inverted: citing a new AC passes, clean files fail

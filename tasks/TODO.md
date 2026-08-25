@@ -23,7 +23,7 @@ Suggested green-light order: 2 → 3 (sweep, then ledger/tiering) → 4 (scope) 
 - [x] [B] 6 provenance backfills — done 2026-08-24: provenance section added to the audit report (first-add commits + the doc-consistency correction-log entry; tpm-lint birth = D-38 per header, first commit in current history is the D-131 restore)
 
 ## 3. Builder path — measurement (order matters)
-- [ ] [B] 2b mutation sweep across gates — one-shot first (mutate each gate's detection logic, assert its fixture test fails); run after Group A so it covers 41/41 at 2a. **Status 2026-08-25:** the in-flight run from the parallel session left no evidence (no process, no output file, VM stopped) — treat as not run. Next: author mutants for the ambiguous gates, run `scripts/mutation-pass.sh` on Blueprint HEAD with incremental `--out` to `docs/research/2026-08-24-d161-gates-mutation-report.md`. Confirm fresh-clone + `PYTHONDONTWRITEBYTECODE=1` (the documented stale-.pyc vacuity).
+- [x] [B] 2b mutation sweep across gates — done 2026-08-25: 6 mutants authored for the three 2a gates (`docs/research/2026-08-24-d161-gates-mutants.tsv`); `scripts/mutation-pass.sh` on HEAD `0518bad` (isolated exact-HEAD `--no-local` clone, suite runs under `PYTHONDONTWRITEBYTECODE=1` — stale-.pyc vacuity addressed); suite = full `selftest_gates.py` (428 tests, baseline green); **6/6 killed, 0 survived, 0 authoring errors**; report `docs/research/2026-08-24-d161-gates-mutation-report.md`
 - [ ] [B] Catch ledger (standing) — after the sweep; don't stand a ledger on teeth that might not bite
 - [ ] [B] Tiering + cost accounting — after the sweep; the real retirement instrument (replaces retire-on-silence)
 - [ ] [V] Vortex recording hook for the catch ledger — joins when the ledger lands
