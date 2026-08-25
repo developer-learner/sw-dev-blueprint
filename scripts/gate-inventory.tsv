@@ -1,0 +1,42 @@
+gate	script	kind	mutation_status	probe_cmd
+check-ac-postconditions	scripts/check-ac-postconditions.py	hard	proven
+check-drift	scripts/check-drift.sh	hard	pending
+check-prd-additive	scripts/check-prd-additive.py	hard	pending
+check-spec-delta	scripts/check-spec-delta.py	hard	pending
+check-swallowed-errors	scripts/check-swallowed-errors.py	hard	pending	
+check-test-direction	scripts/check-test-direction.py	hard	proven
+check-test-surface	scripts/check-test-surface.py	hard	pending
+contracts-delta	scripts/contracts-delta.py	hard	pending
+contracts-merge	scripts/contracts-merge.py	hard	pending
+doc-consistency	scripts/doc-consistency.sh	soft	pending	scripts/doc-consistency.sh
+flake-ledger	scripts/flake-ledger.py	hard	proven
+manifest-drift-guard	scripts/manifest-drift-guard.sh	advisory	pending	scripts/manifest-drift-guard.sh
+phase-gate	scripts/phase-gate.sh	hard	pending
+refreeze-delta	scripts/refreeze_delta.py	hard	pending
+spec-artifacts	scripts/spec_artifacts.py	hard	pending
+validate-plan	scripts/validate-plan.py	hard	pending
+apply-edit-blocks	scripts/apply-edit-blocks.py	tool	n/a
+bootstrap	scripts/bootstrap.sh	tool	n/a
+catch-ledger	scripts/catch-ledger.py	tool	n/a	python3 scripts/catch-ledger.py report
+completion-ledger	scripts/completion-ledger.py	tool	n/a	python3 scripts/completion-ledger.py latest
+context-budget	scripts/context-budget.py	tool	n/a
+em-bench	scripts/em-bench.sh	manual	n/a
+extract-test-functions	scripts/extract-test-functions.py	tool	n/a
+feature-summary	scripts/feature-summary.py	tool	n/a	python3 scripts/feature-summary.py
+link-template	scripts/link-template.sh	tool	n/a
+llm-call	scripts/llm-call.sh	tool	n/a
+metrics-report	scripts/metrics-report.py	tool	n/a	python3 scripts/metrics-report.py --root .
+mutation-pass	scripts/mutation-pass.sh	tool	n/a
+new-project	scripts/new-project.sh	tool	n/a
+orchestrate	scripts/orchestrate.sh	orchestrator	n/a
+regen-manifest	scripts/regen-manifest.sh	tool	n/a
+refreeze	scripts/refreeze.sh	orchestrator	n/a
+sandbox-run	scripts/sandbox-run.sh	tool	n/a
+standing-summary	scripts/standing-summary.py	tool	n/a	
+status	scripts/status.sh	tool	n/a	scripts/status.sh
+teardown	scripts/teardown.sh	tool	n/a
+tpm-agent	scripts/tpm-agent.sh	tool	n/a
+tpm-pack	scripts/tpm-pack.sh	tool	n/a
+tpm-unpack	scripts/tpm-unpack.sh	tool	n/a
+tpm-view	scripts/tpm-view.sh	tool	n/a
+update-template	scripts/update-template.sh	tool	n/a

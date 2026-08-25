@@ -9766,3 +9766,102 @@ def test_refreeze_records_catch_when_gate_rejects(freezable_repo):
     data = json.loads(ledger.read_text())
     assert "check-ac-postconditions" in data["gates"], data
     assert {"spec_version": 2} in data["gates"]["check-ac-postconditions"], data
+
+
+# --- Gate tiering + cost accounting (D-170): the retirement instrument -----
+# Tiering combines teeth-proving (mutation status), the catch ledger, and
+# per-gate cost. It is review evidence, never a build gate, and fails closed
+# when an input cannot be trusted.
+
+GATE_COST = SCRIPTS / "gate-cost.py"
+GATE_TIERING = SCRIPTS / "gate-tiering.py"
+
+
+def _run_tool(path, *args, cwd):
+    return subprocess.run(
+        [sys.executable, str(path), *args],
+        capture_output=True, text=True, cwd=cwd,
+    )
+
+
+def _write_inventory(tmp_path, rows):
+    inv = tmp_path / "gate-inventory.tsv"
+    lines = ["gate\tscript\tkind\tmutation_status\tprobe_cmd"]
+    for r in rows:
+        lines.append("\t".join(r))
+    inv.write_text("\n".join(lines) + "\n")
+    return inv
+
+
+def test_gate_cost_probes_and_reports_not_probed(tmp_path):
+    inv = _write_inventory(tmp_path, [
+        ("fast", "scripts/true.sh", "hard", "proven", "true"),
+        ("slow", "scripts/nope.sh", "hard", "pending", ""),
+    ])
+    r = _run_tool(GATE_COST, "--inventory", str(inv), "--runs", "1", cwd=tmp_path)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    lines = r.stdout.splitlines()
+    assert lines[0] == "gate\tscript\tprobe_ms\truns\tprobe_ok"
+    by_gate = {l.split("\t")[0]: l.split("\t") for l in lines[1:]}
+    assert by_gate["fast"][4] == "ok"
+    assert int(by_gate["fast"][2]) >= 0
+    assert by_gate["slow"][4] == "not-probed"
+    assert by_gate["slow"][2] == ""
+
+
+def test_gate_cost_marks_failing_probe(tmp_path):
+    inv = _write_inventory(tmp_path, [
+        ("bad", "scripts/false.sh", "hard", "proven", "false"),
+    ])
+    r = _run_tool(GATE_COST, "--inventory", str(inv), "--runs", "1", cwd=tmp_path)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    row = [l for l in r.stdout.splitlines()[1:] if l.startswith("bad\t")][0]
+    assert row.split("\t")[4] == "fail"
+
+
+def test_gate_tiering_assigns_t1_to_proven_hard_gate(tmp_path):
+    inv = _write_inventory(tmp_path, [
+        ("g1", "scripts/a.py", "hard", "proven", ""),
+        ("g2", "scripts/b.py", "hard", "pending", ""),
+        ("g3", "scripts/c.py", "soft", "pending", ""),
+        ("t1", "scripts/d.py", "tool", "n/a", ""),
+    ])
+    r = _run_tool(GATE_TIERING, "--inventory", str(inv),
+                  "--ledger", str(tmp_path / "absent.json"), cwd=tmp_path)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    table = {l.split("|")[1].strip(): l.split("|") for l in r.stdout.splitlines()
+             if l.startswith("| g") or l.startswith("| t")}
+    def tier(g):
+        return table[g][6].strip()
+    assert tier("g1") == "T1"
+    assert tier("g2") == "T2"
+    assert tier("g3") == "T3"
+    assert tier("t1") == "n/a"
+
+
+def test_gate_tiering_catch_promotes_soft_gate_to_t1(tmp_path):
+    inv = _write_inventory(tmp_path, [
+        ("soft", "scripts/c.py", "soft", "pending", ""),
+    ])
+    ledger = tmp_path / ".catch-ledger.json"
+    ledger.write_text(json.dumps(
+        {"schema_version": 1,
+         "gates": {"soft": [{"spec_version": 3}]}}))
+    r = _run_tool(GATE_TIERING, "--inventory", str(inv),
+                  "--ledger", str(ledger), cwd=tmp_path)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    row = [l for l in r.stdout.splitlines() if l.startswith("| soft")][0]
+    assert row.split("|")[6].strip() == "T1"
+    assert row.split("|")[4].strip() == "1"
+
+
+def test_gate_tiering_fails_closed_on_malformed_ledger(tmp_path):
+    inv = _write_inventory(tmp_path, [
+        ("g1", "scripts/a.py", "hard", "proven", ""),
+    ])
+    ledger = tmp_path / "bad.json"
+    ledger.write_text("garbage")
+    r = _run_tool(GATE_TIERING, "--inventory", str(inv),
+                  "--ledger", str(ledger), cwd=tmp_path)
+    assert r.returncode == 1, (r.stdout, r.stderr)
+    assert "cannot read ledger" in r.stderr
