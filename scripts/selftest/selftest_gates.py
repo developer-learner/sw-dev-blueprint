@@ -8308,6 +8308,40 @@ def test_bootstrap_scopes_vm_git_trust_and_requires_identity():
     assert "Git identity is missing" in source
 
 
+# --- Group 2 oracle gaps (2b-ext survivors): drive the unexercised branches ---
+# Unlike Group 1 (pin the mutated source text), each fixture here actually
+# DRIVES the code into the branch and asserts the behavior, so the surviving
+# mutant (which inverts/removes the branch) now fails the suite.
+
+def test_group2_tpm_agent_default_mode_uses_repo_settings_file(tmp_path):
+    """tpm-agent.sh default (repo) mode must launch claude with the repo
+    settings file. The 2b-ext survivor swapped
+    `scripts/tpm-agent-settings.json` for `...-missing.json`, which would point
+    the TPM agent at a settings file that does not exist. A fake `claude` on
+    PATH records its argv so the exact --settings value is observable."""
+    repo = tmp_path / "proj"
+    (repo / "scripts").mkdir(parents=True)
+    shutil.copy(SCRIPTS / "tpm-agent.sh", repo / "scripts" / "tpm-agent.sh")
+    shutil.copy(SCRIPTS / "spec_artifacts.py", repo / "scripts" / "spec_artifacts.py")
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    claude = fakebin / "claude"
+    claude.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$CLAUDE_ARGS_OUT"\n')
+    claude.chmod(0o755)
+    args_out = tmp_path / "claude-args.txt"
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    env["CLAUDE_ARGS_OUT"] = str(args_out)
+    r = subprocess.run(
+        ["bash", str(repo / "scripts" / "tpm-agent.sh")],
+        cwd=repo, env=env, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    recorded = args_out.read_text()
+    assert "scripts/tpm-agent-settings.json" in recorded, recorded
+    assert "tpm-agent-settings-missing.json" not in recorded, recorded
+
+
 def test_ci_lints_template_owned_python_scripts():
     """The unconditional control-plane job must lint scripts/, where the
     gate code and its selftests live, even for an unbootstrapped skeleton.
