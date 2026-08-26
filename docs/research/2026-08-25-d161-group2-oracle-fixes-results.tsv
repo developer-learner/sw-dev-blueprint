@@ -1,0 +1,23 @@
+# D-161 mutation-pass results — Group 2 oracle-gap fixes (batch 1 of 11)
+
+Group 2 = the 11 "unexercised branch" survivors from the 2b-ext sweep. Each fix is a
+FUNCTIONAL fixture that drives the specific branch (not a source-text pin). This batch
+covers items #10, #2, #3, #4 — verified across two isolated exact-HEAD passes:
+
+- pass A (source `695e13e`): item #10 — 1 mutant, 1 killed
+- pass B (source `1e759f3`): items #2, #3, #4 — 3 mutants, 3 killed
+- suite: `python3 -m pytest scripts/selftest/selftest_*.py -q`
+- totals: 4 mutants; 4 killed; 0 survived; 0 authoring errors
+- enforcement: report-only; survivors are evidence for oracle improvement, never a build gate
+
+| verdict | file | mutation | reason |
+|---|---|---|---|
+| KILLED | `scripts/tpm-agent.sh` | `exec claude --settings scripts/tpm-agent-settings.json` → `exec claude --settings scripts/tpm-agent-settings-missing.json` | Group2 #10 default-mode settings file (fake `claude` on PATH records argv; asserts the repo settings filename, not `-missing`) |
+| KILLED | `scripts/check-drift.sh` | `if [ "$child" = "$head_h" ]; then` → `if [ "$child" != "$head_h" ]; then` | Group2 #2 IN_SYNC (real (child,clone) pair with identical bytes → exit 0, "in sync"; mutant misreads the in-sync file as BEHIND → exit 2) |
+| KILLED | `scripts/sandbox-run.sh` | `scripts\|scripts/*\|.git\|...` → `scripts\|scripts/*` | Group2 #3 dotgit blocklist (`--rw .git` refused by the control-plane blocklist before podman; mutant dropped .git/.githooks from the list) |
+| KILLED | `scripts/sandbox-run.sh` | `"$repo_canon"/*) ;;` → `"$repo_canon") ;;` | Group2 #4 valid subdir allow (`--rw src` is allowed, not "escapes repo root"; mutant narrowed the pattern to an exact repo-root match) |
+
+Gate-status effect (gate-inventory.tsv):
+- check-drift → proven (BEHIND mutant fixed in Group 1 + IN_SYNC #2 fixed here = 2/2)
+- sandbox-run → proven (#3 + #4 fixed here = 2/2)
+- tpm-agent → partial (#10 fixed here; #9 --view still pending = 1/2)

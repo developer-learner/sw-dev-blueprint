@@ -31,11 +31,11 @@ new-project	scripts/new-project.sh	tool	proven
 orchestrate	scripts/orchestrate.sh	orchestrator	proven
 regen-manifest	scripts/regen-manifest.sh	tool	proven
 refreeze	scripts/refreeze.sh	orchestrator	proven
-sandbox-run	scripts/sandbox-run.sh	tool	unproven
+sandbox-run	scripts/sandbox-run.sh	tool	proven
 standing-summary	scripts/standing-summary.py	tool	proven	
 status	scripts/status.sh	tool	proven	scripts/status.sh
 teardown	scripts/teardown.sh	tool	partial
-tpm-agent	scripts/tpm-agent.sh	tool	unproven
+tpm-agent	scripts/tpm-agent.sh	tool	partial
 tpm-pack	scripts/tpm-pack.sh	tool	proven
 tpm-unpack	scripts/tpm-unpack.sh	tool	proven
 tpm-view	scripts/tpm-view.sh	tool	proven
