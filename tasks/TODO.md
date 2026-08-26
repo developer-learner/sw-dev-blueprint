@@ -72,7 +72,7 @@ All 10 closed: source-text assertions added to `selftest_gates.py` (`test_group1
 - [ ] [B] `bootstrap.sh` — fixture that exercises the dubious-ownership trust path
 - [ ] [B] `llm-call.sh` — fixture with a reasoning-only reply (thinking-model detection)
 - [ ] [B] `llm-call.sh` — fixture with a seat-mismatch (wrong model)
-- [ ] [B] `tpm-agent.sh` — fixture exercising --view vs default launch
+- [x] [B] `tpm-agent.sh` — fixture exercising --view vs default launch — `f47e2de`, drill-killed
 - [x] [B] `tpm-agent.sh` — fixture with a non-existent settings file (default mode uses repo settings file, not `-missing`) — `695e13e`, drill-killed
 - [ ] [B] `update-template.sh` — fixture with correct + mismatched approval hash
 
