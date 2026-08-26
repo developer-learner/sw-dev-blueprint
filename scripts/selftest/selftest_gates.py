@@ -8342,6 +8342,39 @@ def test_group2_tpm_agent_default_mode_uses_repo_settings_file(tmp_path):
     assert "tpm-agent-settings-missing.json" not in recorded, recorded
 
 
+def test_group2_tpm_agent_view_mode_uses_view_settings_file(tmp_path):
+    """tpm-agent.sh --view must launch claude with the VIEW settings file.
+    The 2b-ext survivor inverted `= view` to `!= view`, so --view fell through
+    to the DEFAULT settings file silently. A fake `claude` on PATH records its
+    argv so the exact --settings value is observable; scripts/tpm-view.sh is
+    stubbed because only the .tpm/view directory must exist for the cd."""
+    repo = tmp_path / "proj"
+    (repo / "scripts").mkdir(parents=True)
+    shutil.copy(SCRIPTS / "tpm-agent.sh", repo / "scripts" / "tpm-agent.sh")
+    shutil.copy(SCRIPTS / "spec_artifacts.py", repo / "scripts" / "spec_artifacts.py")
+    view_sh = repo / "scripts" / "tpm-view.sh"
+    view_sh.write_text("#!/usr/bin/env bash\nmkdir -p .tpm/view\n")
+    view_sh.chmod(0o755)
+    (repo / "scripts" / "tpm-view-settings.json").write_text("{}\n")
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    claude = fakebin / "claude"
+    claude.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$CLAUDE_ARGS_OUT"\n')
+    claude.chmod(0o755)
+    args_out = tmp_path / "claude-args.txt"
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    env["CLAUDE_ARGS_OUT"] = str(args_out)
+    r = subprocess.run(
+        ["bash", str(repo / "scripts" / "tpm-agent.sh"), "--view"],
+        cwd=repo, env=env, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    recorded = args_out.read_text()
+    assert "../../scripts/tpm-view-settings.json" in recorded, recorded
+    assert "scripts/tpm-agent-settings.json" not in recorded, recorded
+
+
 def test_group2_check_drift_reports_in_sync(tmp_path):
     """check-drift.sh must classify a template-owned file whose child bytes
     equal template@HEAD bytes as IN_SYNC (exit 0). The 2b-ext survivor
