@@ -68,7 +68,7 @@ All 10 closed: source-text assertions added to `selftest_gates.py` (`test_group1
 - [x] [B] `check-drift.sh` — fixture with matching + divergent files to exercise the sync condition (IN_SYNC → exit 0; mutant misreads as BEHIND → exit 2) — `1e759f3`, drill-killed
 - [x] [B] `sandbox-run.sh` — fixture that attempts a .git/.githooks write (blocklist) (`--rw .git` refused pre-podman) — `1e759f3`, drill-killed
 - [x] [B] `sandbox-run.sh` — fixture with an escape path outside the repo root (valid `--rw src` allowed, not "escapes repo root") — `1e759f3`, drill-killed
-- [x] [B] `link-template.sh` — fixture with correct + mismatched approval hash — `a0cb2f7`, drill-killed
+- [ ] [B] `link-template.sh` — fixture that attempts to retire a `../..` traversal path and asserts the unsafe-retired-path guard blocks it (mislabeled as the approval-hash, which `selftest_linked_template.py` already covers — `a0cb2f7` was redundant)
 - [ ] [B] `bootstrap.sh` — fixture that exercises the dubious-ownership trust path
 - [ ] [B] `llm-call.sh` — fixture with a reasoning-only reply (thinking-model detection)
 - [ ] [B] `llm-call.sh` — fixture with a seat-mismatch (wrong model)
