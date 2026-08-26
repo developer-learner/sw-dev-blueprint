@@ -8472,6 +8472,82 @@ def test_group2_bootstrap_trusts_exact_checkout_on_dubious_ownership(tmp_path):
     assert f"config --global --add safe.directory {root}" in logged, logged
 
 
+class _LlmCallServer:
+    """Tiny local HTTP server serving canned completion replies in order."""
+
+    def __init__(self, responses):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        replies = iter(responses)
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                body = json.dumps(next(replies)).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       daemon=True)
+        self.port = self.server.server_address[1]
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.server.shutdown()
+        return False
+
+    def env(self):
+        e = dict(os.environ)
+        e["SANDBOX_LLM_HOST"] = "127.0.0.1"
+        e["SANDBOX_LLM_PORT"] = str(self.port)
+        return e
+
+
+def _run_llm_call(tmp_path, env, *extra_args):
+    sys_file = tmp_path / "sys.txt"
+    sys_file.write_text("system prompt\n")
+    return subprocess.run(
+        ["bash", str(SCRIPTS / "llm-call.sh"), "em", str(sys_file),
+         *extra_args],
+        input="user prompt\n", env=env, capture_output=True, text=True,
+    )
+
+
+def test_group2_llm_call_reasoning_only_reply_halts_hard_rule_1(tmp_path):
+    """llm-call.sh must fail closed when a model returns reasoning_content with
+    empty content (a thinking model — Hard Rule 1) and must still ACCEPT a reply
+    that carries content alongside reasoning. Drives both directions of the
+    detection against a real local HTTP endpoint."""
+    with _LlmCallServer([
+        {"model": "m", "choices": [{"message": {
+            "content": "", "reasoning_content": "let me think"},
+            "finish_reason": "stop"}]},
+        {"model": "m", "choices": [{"message": {
+            "content": "OK", "reasoning_content": "brief preamble"},
+            "finish_reason": "stop"}]},
+    ]) as server:
+        refused = _run_llm_call(tmp_path, server.env())
+        accepted = _run_llm_call(tmp_path, server.env())
+    assert refused.returncode != 0, (refused.stdout, refused.stderr)
+    assert "reasoning but no content" in refused.stderr, refused.stderr
+    assert "Hard Rule 1" in refused.stderr, refused.stderr
+    assert accepted.returncode == 0, (accepted.stdout, accepted.stderr)
+    assert accepted.stdout.strip() == "OK", accepted.stdout
+
+
 def test_group2_check_drift_reports_in_sync(tmp_path):
     """check-drift.sh must classify a template-owned file whose child bytes
     equal template@HEAD bytes as IN_SYNC (exit 0). The 2b-ext survivor
