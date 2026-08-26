@@ -37,6 +37,8 @@ Suggested green-light order: 2 → 3 (sweep, then ledger/tiering) → 4 (scope) 
 # FEATURE WORK
 
 ## 4. Born-linked pivot
+> PARKED 2026-08-25 (CEO): remaining items below deferred while vortex builds its next feature; revisit after that milestone lands.
+
 - [ ] [B] Scope first, then build — seed path yields project-local files + links, skipping the copy. Precision: one template-derived file stays real (`check-drift.yml`, GitHub necessity); `ci.yml`/`container-build.yml` are project-local by design
 - [ ] [V] Verify vortex integrity after seed-path changes (manifest, symlinks, full suite)
 
