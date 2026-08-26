@@ -8480,7 +8480,6 @@ class _LlmCallServer:
         from http.server import BaseHTTPRequestHandler, HTTPServer
 
         replies = iter(responses)
-        outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -10254,7 +10253,7 @@ def test_gate_cost_probes_and_reports_not_probed(tmp_path):
     assert r.returncode == 0, (r.stdout, r.stderr)
     lines = r.stdout.splitlines()
     assert lines[0] == "gate\tscript\tprobe_ms\truns\tprobe_ok"
-    by_gate = {l.split("\t")[0]: l.split("\t") for l in lines[1:]}
+    by_gate = {line.split("\t")[0]: line.split("\t") for line in lines[1:]}
     assert by_gate["fast"][4] == "ok"
     assert int(by_gate["fast"][2]) >= 0
     assert by_gate["slow"][4] == "not-probed"
@@ -10267,7 +10266,7 @@ def test_gate_cost_marks_failing_probe(tmp_path):
     ])
     r = _run_tool(GATE_COST, "--inventory", str(inv), "--runs", "1", cwd=tmp_path)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    row = [l for l in r.stdout.splitlines()[1:] if l.startswith("bad\t")][0]
+    row = [line for line in r.stdout.splitlines()[1:] if line.startswith("bad\t")][0]
     assert row.split("\t")[4] == "fail"
 
 
@@ -10281,8 +10280,8 @@ def test_gate_tiering_assigns_t1_to_proven_hard_gate(tmp_path):
     r = _run_tool(GATE_TIERING, "--inventory", str(inv),
                   "--ledger", str(tmp_path / "absent.json"), cwd=tmp_path)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    table = {l.split("|")[1].strip(): l.split("|") for l in r.stdout.splitlines()
-             if l.startswith("| g") or l.startswith("| t")}
+    table = {line.split("|")[1].strip(): line.split("|") for line in r.stdout.splitlines()
+             if line.startswith("| g") or line.startswith("| t")}
     def tier(g):
         return table[g][6].strip()
     assert tier("g1") == "T1"
@@ -10302,7 +10301,7 @@ def test_gate_tiering_catch_promotes_soft_gate_to_t1(tmp_path):
     r = _run_tool(GATE_TIERING, "--inventory", str(inv),
                   "--ledger", str(ledger), cwd=tmp_path)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    row = [l for l in r.stdout.splitlines() if l.startswith("| soft")][0]
+    row = [line for line in r.stdout.splitlines() if line.startswith("| soft")][0]
     assert row.split("|")[6].strip() == "T1"
     assert row.split("|")[4].strip() == "1"
 
@@ -10331,9 +10330,9 @@ def test_gate_tiering_partial_treated_as_proven_teeth(tmp_path):
     r = _run_tool(GATE_TIERING, "--inventory", str(inv),
                   "--ledger", str(tmp_path / "absent.json"), cwd=tmp_path)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    table = {l.split("|")[1].strip(): l.split("|")[6].strip()
-             for l in r.stdout.splitlines()
-             if l.startswith("| hardp") or l.startswith("| softp") or l.startswith("| hardu")}
+    table = {line.split("|")[1].strip(): line.split("|")[6].strip()
+             for line in r.stdout.splitlines()
+             if line.startswith("| hardp") or line.startswith("| softp") or line.startswith("| hardu")}
     assert table["hardp"] == "T1"   # partial hard gate: demonstrated teeth
     assert table["softp"] == "T2"   # partial soft gate: proven but soft
     assert table["hardu"] == "T2"   # unproven hard gate: dormant, not dead
