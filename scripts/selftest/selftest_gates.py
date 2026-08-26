@@ -8375,6 +8375,35 @@ def test_group2_tpm_agent_view_mode_uses_view_settings_file(tmp_path):
     assert "scripts/tpm-agent-settings.json" not in recorded, recorded
 
 
+def test_group2_new_project_preflight_refuses_thinking_model_reply(tmp_path):
+    """new-project.sh pre-flight must halt when the loaded local model answers
+    with reasoning only (empty content + reasoning_content): that is a thinking
+    model, which Hard Rule 1 forbids as coder/EM. A PATH-stubbed `curl` serves
+    the reasoning-only reply so no network or LM Studio is involved."""
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    curl = fakebin / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        "  */v1/models*) echo '{\"data\":[{\"id\":\"thinking-local\"}]}' ;;\n"
+        "  *) echo '{\"choices\":[{\"message\":{\"content\":\"\","
+        "\"reasoning_content\":\"let me think\"}}]}' ;;\n"
+        "esac\n",
+    )
+    curl.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    r = subprocess.run(
+        ["bash", str(SCRIPTS / "new-project.sh"), "proj"],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+    )
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "THINKING MODEL loaded" in r.stderr, (r.stdout, r.stderr)
+    assert "ok: local LLM responded" not in r.stdout + r.stderr, \
+        (r.stdout, r.stderr)
+
+
 def test_group2_check_drift_reports_in_sync(tmp_path):
     """check-drift.sh must classify a template-owned file whose child bytes
     equal template@HEAD bytes as IN_SYNC (exit 0). The 2b-ext survivor
