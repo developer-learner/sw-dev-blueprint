@@ -2,13 +2,14 @@
 
 Group 2 = the 11 "unexercised branch" survivors from the 2b-ext sweep. Each fix is a
 FUNCTIONAL fixture that drives the specific branch (not a source-text pin). This batch
-covers items #10, #2, #3, #4, #9 — verified across three isolated exact-HEAD passes:
+covers items #10, #2, #3, #4, #9, #1, #5 — verified across four isolated exact-HEAD passes:
 
 - pass A (source `695e13e`): item #10 — 1 mutant, 1 killed
 - pass B (source `1e759f3`): items #2, #3, #4 — 3 mutants, 3 killed
 - pass C (source `f47e2de`): item #9 — 1 mutant, 1 killed
+- pass D (source `a0cb2f7`): items #1, #5 — 2 mutants, 2 killed
 - suite: `python3 -m pytest scripts/selftest/selftest_*.py -q`
-- totals: 5 mutants; 5 killed; 0 survived; 0 authoring errors
+- totals: 7 mutants; 7 killed; 0 survived; 0 authoring errors
 - enforcement: report-only; survivors are evidence for oracle improvement, never a build gate
 
 | verdict | file | mutation | reason |
@@ -18,8 +19,12 @@ covers items #10, #2, #3, #4, #9 — verified across three isolated exact-HEAD p
 | KILLED | `scripts/sandbox-run.sh` | `scripts\|scripts/*\|.git\|...` → `scripts\|scripts/*` | Group2 #3 dotgit blocklist (`--rw .git` refused by the control-plane blocklist before podman; mutant dropped .git/.githooks from the list) |
 | KILLED | `scripts/sandbox-run.sh` | `"$repo_canon"/*) ;;` → `"$repo_canon") ;;` | Group2 #4 valid subdir allow (`--rw src` is allowed, not "escapes repo root"; mutant narrowed the pattern to an exact repo-root match) |
 | KILLED | `scripts/tpm-agent.sh` | `if [ "$MODE" = view ]; then` → `if [ "$MODE" != view ]; then` | Group2 #9 view-mode settings file (`--view` with a stubbed tpm-view.sh + fake `claude` on PATH records argv; asserts the VIEW settings path, not the default) |
+| KILLED | `scripts/new-project.sh` | `THINKING_MODEL) die "..." ;;` → `THINKING_MODEL) echo "  ok: local LLM responded" ;;` | Group2 #1 thinking-model pre-flight (PATH-stubbed `curl` serves a reasoning-only reply; asserts the Hard Rule 1 halt message and that no "ok: local LLM responded" appears) |
+| KILLED | `scripts/link-template.sh` | `[ "$APPROVE" = "$PLAN_SHA" ] || die ...` → `[ "$APPROVE" != "$PLAN_SHA" ] || die ...` | Group2 #5 approval-hash gate both directions (wrong hash dies "approval hash mismatch" applying nothing; correct hash from the preview applies; mutant accepts wrong/rejects correct) |
 
 Gate-status effect (gate-inventory.tsv):
 - check-drift → proven (BEHIND mutant fixed in Group 1 + IN_SYNC #2 fixed here = 2/2)
 - sandbox-run → proven (#3 + #4 fixed here = 2/2)
 - tpm-agent → proven (#10 fixed in pass A + #9 --view fixed in pass C = 2/2)
+- new-project → already proven via Group 1; #1 here closes its last functional gap
+- link-template stays partial: unsafe-retired-path survivor is a separate item
