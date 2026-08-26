@@ -8568,6 +8568,39 @@ def test_group2_llm_call_seat_mismatch_fails_closed(tmp_path):
     assert match.stdout.strip() == "OK", match.stdout
 
 
+def test_update_template_rejects_wrong_approval_hash_accepts_correct(
+        template_pull_pair):
+    """The --approve gate binds the apply to the DIFF-SHA printed by the
+    preview: a wrong hash must die with 'approval hash mismatch' applying
+    nothing; the exact previewed hash must apply for real. Drives both
+    directions of the comparison."""
+    child, clone = template_pull_pair
+    dry = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
+                   "--from", str(clone)], child)
+    assert dry.returncode == 0, (dry.stdout, dry.stderr)
+    match = re.search(r"DIFF-SHA: ([0-9a-f]{64})", dry.stdout)
+    assert match, dry.stdout
+
+    def _last_commit_subject():
+        return subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=child, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    before = _last_commit_subject()
+    wrong = _run_ut(["bash", "scripts/update-template.sh",
+                     "--approve", "0" * 64, "--from", str(clone)], child)
+    assert wrong.returncode != 0, (wrong.stdout, wrong.stderr)
+    assert "approval hash mismatch" in wrong.stderr, wrong.stderr
+    assert _last_commit_subject() == before, \
+        "a rejected approval hash must commit nothing"
+
+    right = _run_ut(["bash", "scripts/update-template.sh",
+                     "--approve", match.group(1), "--from", str(clone)], child)
+    assert right.returncode == 0, (right.stdout, right.stderr)
+    assert "new-content" in (child / "scripts" / "hello.sh").read_text()
+
+
 def test_group2_check_drift_reports_in_sync(tmp_path):
     """check-drift.sh must classify a template-owned file whose child bytes
     equal template@HEAD bytes as IN_SYNC (exit 0). The 2b-ext survivor
