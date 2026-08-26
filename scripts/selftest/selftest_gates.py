@@ -8548,6 +8548,26 @@ def test_group2_llm_call_reasoning_only_reply_halts_hard_rule_1(tmp_path):
     assert accepted.stdout.strip() == "OK", accepted.stdout
 
 
+def test_group2_llm_call_seat_mismatch_fails_closed(tmp_path):
+    """With --expect-model, llm-call.sh must fail closed when the server's own
+    reported model differs from the expected seat model, and must accept the
+    call when it matches. Drives both directions of the comparison."""
+    with _LlmCallServer([
+        {"model": "wrong-model", "choices": [{"message": {
+            "content": "OK"}, "finish_reason": "stop"}]},
+        {"model": "expected-model", "choices": [{"message": {
+            "content": "OK"}, "finish_reason": "stop"}]},
+    ]) as server:
+        mismatch = _run_llm_call(tmp_path, server.env(),
+                                 "--expect-model", "expected-model")
+        match = _run_llm_call(tmp_path, server.env(),
+                              "--expect-model", "expected-model")
+    assert mismatch.returncode != 0, (mismatch.stdout, mismatch.stderr)
+    assert "seat mismatch" in mismatch.stderr, mismatch.stderr
+    assert match.returncode == 0, (match.stdout, match.stderr)
+    assert match.stdout.strip() == "OK", match.stdout
+
+
 def test_group2_check_drift_reports_in_sync(tmp_path):
     """check-drift.sh must classify a template-owned file whose child bytes
     equal template@HEAD bytes as IN_SYNC (exit 0). The 2b-ext survivor
