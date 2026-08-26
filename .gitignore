@@ -21,6 +21,10 @@ htmlcov/
 # Pipeline runtime state (crash recovery for the orchestrator)
 .pipeline-state/
 
+# In-the-wild catch ledger — runtime witness written by refreeze.sh record_catch;
+# tiering reads it, but it is per-repo state, never committed (missing = empty).
+.catch-ledger.json
+
 # EM call archive (prompt+reply pairs for offline bench-testing, backlog item 6)
 .em-archive/
 

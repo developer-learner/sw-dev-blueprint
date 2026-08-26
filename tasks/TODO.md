@@ -94,7 +94,7 @@ All 10 closed: source-text assertions added to `selftest_gates.py` (`test_group1
 - [ ] [V] Silent-halt live-fire — double coder-failure → does caps-exhausted escalation get reached end-to-end? Run + report on the next real orchestrate run
 
 ## Vortex recording hook for the catch ledger
-- [ ] [V] Vortex recording hook for the catch ledger — joins when the ledger lands (wire `record_catch` into Vortex's refreeze lane, best-effort, never masks the gate's verdict)
+- [x] [V] Vortex recording hook for the catch ledger — done 2026-08-26: the wiring itself is the shared `refreeze.sh` (inherited via symlink; `record_catch` at all 8 hard-gate die sites, best-effort `|| true`, never masks the verdict). The missing piece was hygiene: `.catch-ledger.json` (CWD-relative runtime witness) was unignored in both repos — it would dirty the child's tree and ride `git add -A` into freeze commits. Now gitignored in the Blueprint (template → future children) and in Vortex. Live-fire in a throwaway vortex clone: capsule-altering staged PRD → `check-prd-additive` catch recorded (spec v14) → proper die; ledger lands in the child root, tree stays clean.
 
 ## Standing (recurring, not completable)
 - [ ] [V] Post-blueprint-landing verification — full product suite (all test files, scope labeled, never a subset) + CI green, after every blueprint commit touching linked files
