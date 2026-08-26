@@ -8404,6 +8404,74 @@ def test_group2_new_project_preflight_refuses_thinking_model_reply(tmp_path):
         (r.stdout, r.stderr)
 
 
+def _extract_shell_function(path, name):
+    """Pull a single bash function out of a control-plane script at runtime
+    (anti-drift: always the live source), failing loudly if its shape changes."""
+    lines = Path(path).read_text().splitlines()
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.startswith(f"{name}()")), None)
+    assert start is not None, f"{name} not found in {path}"
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
+    return "\n".join(lines[start:end + 1])
+
+
+def test_group2_bootstrap_trusts_exact_checkout_on_dubious_ownership(tmp_path):
+    """bootstrap.sh must respond to Git's dubious-ownership refusal by trusting
+    the EXACT canonical checkout path (`--add safe.directory $root`), never a
+    wildcard or a mangled path, then proceed once Git accepts the repo. A
+    PATH-stubbed `git` simulates the refusal on first probe and records every
+    invocation so the trusted argument is observable."""
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    git_log = tmp_path / "git-log.txt"
+    git_stub = fakebin / "git"
+    git_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'LOG="${GIT_LOG:?}"\n'
+        'printf \'%s\\n\' "$*" >> "$LOG"\n'
+        'case "$*" in\n'
+        '  *"status --porcelain"*)\n'
+        '    [ "$(grep -c "status --porcelain" "$LOG")" -le 1 ] && {\n'
+        "      echo \"fatal: detected dubious ownership in repository at '$PWD'\" >&2\n"
+        "      exit 128\n"
+        "    }\n"
+        "# Trust only takes hold if the EXACT checkout path was added to\n"
+        "# safe.directory — a mangled path leaves the repository refused.\n"
+        '    grep -Fxq "config --global --add safe.directory $(pwd -P)" "$LOG" || {\n'
+        "      echo \"fatal: detected dubious ownership in repository at '$PWD'\" >&2\n"
+        "      exit 128\n"
+        "    }\n"
+        "    exit 0 ;;\n"
+        '  "config user.name") echo "Fixture User" ; exit 0 ;;\n'
+        '  "config user.email") echo "fixture@example.invalid" ; exit 0 ;;\n'
+        "esac\n"
+        "exit 0\n",
+    )
+    git_stub.chmod(0o755)
+
+    repo = tmp_path / "checkout"
+    (repo / ".git").mkdir(parents=True)
+    harness = tmp_path / "harness.sh"
+    harness.write_text(
+        "set -euo pipefail\n"
+        + _extract_shell_function(SCRIPTS / "bootstrap.sh",
+                                  "ensure_git_worktree_ready")
+        + "\nensure_git_worktree_ready\necho TRUST-OK\n"
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{fakebin}:{env['PATH']}"
+    env["GIT_LOG"] = str(git_log)
+    r = subprocess.run(["bash", str(harness)], cwd=repo, env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "TRUST-OK" in r.stdout, r.stdout
+    assert "Trusted this checkout" in r.stdout, r.stdout
+    root = subprocess.run(["pwd -P"], cwd=repo, shell=True,
+                          capture_output=True, text=True).stdout.strip()
+    logged = git_log.read_text().splitlines()
+    assert f"config --global --add safe.directory {root}" in logged, logged
+
+
 def test_group2_check_drift_reports_in_sync(tmp_path):
     """check-drift.sh must classify a template-owned file whose child bytes
     equal template@HEAD bytes as IN_SYNC (exit 0). The 2b-ext survivor
