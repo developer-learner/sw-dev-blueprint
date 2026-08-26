@@ -159,3 +159,30 @@ def test_linked_gate_rejects_local_copy_even_when_bytes_match(tmp_path):
     )
     assert result.returncode != 0
     assert "linked-plane path is not a symlink" in result.stdout
+
+
+def test_link_template_rejects_wrong_approval_hash_accepts_correct(tmp_path):
+    """The --approve gate must compare the supplied hash against the previewed
+    PLAN-SHA: a mismatch dies without touching the child, the correct hash is
+    accepted and the plan applies. Drives both directions of the comparison."""
+    source, child, _c1, c2, _paths = _fixture(tmp_path)
+    preview = _run_link(source, child, c2, "--dry-run")
+    assert preview.returncode == 0, preview.stderr
+    match = re.search(r"PLAN-SHA: ([0-9a-f]{64})", preview.stdout)
+    assert match, preview.stdout
+
+    wrong = subprocess.run(
+        ["bash", str(source / "scripts/link-template.sh"),
+         "--from", str(source), "--ref", c2, "--approve", "0" * 64],
+        cwd=child, capture_output=True, text=True,
+    )
+    assert wrong.returncode != 0, (wrong.stdout, wrong.stderr)
+    assert "approval hash mismatch" in wrong.stderr, (wrong.stdout, wrong.stderr)
+    assert not (child / ".template-link").exists(), \
+        "a rejected approval hash must apply nothing"
+    assert f"ref={c2}" not in (child / ".template-version").read_text()
+
+    _approve_from_preview(source, child, c2)
+    assert (child / ".template-link").read_text().startswith("mode=linked\n")
+    assert f"ref={c2}" in (child / ".template-version").read_text()
+    assert _git(child, "status", "--porcelain") == ""
