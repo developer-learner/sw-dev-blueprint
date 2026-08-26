@@ -186,3 +186,37 @@ def test_link_template_rejects_wrong_approval_hash_accepts_correct(tmp_path):
     assert (child / ".template-link").read_text().startswith("mode=linked\n")
     assert f"ref={c2}" in (child / ".template-version").read_text()
     assert _git(child, "status", "--porcelain") == ""
+
+
+def test_link_template_blocks_traversal_retired_path(tmp_path):
+    """A retired path carrying `..` (a traversal out of the child) must be
+    refused by the unsafe-retired-path guard, not deleted via `rm -f`.
+    The child's template manifest lists `../outside.sh` — a row an update
+    should never have — so the retire loop walks it on the next adoption."""
+    source, child, _c1, c2, paths = _fixture(tmp_path)
+    manifest = child / "scripts/.manifest-template"
+    rows = manifest.read_text()
+    rows += f"{'0' * 64}  ../outside.sh\n"
+    manifest.write_text(rows)
+    _commit(child, "fixture: manifest carries a traversal path")
+
+    outside = tmp_path / "outside.sh"
+    outside.write_text("#!/bin/sh\necho do-not-delete-me\n")
+
+    preview = _run_link(source, child, c2, "--dry-run")
+    assert preview.returncode == 0, preview.stderr
+    plan_sha = re.search(r"PLAN-SHA: ([0-9a-f]{64})", preview.stdout)
+    assert plan_sha, preview.stdout
+
+    applied = subprocess.run(
+        ["bash", str(source / "scripts/link-template.sh"),
+         "--from", str(source), "--ref", c2, "--approve", plan_sha.group(1)],
+        cwd=child, capture_output=True, text=True,
+    )
+    assert applied.returncode != 0, (applied.stdout, applied.stderr)
+    assert "unsafe retired path: ../outside.sh" in applied.stderr, \
+        (applied.stdout, applied.stderr)
+    assert outside.exists(), "the guard must refuse before any rm runs"
+    assert not (child / ".template-link").exists()
+    for rel in paths:
+        assert not (child / rel).is_symlink(), rel
