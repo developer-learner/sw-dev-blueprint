@@ -84,8 +84,8 @@ All 10 closed: source-text assertions added to `selftest_gates.py` (`test_group1
 - [x] [B] `check-test-surface.py` — mutation proof closed without new tests: 2 authored mutants (import allowlist inverted; route match inverted) both KILLED by the existing fixture suite at HEAD `90f1d20` (`/tmp/inv4-mutants-results.tsv`; recorded in the D-161 results TSV).
 
 ## 5. Vortex product debt — needs go + TPM seat (D-139)
-- [ ] [V] Memory-figure mismatch — `top` PhysMem vs psutil-used; pick one source of truth; src change + refreeze pairing
-- [ ] [V] `_anneal_probe` hardening — single 5s shot → bounded retry; src change + refreeze pairing
+- [x] [V] Memory-figure mismatch — `top` PhysMem vs psutil-used; pick one source of truth; src change + refreeze pairing — vortex `6884ae1` + refreeze v13 `697cc17`: `/api/status` now names its source (`ram_source: vm_stat|psutil`); AM figure is truth, silent basis flip closed
+- [x] [V] `_anneal_probe` hardening — single 5s shot → bounded retry; src change + refreeze pairing — vortex `6884ae1` + refreeze v13 `697cc17`: transport exceptions retry ≤3 (0.5s gap); loading-503 stays single-shot so spawn poll cadence governs
 - (both green-lit → they ride one refreeze pass)
 
 ## 6. Rides the next milestone (no clock)
