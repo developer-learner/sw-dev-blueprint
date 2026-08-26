@@ -16,15 +16,15 @@ refreeze-delta	scripts/refreeze_delta.py	hard	proven
 spec-artifacts	scripts/spec_artifacts.py	hard	proven
 validate-plan	scripts/validate-plan.py	hard	proven
 apply-edit-blocks	scripts/apply-edit-blocks.py	tool	proven
-bootstrap	scripts/bootstrap.sh	tool	partial
+bootstrap	scripts/bootstrap.sh	tool	proven
 catch-ledger	scripts/catch-ledger.py	tool	n/a	python3 scripts/catch-ledger.py report
 completion-ledger	scripts/completion-ledger.py	tool	n/a	python3 scripts/completion-ledger.py latest
 context-budget	scripts/context-budget.py	tool	proven
 em-bench	scripts/em-bench.sh	manual	n/a
 extract-test-functions	scripts/extract-test-functions.py	tool	proven
 feature-summary	scripts/feature-summary.py	tool	proven	python3 scripts/feature-summary.py
-link-template	scripts/link-template.sh	tool	partial
-llm-call	scripts/llm-call.sh	tool	unproven
+link-template	scripts/link-template.sh	tool	proven
+llm-call	scripts/llm-call.sh	tool	proven
 metrics-report	scripts/metrics-report.py	tool	proven	python3 scripts/metrics-report.py --root .
 mutation-pass	scripts/mutation-pass.sh	tool	proven
 new-project	scripts/new-project.sh	tool	proven

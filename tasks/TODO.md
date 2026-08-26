@@ -68,13 +68,13 @@ All 10 closed: source-text assertions added to `selftest_gates.py` (`test_group1
 - [x] [B] `check-drift.sh` — fixture with matching + divergent files to exercise the sync condition (IN_SYNC → exit 0; mutant misreads as BEHIND → exit 2) — `1e759f3`, drill-killed
 - [x] [B] `sandbox-run.sh` — fixture that attempts a .git/.githooks write (blocklist) (`--rw .git` refused pre-podman) — `1e759f3`, drill-killed
 - [x] [B] `sandbox-run.sh` — fixture with an escape path outside the repo root (valid `--rw src` allowed, not "escapes repo root") — `1e759f3`, drill-killed
-- [ ] [B] `link-template.sh` — fixture that attempts to retire a `../..` traversal path and asserts the unsafe-retired-path guard blocks it (mislabeled as the approval-hash, which `selftest_linked_template.py` already covers — `a0cb2f7` was redundant)
-- [ ] [B] `bootstrap.sh` — fixture that exercises the dubious-ownership trust path
-- [ ] [B] `llm-call.sh` — fixture with a reasoning-only reply (thinking-model detection)
-- [ ] [B] `llm-call.sh` — fixture with a seat-mismatch (wrong model)
+- [x] [B] `link-template.sh` — fixture that attempts to retire a `../..` traversal path and asserts the unsafe-retired-path guard blocks it (mislabeled as the approval-hash, which `selftest_linked_template.py` already covers — `a0cb2f7` was redundant) — `6a3f771`, drill-killed
+- [x] [B] `bootstrap.sh` — fixture that exercises the dubious-ownership trust path — `d6ee9cb`, drill-killed (also exhausts the identity-preflight survivor, pass F)
+- [x] [B] `llm-call.sh` — fixture with a reasoning-only reply (thinking-model detection) — `4164698`, drill-killed
+- [x] [B] `llm-call.sh` — fixture with a seat-mismatch (wrong model) — `d192ccc`, drill-killed
 - [x] [B] `tpm-agent.sh` — fixture exercising --view vs default launch — `f47e2de`, drill-killed
 - [x] [B] `tpm-agent.sh` — fixture with a non-existent settings file (default mode uses repo settings file, not `-missing`) — `695e13e`, drill-killed
-- [ ] [B] `update-template.sh` — fixture with correct + mismatched approval hash
+- [x] [B] `update-template.sh` — fixture with correct + mismatched approval hash — `e102e14`, drill-killed
 
 ### Group 3 — fixture no-op (2) · make the stub observable
 - [ ] [B] `status.sh` — stub podman so the section's presence/absence is assertable

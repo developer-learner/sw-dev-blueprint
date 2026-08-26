@@ -2,14 +2,17 @@
 
 Group 2 = the 11 "unexercised branch" survivors from the 2b-ext sweep. Each fix is a
 FUNCTIONAL fixture that drives the specific branch (not a source-text pin). This batch
-covers items #10, #2, #3, #4, #9, #1, #5 — verified across four isolated exact-HEAD passes:
+covers items #10, #2, #3, #4, #9, #1, #5, #6, #7, #8 — verified across seven isolated exact-HEAD passes:
 
 - pass A (source `695e13e`): item #10 — 1 mutant, 1 killed
 - pass B (source `1e759f3`): items #2, #3, #4 — 3 mutants, 3 killed
 - pass C (source `f47e2de`): item #9 — 1 mutant, 1 killed
-- pass D (source `a0cb2f7`): items #1, #5 — 2 mutants, 2 killed
+- pass D (source `a0cb2f7`): item #1 + the mislabeled #5 approval-hash — 2 mutants, 2 killed
+- pass E (source `e102e14`): items #3, #6, #7, #8 — 4 mutants, 4 killed
+- pass F (source `3095f2`): bootstrap #3b identity-preflight bonus row — 1 mutant, 1 killed
+- pass G (source `6a3f771`): item #5 real (unsafe-retired-path glob) — 1 mutant, 1 killed
 - suite: `python3 -m pytest scripts/selftest/selftest_*.py -q`
-- totals: 7 mutants; 7 killed; 0 survived; 0 authoring errors
+- totals: 13 mutants; 13 killed; 0 survived; 0 authoring errors
 - enforcement: report-only; survivors are evidence for oracle improvement, never a build gate
 
 | verdict | file | mutation | reason |
@@ -21,10 +24,19 @@ covers items #10, #2, #3, #4, #9, #1, #5 — verified across four isolated exact
 | KILLED | `scripts/tpm-agent.sh` | `if [ "$MODE" = view ]; then` → `if [ "$MODE" != view ]; then` | Group2 #9 view-mode settings file (`--view` with a stubbed tpm-view.sh + fake `claude` on PATH records argv; asserts the VIEW settings path, not the default) |
 | KILLED | `scripts/new-project.sh` | `THINKING_MODEL) die "..." ;;` → `THINKING_MODEL) echo "  ok: local LLM responded" ;;` | Group2 #1 thinking-model pre-flight (PATH-stubbed `curl` serves a reasoning-only reply; asserts the Hard Rule 1 halt message and that no "ok: local LLM responded" appears) |
 | KILLED | `scripts/link-template.sh` | `[ "$APPROVE" = "$PLAN_SHA" ] || die ...` → `[ "$APPROVE" != "$PLAN_SHA" ] || die ...` | Group2 #5 approval-hash gate both directions (wrong hash dies "approval hash mismatch" applying nothing; correct hash from the preview applies; mutant accepts wrong/rejects correct) |
+| KILLED | `scripts/bootstrap.sh` | `git config --global --add safe.directory "$root"` → `... "$root-never"` | Group2 #3 dubious-ownership trust (stubbed `git` refuses once then only accepts the EXACT canonical path; asserts rc 0, the trust message, and the logged exact `safe.directory $root` line; `$root-never` leaves the checkout refused) |
+| KILLED | `scripts/llm-call.sh` | `if not content and reasoning:` → `if content and reasoning:` | Group2 #6 reasoning-only halt (real local HTTP endpoint serves a reasoning-only reply → "reasoning but no content"/Hard Rule 1 die; content+reasoning reply accepted; mutant swaps which reply dies) |
+| KILLED | `scripts/llm-call.sh` | `elif served != expect_model:` → `elif served == expect_model:` | Group2 #7 seat mismatch (`--expect-model` with served≠expected dies "seat mismatch", served==expected applies; mutant inverts both directions) |
+| KILLED | `scripts/update-template.sh` | `[ "$APPROVE" = "$DIFF_SHA" ] || die` → `[ "$APPROVE" != "$DIFF_SHA" ] || die` | Group2 #8 approval-hash gate both directions (wrong DIFF-SHA dies applying nothing; the previewed DIFF-SHA applies for real with a `[template-update]` commit; mutant accepts wrong/rejects correct) |
+| KILLED | `scripts/bootstrap.sh` | `if [ -z "$(git config user.name \|\| true)" ] \` → `if [ -n ... ] \` | Group2 #3b identity preflight (same fixture runs the happy path WITH identity set and must proceed; the inverted check dies on a configured environment) — bonus row: this survivor was also driven by the #3 fixture |
+| KILLED | `scripts/link-template.sh` | `case "$path" in ""\|/*\|../*\|*/../*\|*/..\|..) die ...` → narrowed to `""\|/*` | Group2 #5 real: unsafe-retired-path glob (child manifest carries a `../outside.sh` row; adoption must die "unsafe retired path" before any rm; mutant deletes through the traversal and dies later at git add) |
 
 Gate-status effect (gate-inventory.tsv):
 - check-drift → proven (BEHIND mutant fixed in Group 1 + IN_SYNC #2 fixed here = 2/2)
 - sandbox-run → proven (#3 + #4 fixed here = 2/2)
 - tpm-agent → proven (#10 fixed in pass A + #9 --view fixed in pass C = 2/2)
 - new-project → already proven via Group 1; #1 here closes its last functional gap
-- link-template stays partial: unsafe-retired-path survivor is a separate item
+- bootstrap → proven (#3 dubious-ownership + #3b identity preflight both drill-killed = survivors exhausted)
+- llm-call → proven (unproven → both survivors #6 + #7 drill-killed here)
+- update-template → already proven via Group 1 pins; #8 adds behavioral both-directions coverage
+- link-template → proven (approval-hash covered by selftest_linked_template.py + pass D both-directions fixture; unsafe-retired-path #5 killed in pass G = survivors exhausted)
