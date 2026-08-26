@@ -5,7 +5,7 @@ check-prd-additive	scripts/check-prd-additive.py	hard	proven
 check-spec-delta	scripts/check-spec-delta.py	hard	proven
 check-swallowed-errors	scripts/check-swallowed-errors.py	hard	proven	
 check-test-direction	scripts/check-test-direction.py	hard	proven
-check-test-surface	scripts/check-test-surface.py	hard	pending
+check-test-surface	scripts/check-test-surface.py	hard	proven
 contracts-delta	scripts/contracts-delta.py	hard	proven
 contracts-merge	scripts/contracts-merge.py	hard	proven
 doc-consistency	scripts/doc-consistency.sh	soft	proven	scripts/doc-consistency.sh
@@ -34,7 +34,7 @@ refreeze	scripts/refreeze.sh	orchestrator	proven
 sandbox-run	scripts/sandbox-run.sh	tool	proven
 standing-summary	scripts/standing-summary.py	tool	proven	
 status	scripts/status.sh	tool	proven	scripts/status.sh
-teardown	scripts/teardown.sh	tool	partial
+teardown	scripts/teardown.sh	tool	proven
 tpm-agent	scripts/tpm-agent.sh	tool	proven
 tpm-pack	scripts/tpm-pack.sh	tool	proven
 tpm-unpack	scripts/tpm-unpack.sh	tool	proven

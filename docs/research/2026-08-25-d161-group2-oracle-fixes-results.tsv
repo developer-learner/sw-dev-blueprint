@@ -2,7 +2,7 @@
 
 Group 2 = the 11 "unexercised branch" survivors from the 2b-ext sweep. Each fix is a
 FUNCTIONAL fixture that drives the specific branch (not a source-text pin). This batch
-covers items #10, #2, #3, #4, #9, #1, #5, #6, #7, #8 — verified across seven isolated exact-HEAD passes:
+covers items #10, #2, #3, #4, #9, #1, #5, #6, #7, #8 + Group 3 + INV-4 proof — verified across eight isolated exact-HEAD passes:
 
 - pass A (source `695e13e`): item #10 — 1 mutant, 1 killed
 - pass B (source `1e759f3`): items #2, #3, #4 — 3 mutants, 3 killed
@@ -11,8 +11,10 @@ covers items #10, #2, #3, #4, #9, #1, #5, #6, #7, #8 — verified across seven i
 - pass E (source `e102e14`): items #3, #6, #7, #8 — 4 mutants, 4 killed
 - pass F (source `3095f2`): bootstrap #3b identity-preflight bonus row — 1 mutant, 1 killed
 - pass G (source `6a3f771`): item #5 real (unsafe-retired-path glob) — 1 mutant, 1 killed
+- pass H (source `90f1d20`): Group 3 status.sh podman-condition + teardown.sh stop-vs-start — 2 mutants, 2 killed
+- proof pass I (source `90f1d20`): check-test-surface.py authored mutants (import allowlist inverted; route match inverted) — both KILLED by the existing fixture suite; no new tests needed
 - suite: `python3 -m pytest scripts/selftest/selftest_*.py -q`
-- totals: 13 mutants; 13 killed; 0 survived; 0 authoring errors
+- totals: 17 mutants; 17 killed; 0 survived; 0 authoring errors
 - enforcement: report-only; survivors are evidence for oracle improvement, never a build gate
 
 | verdict | file | mutation | reason |
@@ -30,6 +32,10 @@ covers items #10, #2, #3, #4, #9, #1, #5, #6, #7, #8 — verified across seven i
 | KILLED | `scripts/update-template.sh` | `[ "$APPROVE" = "$DIFF_SHA" ] || die` → `[ "$APPROVE" != "$DIFF_SHA" ] || die` | Group2 #8 approval-hash gate both directions (wrong DIFF-SHA dies applying nothing; the previewed DIFF-SHA applies for real with a `[template-update]` commit; mutant accepts wrong/rejects correct) |
 | KILLED | `scripts/bootstrap.sh` | `if [ -z "$(git config user.name \|\| true)" ] \` → `if [ -n ... ] \` | Group2 #3b identity preflight (same fixture runs the happy path WITH identity set and must proceed; the inverted check dies on a configured environment) — bonus row: this survivor was also driven by the #3 fixture |
 | KILLED | `scripts/link-template.sh` | `case "$path" in ""\|/*\|../*\|*/../*\|*/..\|..) die ...` → narrowed to `""\|/*` | Group2 #5 real: unsafe-retired-path glob (child manifest carries a `../outside.sh` row; adoption must die "unsafe retired path" before any rm; mutant deletes through the traversal and dies later at git add) |
+| KILLED | `scripts/status.sh` | `if [ "${STATUS:-}" = "Running" ]; then` → `!=` | Group3 podman section keyed to VM state (stubbed limactl serves Running then Stopped: Running shows "stopped (reclaimable)" and no skip note, Stopped the reverse; mutant flips both directions) |
+| KILLED | `scripts/teardown.sh` | `do_or_say "limactl stop dev-vm"` → `"limactl start dev-vm"` | Group3 stop-vs-start observable (`--lima` against a Running stub-VM; the argv log must contain exactly `limactl stop dev-vm`, never start) |
+| KILLED | `scripts/check-test-surface.py` | `if mod not in modules:` → `if mod in modules:` | INV-4 mutation proof 1/2: import allowlist inverted — killed by the existing clean+violating fixture tests, no new test needed |
+| KILLED | `scripts/check-test-surface.py` | `if not any(path_matches(path, t) for t in templates):` → `if any(...)` | INV-4 mutation proof 2/2: route-match inverted — killed by the existing clean+violating fixture tests, no new test needed |
 
 Gate-status effect (gate-inventory.tsv):
 - check-drift → proven (BEHIND mutant fixed in Group 1 + IN_SYNC #2 fixed here = 2/2)
@@ -40,3 +46,6 @@ Gate-status effect (gate-inventory.tsv):
 - llm-call → proven (unproven → both survivors #6 + #7 drill-killed here)
 - update-template → already proven via Group 1 pins; #8 adds behavioral both-directions coverage
 - link-template → proven (approval-hash covered by selftest_linked_template.py + pass D both-directions fixture; unsafe-retired-path #5 killed in pass G = survivors exhausted)
+- teardown → proven (stop→start survivor drilled in pass H = survivors exhausted)
+- status → already proven via Group 1 port-pin; pass H adds behavioral both-directions coverage
+- check-test-surface → pending → proven (the last unproven hard gate: 2 authored mutants drill-killed by existing fixtures)

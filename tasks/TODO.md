@@ -77,11 +77,11 @@ All 10 closed: source-text assertions added to `selftest_gates.py` (`test_group1
 - [x] [B] `update-template.sh` — fixture with correct + mismatched approval hash — `e102e14`, drill-killed
 
 ### Group 3 — fixture no-op (2) · make the stub observable
-- [ ] [B] `status.sh` — stub podman so the section's presence/absence is assertable
-- [ ] [B] `teardown.sh` — stub limactl to record stop vs start so the action is assertable
+- [x] [B] `status.sh` — stub podman so the section's presence/absence is assertable — `90f1d20`, drill-killed
+- [x] [B] `teardown.sh` — stub limactl to record stop vs start so the action is assertable — `90f1d20`, drill-killed
 
 ## check-test-surface.py mutation proof (the one gate never swept)
-- [ ] [B] `check-test-surface.py` — the one real hard gate omitted from audit pass-2 (fixture-verified, **not** mutation-proven). Author ~2 mutants + a short `mutation-pass.sh` run to close the last proof gap.
+- [x] [B] `check-test-surface.py` — mutation proof closed without new tests: 2 authored mutants (import allowlist inverted; route match inverted) both KILLED by the existing fixture suite at HEAD `90f1d20` (`/tmp/inv4-mutants-results.tsv`; recorded in the D-161 results TSV).
 
 ## 5. Vortex product debt — needs go + TPM seat (D-139)
 - [ ] [V] Memory-figure mismatch — `top` PhysMem vs psutil-used; pick one source of truth; src change + refreeze pairing
