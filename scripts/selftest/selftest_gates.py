@@ -9139,6 +9139,91 @@ def test_teardown_rejects_unknown_flag(housekeeping_repo):
     assert "--help" in r.stdout + r.stderr
 
 
+# --- Group 3 fixture no-ops (2b-ext survivors): make the stub observable -----
+# The housekeeping tests above stub limactl as "Stopped" so both scripts take
+# their skip branches — which is exactly why the sweep's survivors there lived:
+# the Running branches were never observable. These fixtures drive them.
+
+def _hk_repo_with_status(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    shutil.copy(SCRIPTS / "status.sh", repo / "scripts" / "status.sh")
+    return repo
+
+
+_HK_LIMACTL_STUB = (
+    "#!/bin/sh\n"
+    'echo "$(basename "$0") $*" >> "${STUB_LOG:?}"\n'
+    'case "$1" in\n'
+    '  list) echo "${LIMA_STATUS:-Stopped}" ;;\n'
+    '  shell)\n'
+    '    case "$*" in\n'
+    '      *uptime*) echo "up 2 hours" ;;\n'
+    '      *"podman ps -q"*) echo "abc123def" ;;\n'
+    '      *"--filter status=exited"*) ;;\n'
+    "    esac ;;\n"
+    "esac\n"
+    "exit 0\n"
+)
+
+
+def _run_hk_status(repo, lima_status, tool):
+    stubbin = repo.parent / "stubbin"
+    stubbin.mkdir(exist_ok=True)
+    for name in ("limactl", "nc"):
+        s = stubbin / name
+        s.write_text(_HK_LIMACTL_STUB if name == "limactl" else "exit 1\n")
+        s.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{stubbin}:{env['PATH']}"
+    env["STUB_LOG"] = str(repo.parent / "stub.log")
+    env["LIMA_STATUS"] = lima_status
+    return subprocess.run(["bash", "scripts/status.sh"], cwd=repo,
+                          capture_output=True, text=True, env=env)
+
+
+def test_group3_status_podman_section_tracks_vm_state(tmp_path):
+    """The podman section must key on the VM's reported state: with dev-vm
+    Running it reports container counts ("stopped (reclaimable)") and never
+    the skip note; with dev-vm Stopped it prints the skip note and no counts.
+    Drives both directions of the STATUS comparison (the 2b-ext survivor
+    inverted `= Running` to `!= Running`)."""
+    repo = _hk_repo_with_status(tmp_path)
+    up = _run_hk_status(repo, "Running", "limactl")
+    down = _run_hk_status(repo, "Stopped", "limactl")
+    assert up.returncode == 0 and down.returncode == 0, (up.stderr, down.stderr)
+    assert "stopped (reclaimable)" in up.stdout, up.stdout
+    assert "VM not running" not in up.stdout, up.stdout
+    assert "VM not running" in down.stdout, down.stdout
+    assert "stopped (reclaimable)" not in down.stdout, down.stdout
+
+
+def test_group3_teardown_lima_stops_running_vm(tmp_path):
+    """A real (non-dry-run) `teardown.sh --lima` against a RUNNING dev-vm must
+    invoke exactly `limactl stop dev-vm` — never `start`. The stop-vs-start
+    2b-ext survivor is only observable when the stub records the action, so
+    the process-level proof reads the argv log (never the host)."""
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    shutil.copy(SCRIPTS / "teardown.sh", repo / "scripts" / "teardown.sh")
+    stubbin = repo.parent / "stubbin"
+    stubbin.mkdir()
+    limactl = stubbin / "limactl"
+    limactl.write_text(_HK_LIMACTL_STUB)
+    limactl.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{stubbin}:{env['PATH']}"
+    env["STUB_LOG"] = str(repo.parent / "stub.log")
+    env["LIMA_STATUS"] = "Running"
+    r = subprocess.run(["bash", "scripts/teardown.sh", "--lima"], cwd=repo,
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    log_lines = (repo.parent / "stub.log").read_text().splitlines()
+    assert "limactl list --format {{.Status}} dev-vm" in log_lines, log_lines
+    assert "limactl stop dev-vm" in log_lines, log_lines
+    assert not any("start" in ln for ln in log_lines), log_lines
+
+
 # --- closure auto-repair (validate-plan.py --repair-closures, f757bb4) ------
 # The synthetic gate for the plan-gate pre-pass: detection reads test-file ASTs
 # via cwd-relative paths and route ownership off contracts.json, so the repo
