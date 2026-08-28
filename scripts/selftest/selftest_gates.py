@@ -9982,6 +9982,43 @@ def test_synthesize_plan_contract_placement_by_file_pins(synth_repo):
     assert t2["contracts"] == ["route-items"]
 
 
+def test_synthesize_plan_planning_only_brief_supersedes_restated_copy(
+    synth_repo,
+):
+    """A planning-only repair may restate every complete coder brief so B3
+    works after task-state loss. Its self-contained brief replaces the older
+    copy; concatenation duplicates the task and can exceed the plan gate's
+    brief limit (Vortex v20). Test/contract scope still comes from the earlier
+    behavioral delta independently of brief selection."""
+    approved = synth_repo / "scripts" / ".approved"
+    older = _synth_erd(brief_a="Older complete module-a brief.")
+    newer = _synth_erd(brief_a="Newest complete module-a brief.")
+    (approved / "ERD-DELTA-v6.md").write_text(older)
+    (approved / "ERD-DELTA-v7.md").write_text(newer)
+    _write_delta(
+        synth_repo, "DELTA-v6.json",
+        changed_files=["src/a.py", "src/b.py"],
+        changed_tests=[
+            "tests/test_a.py::test_one", "tests/test_b.py::test_two",
+        ],
+        changed_contract_ids=["src.a", "route-items"],
+    )
+    _write_delta(
+        synth_repo, "DELTA-v7.json",
+        changed_files=[], changed_tests=[], changed_contract_ids=[],
+    )
+
+    r = run_synthesize(synth_repo, "DELTA-v6.json", "DELTA-v7.json")
+    assert r.returncode == 0, r.stderr
+    t1, t2 = json.loads(r.stdout)["tasks"]
+    assert t1["brief"] == "Newest complete module-a brief."
+    assert "Older complete" not in t1["brief"]
+    assert t1["tests"] == ["tests/test_a.py::test_one"]
+    assert t2["tests"] == ["tests/test_b.py::test_two"]
+    assert t1["contracts"] == ["src.a"]
+    assert t2["contracts"] == ["route-items"]
+
+
 def test_synthesize_plan_missing_brief_refused(synth_repo):
     """No verbatim coder brief for an inventory file → refuse; the EM must
     emit the full plan. The refusal names the unbriefed file."""
