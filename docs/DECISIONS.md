@@ -43,15 +43,48 @@
 > **Corrected consumer map (this is the whole set):**
 > - **Coder** — inline projection in `coder.md` (pipeline system prompt). ✅ done.
 > - **EM** — inline projection in `em.md`/`em-plan.md` (pipeline system prompt). Stage 2.
-> - **TPM** — a **human-operated** frontier chat seat (CEO-assigned, not in
->   `models.env`); its subset rides the `tpm-pack.sh` bundle. Stage 2.
+> - **TPM** — a CEO-assigned seat that may be a web chat, a scoped repo agent
+>   via `tpm-agent.sh`, OR the same LLM already on the job (D-139; ladder line).
+>   Not human-only. Its projection therefore lives in **`docs/TPM-ROLE.md`** —
+>   the one source that reaches every mode (verified: `tpm-pack.sh` slices it for
+>   chat, `tpm-agent.sh` tells the agent to "read TPM-ROLE.md in full",
+>   `tpm-view.sh` copies it into the materialized view). Appending to
+>   `tpm-pack.sh` alone would miss agent mode. Stage 2.
 > - **Conductor** — process-only, may be a bare shell; NOT a constitution
 >   consumer. **Reviewer** — does not exist.
 >
-> The TPM/EM/coder authority split in the note below still holds; only the
-> reviewer and "five-seat" counts are wrong. If a whole-change engineering
-> rubric is ever wanted, its home is the CEO acceptance step (D-44), not a seat.
+> **Canonical-parent decision (making it explicit, per the requirement not to
+> leave both conclusions active): ADOPT a canonical constitution doc.** The
+> third consumer has landed (coder, EM, TPM), so the trigger this entry named is
+> genuinely met. `docs/ENGINEERING-CONSTITUTION.md` becomes the single
+> human-maintained source; the three projections (`coder.md`, `em.md`,
+> `TPM-ROLE.md`) are hand-derived subsets that cite it. **Mechanical projection
+> tooling (auto-slicing) is DEFERRED** until hand-sync demonstrably fails — the
+> same admission discipline as gates. This withdraws the "no canonical parent
+> needed" line from the 2026-08-30 session; with three cross-cutting consumers it
+> no longer holds.
+>
+> **Why this matters (conceptual caveat):** frozen tests, gates, and CEO
+> acceptance (D-44) verify *behavior* — they do not independently judge
+> SOLID/cohesion/decomposition. With no reviewer seat, those qualities rest
+> entirely on the TPM/EM/coder guidance. That raises the stakes on the projections
+> being coherent and non-drifting, which is the case FOR the canonical source.
+>
+> **Corrected end state (authoritative; supersedes every conflicting line
+> below):** Coder projection — done (`coder.md`). EM projection — pending
+> (`em.md`/`em-plan.md`). TPM projection — pending (`TPM-ROLE.md`, reaching chat +
+> agent + view). Conductor — process-only. No standing application-code reviewer.
+> Canonical parent — adopted as a doc, mechanical projection deferred.
+> **Superseded below:** the "five-seat" count, the cold-reviewer seat and its
+> "done" status, the embedded `--review` rubric, and any reading of the
+> canonical-parent trigger as still-open. The TPM/EM/coder *authority* split in
+> the note below still holds.
 
+> **⚠ PARTLY SUPERSEDED by the correction above** — read that first. Wrong here:
+> the "five-seat" count, the reviewer as a seat, the TPM as human-chat-only, and
+> the canonical-parent trigger left open. Still valid: the TPM/EM/coder authority
+> split. Retained for history.
+>
 > **Amended 2026-08-30 (scope correction): the intended end state is five-seat,
 > not coder+reviewer.** The original decision's "defer EM and TPM" reads as
 > optional; it is not — it is a *staged rollout* of a five-seat end state, and
@@ -101,6 +134,10 @@
 > repeated failures show prose is insufficient**. The plan gate proves structural
 > validity, never good decomposition or sound contracts — that judgment stays
 > with the TPM/EM guidance and the frontier review.
+
+> **⚠ SUPERSEDED IN PART by the two corrections above** — the `--review` rubric
+> embed and `docs/REVIEW-RUBRIC.md` are reverted (no reviewer seat exists); the
+> coder fold below stands. Retained for history.
 
 **Decision:** Deliver a reusable engineering constitution to the seats that can act on it, through each seat's real context channel — not one shared document (the seats do not share a channel) and not a gate per principle (most principles are review-only or undecidable). Two role-shaped artifacts land: (1) the coder guidance is **inlined into `.opencode/prompts/coder.md`**, replacing the dangling "Follow CONVENTIONS.md" reference (the tool-less coder never receives that file — verified: `orchestrate.sh` `build_context` sends only the file-under-edit) with the complete load-bearing convention subset plus four net-new habits (validate-at-boundary, fail-safe-under-doubt, invalid-states-as-a-tie-breaker-within-the-brief, don't-swallow-errors); (2) the review checklist `docs/REVIEW-RUBRIC.md` is **embedded in the `update-template.sh --review` bundle** (the cold adversarial reviewer's seat — NOT the conductor, which is a dispatcher/reporter), conditional on the file's presence so it rides only Blueprint's own reviews. Ownership is **Blueprint-only**: the rubric stays out of `.manifest-template`, mechanically pinned by `selftest_gates.py::test_review_bundle_embeds_blueprint_owned_rubric`.
 
