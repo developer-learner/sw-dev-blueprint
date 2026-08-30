@@ -8542,6 +8542,7 @@ class _LlmCallServer:
         e = dict(os.environ)
         e["SANDBOX_LLM_HOST"] = "127.0.0.1"
         e["SANDBOX_LLM_PORT"] = str(self.port)
+        e["SWBP_EM_MODEL"] = "test-model"
         return e
 
 
