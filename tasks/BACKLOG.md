@@ -32,6 +32,15 @@
 **Rough size:** Small (observation, not code)
 **Depends on:** the next testchat milestone run where a task organically fails twice
 
+### EM plan gate: give the EM a self-correction signal on carried-contract claims
+**Priority:** P2
+**Why:** A milestone (vortex v14/v15, 2026-08-27) halted at the plan gate twice because the 4-bit EM claimed unchanged, self-owned contracts (`build_app`, `UI_PAGE`, module ids) that `contracts-delta.py`'s module-match mode surfaces as candidates while `DELTA-vN.json`'s `changed_contract_ids` excludes them. The gate's rejection text ("unchanged self-owned contracts must not ride") names no ids and the EM cannot infer changed-vs-carried from the valid-id list alone; the freeze had to ship a v15 errata carrying a negative allow-list ("never claim these four ids") to steer it. Two structural fixes would make this class self-correcting; do one of them:
+- (a) `validate-plan.py` plan-gate errors name the specific offending ids with a "carried — not in DELTA.changed_contract_ids" tag, so the EM can drop exactly those on the retry; or
+- (b) `contracts-delta.py` surfaces the `changed_contract_ids` set from the active DELTA range directly into `active-erd-delta.md` (the EM's ERD context is currently `ERD-DELTA.md`, which carries the prose but not the machine-computed claimed set), so a future TPM need not hand-write the errata.
+The best fix supersedes the errata pattern entirely: `validate-plan.py --synthesize-plan` (B3) already produces the plan without an EM call when the ERD-DELTA carries verbatim coder briefs per inventory file + a DAG statement + ownership pins — ships as the vortex v16 mechanical-lane experiment; this ticket is the cheaper EM-lane fallback for when that precondition doesn't hold.
+**Rough size:** Medium
+**Depends on:** none (post-hoc; does not block the vortex v15/v16 milestone)
+
 ---
 
 ## Icebox (someday/maybe)

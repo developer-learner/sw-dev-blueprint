@@ -2457,6 +2457,14 @@ if [ "$TESTS_RC" -eq 0 ]; then
   fi
   echo "  total run time: $(run_elapsed)s (timings were in $LOG_DIR/timings.tsv)"
   echo "=========================================="
+  echo ""
+  echo "--- Maintenance Contract reminder (BLUEPRINT.md §Maintenance) ---"
+  echo "  Before you close this session, update:"
+  echo "    1. CLAUDE.md  → LLM Correction Log (every mistake this run)"
+  echo "    2. docs/DECISIONS.md → non-obvious decisions made"
+  echo "    3. BACKLOG.md → mark this milestone done, add new items"
+  echo "  These are NOT mechanically enforced. You must write them now."
+  echo "-----------------------------------------------------------------"
   if [ -n "$FLAKE_RECORDS" ]; then
     while IFS=$'\t' read -r flake_id flake_passes; do
       python3 "$FLAKE_LEDGER_TOOL" record \
