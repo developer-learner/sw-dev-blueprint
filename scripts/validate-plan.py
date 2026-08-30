@@ -2115,16 +2115,30 @@ def cmd_synthesize_plan(delta_paths):
         }, indent=2))
         return
     erd_texts = active_erd_delta_texts(paths)
+    deltas_by_version = {
+        version: delta
+        for path, delta in zip(paths, deltas)
+        if (version := _delta_version(path)) is not None
+    }
     briefs = {}
-    for _, body in erd_texts:
+    for version, body in erd_texts:
+        delta = deltas_by_version.get(version, {})
+        planning_only = not any(delta.get(key) for key in (
+            "changed_files", "changed_tests", "retired_tests",
+            "changed_contract_ids",
+        ))
         for file_path, (task_id, brief) in _parse_brief_blocks(body).items():
-            if file_path in briefs:
+            if file_path in briefs and not planning_only:
                 prior_id, prior_brief = briefs[file_path]
                 briefs[file_path] = (
                     prior_id,
                     f"{prior_brief.rstrip()}\n\n{brief.lstrip()}",
                 )
             else:
+                # A planning-only/doc-only repair may restate the complete
+                # brief so a clean B3 rebuild has every task. It supersedes
+                # the historical copy; behavioral freezes still accumulate
+                # their incremental instructions across the active range.
                 briefs[file_path] = (task_id, brief)
     missing = [f for f in files if f not in briefs]
     if missing:

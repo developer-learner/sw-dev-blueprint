@@ -42,10 +42,14 @@ done
 
 CFG="$HOME/.config/sw-dev-blueprint/models.env"
 VAR="SWBP_$(printf '%s' "$ROLE" | tr '[:lower:]' '[:upper:]')_MODEL"
+_PRE_HOST="${SANDBOX_LLM_HOST:-}"
+_PRE_PORT="${SANDBOX_LLM_PORT:-}"
 if [ -z "${!VAR:-}" ] && [ -f "$CFG" ]; then
   # shellcheck disable=SC1090
   . "$CFG"
 fi
+[ -n "$_PRE_HOST" ] && SANDBOX_LLM_HOST="$_PRE_HOST"
+[ -n "$_PRE_PORT" ] && SANDBOX_LLM_PORT="$_PRE_PORT"
 MODEL="${!VAR:-}"
 [ -n "$MODEL" ] || {
   echo "llm-call FAIL: no model mapped for role '$ROLE' — set $VAR in $CFG (or export it). No silent fallback (D-52/D-53)." >&2

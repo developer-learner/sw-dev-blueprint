@@ -476,6 +476,15 @@ note above).
 
 **Decision:** `validate-plan.py --synthesize-plan DELTA.json [DELTA.json ...]` produces the full plan mechanically when — and only when — the TPM's ERD-DELTA carries a complete decomposition: a verbatim coder brief for EVERY file in `contracts.files` (`## Coder briefs (verbatim)` with `### T<n> — <file> (<label>)` blocks), a DAG statement (a `` `A` depends on `B` `` line and/or a `Task order:` chain), and an ownership pin for every milestone node-id (frozen `test_mapping` ∪ the delta's `## Test-to-file mapping` section). One deterministic task per file: brief verbatim, `contracts` = changed ids pinned to that file (D-120 pins / entry-point self-pins), `tests` = the milestone slice's pinned node-ids, `depends_on` = the DAG prose resolved to task ids. The output still faces the FULL `validate()` gate — the command is a producer, never an authority. On any missing piece it refuses (exit 1, named reasons) and `ensure_plan` falls back to the EM full emission with the reasons as context — **the EM is exception-only in the mechanical lane**. The synthesis attempt consumes no plan-revision budget and fires once per run; a synthesized plan rejected by the gate then feeds the EM's revision loop as `plan-being-revised`, giving the EM a concrete draft to fix instead of a blank slate.
 
+> **Amended 2026-08-28 (Vortex v20):** Across an active multi-freeze range,
+> behavioral deltas still accumulate repeated-file brief instructions. A
+> planning-only delta—no changed files, tests, retired tests, or contracts—may
+> deliberately restate a complete brief so B3 can rebuild after task-state
+> loss; that restatement supersedes the historical copy for the files it
+> names. Concatenating a full doc-only restatement duplicates instructions and
+> can exceed `MAX_BRIEF_CHARS`. Test and contract scope still unions across
+> every active delta; only the planning-only restated brief is replaced.
+
 **Alternatives considered:** (a) always-EM emission — rejected: the EM's only authority is judgment the transcription lacks; for a complete TPM briefs package its emission is pure transcription cost (and testchat v99's AC-161 oracle showed a NEW test pinned only in the delta's mapping section silently dropped from the file-granular slice, leaving the task's tests empty — synthesis transcribes the section, closing the D-124 hole); (b) synthesis writing `tasks/plan.json` itself — rejected: the shell owns all writes (D-53); the command prints JSON to stdout; (c) a bounded always-try loop — rejected: the producer is deterministic, a retry after its own gate rejection is pointless, one attempt per run.
 
 **Reason:** Full EM emission dominated plan cost (45–90 min of the review batch) while the TPM-authored ERD-DELTA already contains the decomposition when complete. The milestone's own artifacts (testchat v99: briefs T1–T4, DAG line, mapping section) demonstrate the materials the transcription needs. Fail-closed-to-EM keeps the EM's judgment wherever the TPM data has a gap; the full gate keeps authority regardless of who authored the plan.
@@ -739,6 +748,14 @@ note above).
 ## D-113 — 2026-08-01 — Success cleanup recovers its prior spec from durable history
 
 **Decision:** When the runtime task checkpoint is empty after intentional success cleanup—or partial state loss—`scripts/orchestrate.sh` resolves the prior milestone from the newest validated entry in `.pipeline-completions.json` instead of trusting a lone `.pipeline-state/spec_version`. That recovered version drives `SPEC_ADVANCED` before exact-match completions are restored and is retained separately as `delta_baseline_spec` for the entire in-progress milestone, so same-spec retries preserve every intervening delta in D-65 edit scope. Task reset and edit scope share one fail-closed affected-task computation over that range, and every in-process plan revision recomputes and reapplies it before the DAG continues. `completion-ledger.py latest` returns the newest successful spec (or zero for no history), accepts only canonical positive version keys, validates the entire ledger, and makes malformed history halt. A prior version newer than the frozen spec and a missing intervening delta also halt rather than guessing through incomplete history.
+
+> **Amended 2026-08-28 (Vortex v20):** `SWBP_REBUILD_FROM_SCRATCH=1`
+> bypasses restoration of prior task completions, but it does not replace the
+> last successful spec with the current freeze. The successful-spec baseline
+> still defines the milestone's complete delta, test, and instruction range.
+> Otherwise a clean rebuild at a doc-only errata freeze can collapse planning
+> to an empty newest delta, producing an empty node-id scope and acceptance-free
+> B3 tasks even though earlier unfinished freezes contain the work.
 
 **Reason:** D-108 correctly ordered restore before delta invalidation, but D-99's success cleanup deleted the runtime version used to arm that invalidation. The fallback silently set the missing prior version equal to the new frozen version, so `SPEC_ADVANCED=0`; a partial checkpoint could also retain only that version after losing every task marker. A one-file mechanical re-plan can preserve an affected task's exact fingerprint when test content changes under the same node-id; D-108 could then restore it as done and skip the affected-task reset. A first correction that considered only the newest delta still failed when more than one freeze elapsed after success; advancing runtime `spec_version` after the first reset then lost that wider range on retry. Separately recomputing D-65 scope could fail open, while caching it across a later decomposition revision made it stale. The full suite remained a backstop, but legitimate implementation work was misrouted into drift/escalation instead of reaching the coder.
 

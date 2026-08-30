@@ -5421,7 +5421,7 @@ def _run_completion(tmp_path, action):
     )
 
 
-def _run_prior_spec_resolution(tmp_path, current_spec):
+def _run_prior_spec_resolution(tmp_path, current_spec, *, rebuild=False):
     """Execute the exact D-113 resolver extracted from orchestrate.sh."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
     block = source.split(
@@ -5435,6 +5435,7 @@ def _run_prior_spec_resolution(tmp_path, current_spec):
         "COMPLETION_LEDGER": str(tmp_path / ".pipeline-completions.json"),
         "COMPLETION_LEDGER_TOOL": str(COMPLETION_LEDGER),
         "FROZEN_V": str(current_spec),
+        "SWBP_REBUILD_FROM_SCRATCH": "1" if rebuild else "0",
     }
     script = f"""set -euo pipefail
 read_state() {{ [ -f "$STATE_DIR/$1" ] && cat "$STATE_DIR/$1" || true; }}
@@ -5659,6 +5660,32 @@ def test_empty_task_checkpoint_uses_ledger_not_runtime_version(tmp_path):
     assert "SPEC_ADVANCED=1" in resolved.stdout
 
 
+def test_explicit_rebuild_keeps_success_baseline_for_delta_scope(tmp_path):
+    """A rebuild discards reusable task completion, not the last successful
+    spec that defines which frozen deltas belong to the unfinished milestone.
+    Otherwise a doc-only latest freeze produces an empty node-id scope and B3
+    emits tasks with no acceptance signals (Vortex v20)."""
+    _completion_fixture(tmp_path)
+    recorded = _run_completion(tmp_path, "record")
+    assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
+    state = tmp_path / ".pipeline-state"
+    (state / "spec_version").write_text("3\n")
+
+    resolved = _run_prior_spec_resolution(
+        tmp_path, current_spec=3, rebuild=True,
+    )
+    assert resolved.returncode == 0, (resolved.stdout, resolved.stderr)
+    assert "LAST_V=1" in resolved.stdout
+    assert "SPEC_ADVANCED=1" in resolved.stdout
+
+    active = _run_active_delta_resolution(
+        tmp_path, last_spec=1, current_spec=3, available_versions=(2, 3),
+    )
+    assert active.returncode == 0, (active.stdout, active.stderr)
+    assert "DELTA-v2.json" in active.stdout
+    assert "DELTA-v3.json" in active.stdout
+
+
 def test_active_delta_range_spans_every_freeze_since_success(tmp_path):
     resolved = _run_active_delta_resolution(
         tmp_path, last_spec=1, current_spec=3, available_versions=(2, 3)
@@ -5745,6 +5772,9 @@ def test_orchestrator_orders_completion_restore_and_record_safely():
     assert "SWBP_REBUILD_FROM_SCRATCH" in restore_guard
     assert source.count("scripts/validate-plan.py --affected") == 1
     assert 'write_state delta_baseline_spec "$DELTA_BASELINE_V"' in source
+    preflight = source[source.index("# --- Re-freeze detection"):plan]
+    assert 'LAST_V=$(resolve_last_spec_version)' in preflight
+    assert 'LAST_V="$FROZEN_V"' not in preflight
     assert source.count(
         "ensure_plan\n        compute_active_delta_scope\n"
         "        reset_active_delta_tasks"
@@ -9948,6 +9978,43 @@ def test_synthesize_plan_contract_placement_by_file_pins(synth_repo):
     r = run_synthesize(synth_repo, "delta.json")
     assert r.returncode == 0, r.stderr
     t1, t2 = json.loads(r.stdout)["tasks"]
+    assert t1["contracts"] == ["src.a"]
+    assert t2["contracts"] == ["route-items"]
+
+
+def test_synthesize_plan_planning_only_brief_supersedes_restated_copy(
+    synth_repo,
+):
+    """A planning-only repair may restate every complete coder brief so B3
+    works after task-state loss. Its self-contained brief replaces the older
+    copy; concatenation duplicates the task and can exceed the plan gate's
+    brief limit (Vortex v20). Test/contract scope still comes from the earlier
+    behavioral delta independently of brief selection."""
+    approved = synth_repo / "scripts" / ".approved"
+    older = _synth_erd(brief_a="Older complete module-a brief.")
+    newer = _synth_erd(brief_a="Newest complete module-a brief.")
+    (approved / "ERD-DELTA-v6.md").write_text(older)
+    (approved / "ERD-DELTA-v7.md").write_text(newer)
+    _write_delta(
+        synth_repo, "DELTA-v6.json",
+        changed_files=["src/a.py", "src/b.py"],
+        changed_tests=[
+            "tests/test_a.py::test_one", "tests/test_b.py::test_two",
+        ],
+        changed_contract_ids=["src.a", "route-items"],
+    )
+    _write_delta(
+        synth_repo, "DELTA-v7.json",
+        changed_files=[], changed_tests=[], changed_contract_ids=[],
+    )
+
+    r = run_synthesize(synth_repo, "DELTA-v6.json", "DELTA-v7.json")
+    assert r.returncode == 0, r.stderr
+    t1, t2 = json.loads(r.stdout)["tasks"]
+    assert t1["brief"] == "Newest complete module-a brief."
+    assert "Older complete" not in t1["brief"]
+    assert t1["tests"] == ["tests/test_a.py::test_one"]
+    assert t2["tests"] == ["tests/test_b.py::test_two"]
     assert t1["contracts"] == ["src.a"]
     assert t2["contracts"] == ["route-items"]
 

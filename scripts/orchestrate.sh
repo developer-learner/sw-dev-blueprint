@@ -416,8 +416,12 @@ resolve_last_spec_version() {
   local last_v
   # A runtime version without any task checkpoint can survive partial state
   # loss. It is not authoritative: fall back to the last complete success so
-  # every intervening delta is replayed before completions are trusted.
-  if [ -n "$(ls -A "$TASK_STATE" 2>/dev/null || true)" ]; then
+  # every intervening delta is replayed before completions are trusted. An
+  # explicit full rebuild likewise ignores the runtime checkpoint: it bypasses
+  # completion RESTORE, not the successful-spec baseline that defines the
+  # milestone's acceptance range.
+  if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" != "1" ] \
+     && [ -n "$(ls -A "$TASK_STATE" 2>/dev/null || true)" ]; then
     last_v=$(read_state spec_version)
   else
     last_v=""
@@ -784,12 +788,11 @@ fi
 # Success intentionally deletes the runtime state, including spec_version.
 # Recover that version from the validated durable ledger so a new freeze still
 # arms its affected-task reset before any exact-match completion is trusted.
-# An explicit from-scratch run bypasses durable history in both places.
-if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" = "1" ]; then
-  LAST_V="$FROZEN_V"
-else
-  LAST_V=$(resolve_last_spec_version)
-fi
+# An explicit from-scratch run still needs the last successful version to
+# define the complete milestone acceptance range. It bypasses completion
+# restore below; it must not collapse planning to the newest (possibly
+# doc-only) freeze.
+LAST_V=$(resolve_last_spec_version)
 SPEC_ADVANCED=0
 if [ "$FROZEN_V" != "$LAST_V" ]; then
   SPEC_ADVANCED=1
@@ -801,12 +804,12 @@ fi
 # the first reset, spec_version advances to the current freeze; without this
 # separate checkpoint a retry would narrow D-65 back to the newest delta and
 # strand tasks hit only by an earlier skipped freeze (D-113).
-if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" = "1" ]; then
-  DELTA_BASELINE_V="$FROZEN_V"
-else
+if [ "${SWBP_REBUILD_FROM_SCRATCH:-0}" != "1" ]; then
   DELTA_BASELINE_V=$(read_state delta_baseline_spec)
-  DELTA_BASELINE_V=${DELTA_BASELINE_V:-$LAST_V}
+else
+  DELTA_BASELINE_V=""
 fi
+DELTA_BASELINE_V=${DELTA_BASELINE_V:-$LAST_V}
 case "$DELTA_BASELINE_V" in
   ''|*[!0-9]*|0) die "invalid delta baseline spec version '$DELTA_BASELINE_V'" ;;
 esac
