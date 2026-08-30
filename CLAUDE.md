@@ -52,7 +52,7 @@ Testing:      pytest
 │   │                         # one-time setup (core.hooksPath, .template-version stamp; new-project.sh is deleted at Step-4 cleanup)
 │   ├── orchestrate.sh        # shell-driven task-DAG conductor (owns ALL procedure)
 │   ├── llm-call.sh           # ONE bare HTTP completion per call, no harness (D-53)
-│   ├── phase-gate.sh         # lane + integrity gate (INV-2/3, frozen spec; portable sha256)
+│   ├── phase-gate.sh         # lane + integrity gate (INV-2, frozen spec; portable sha256)
 │   ├── validate-plan.py      # plan.json gate (atomicity, DAG, coverage, mapping)
 │   ├── apply-edit-blocks.py  # fail-closed anchored SEARCH/REPLACE applier (D-59)
 │   ├── sandbox-run.sh        # podman wrapper: read-only repo, --network none
