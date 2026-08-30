@@ -353,6 +353,44 @@ Rule of thumb: any file over ~200 lines that hasn't been coder-touched
 since D-68 landed is a preemptive-sweep candidate — grep it before the
 freeze, not after the halt.
 
+## Specify the decisions (engineering-constitution TPM projection)
+
+> The TPM projection of `docs/ENGINEERING-CONSTITUTION.md`. You own *"what
+> correct means"*, and there is no reviewer seat downstream — tests, gates, and
+> CEO acceptance verify behavior, not SOLID/cohesion/contracts. So the coherence
+> of the whole build rests on making these decisions **explicit in the spec**,
+> not on downstream models inferring them. "Follow SOLID" is not a spec; the
+> output fields are.
+
+For each capability a milestone introduces or touches, make explicit — as ACs,
+contracts, ERD prose, or frozen tests, whichever is the spec's real channel:
+
+- **Responsibilities and ownership** — one clear owner per behavior; do not let
+  one capability quietly combine persistence, transport, and domain policy (the
+  EM cannot restore SRP you merged away, and the coder cannot either).
+- **Public contracts and allowed dependencies** — signatures, routes, and which
+  direction may depend on which; keep policy independent of framework/DB/net.
+- **Valid and invalid states** — prefer shapes that make an invalid state
+  unrepresentable over a runtime guard a later edit can drop.
+- **Failure behavior and user-visible errors** — every side effect needs a
+  failure-visibility AC (D-68); name the status/message, not just the happy path.
+- **Retry and idempotency** — for any at-least-once path (queue, webhook,
+  double-submit), state whether a repeat must be a no-op.
+- **Concurrency / atomicity** — WHILE-one-in-flight rules; check-then-act that
+  must not have an unsafe window.
+- **Backward compatibility** — call out any change to a public contract or
+  persisted-data shape as deliberate.
+- **Discriminating tests, incl. negative cases** — the frozen suite is the
+  oracle; a test that passes against an obviously-wrong implementation is not an
+  oracle. Author the failure-path and boundary tests, not only the happy path.
+- **Non-goals and prohibited abstractions** — say what NOT to build; this is how
+  YAGNI reaches the EM and coder, who otherwise cannot know an abstraction is
+  unwanted.
+
+Do not merely tell downstream tiers to "be SOLID" — encode the decisions above so
+they cannot be misinterpreted. Where a decision is genuinely open, that is a
+spec question for the CEO, not something a weaker tier should resolve.
+
 ## Operating disciplines
 
 - **Verify at source when you review.** Agent and pipeline output is
