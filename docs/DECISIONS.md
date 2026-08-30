@@ -23,6 +23,56 @@
 
 ## D-172 — 2026-08-30 — Engineering principles as role-shaped guidance, delivered per channel
 
+> **Amended 2026-08-30 (scope correction): the intended end state is five-seat,
+> not coder+reviewer.** The original decision's "defer EM and TPM" reads as
+> optional; it is not — it is a *staged rollout* of a five-seat end state, and
+> the canonical-parent promotion trigger this entry named is hereby **reached**.
+> The correction: principles are decided at the capability level that owns them,
+> so guidance must reach every seat that makes a decision, bounded by that seat's
+> authority.
+>
+> **Authority-by-seat (who decides what, and therefore who must be guided):**
+> - **TPM (frontier)** owns *"what correct means"* — public contracts, invariants
+>   and valid/invalid states, failure behavior and user-visible errors,
+>   retry/idempotency, concurrency/atomicity, backward-compat, discriminating
+>   tests incl. negative cases, non-goals and *prohibited* abstractions. Much of
+>   correctness is decided here or nowhere (a coder cannot add a failure path the
+>   suite never asserts).
+> - **EM (local planner)** owns decomposition into one-file tasks, responsibility
+>   boundaries, dependency direction, task isolation, and *whether an abstraction
+>   is justified* — i.e. much of SOLID/KISS/YAGNI. It is a constrained compiler of
+>   the frozen design: it must NOT re-architect or invent interfaces absent from
+>   the ERD; it reports contradictions rather than resolving them.
+> - **Coder (local)** implements one fully-specified task locally (done: coder.md fold).
+> - **Cold reviewer (frontier)** judges the whole change against the full rubric
+>   (done: `--review` embed).
+> - **Conductor** runs process only — ensures the prompts/gates/tests/review ran
+>   and escalates gaps; it does **not** independently judge architecture.
+>
+> **Intended final structure:** one canonical engineering constitution → role
+> projections delivered **inline through each seat's real channel** (TPM subset in
+> the `tpm-pack.sh` bundle; EM planning subset in `em.md`/`em-plan.md`; coder
+> subset in `coder.md`; full rubric in the `--review` bundle; conductor = a
+> process checklist, not the rubric) → a **selftest per delivery** so a dangling
+> reference cannot recur. Principle: *shared constitution, unequal prompts,
+> explicit authority boundaries — each seat gets only the decisions it is capable
+> and authorized to make.*
+>
+> **Staged rollout (workflow order and role authority UNCHANGED — only
+> context-delivery and artifact-expectations change):** (1) establish the
+> canonical constitution; (2) add EM and TPM inline projections + delivery
+> selftests (coder/reviewer already landed); (3) make TPM/EM *outputs* expose
+> the decisions above, initially as prompt requirements over existing
+> PRD/ERD/contracts/plan formats; (4) run several milestones and measure retries,
+> plan rejections, review findings, regressions; (5) tighten artifact schemas
+> only where ambiguity persists; (6) add risk-triggered frontier review or a new
+> gate only when evidence clears the D-115 admission bar. Guardrails hold: **no
+> gate per principle** (cohesion/KISS/SOLID are context-sensitive; crude static
+> checks cause false positives and cargo-cult code); **no schema change until
+> repeated failures show prose is insufficient**. The plan gate proves structural
+> validity, never good decomposition or sound contracts — that judgment stays
+> with the TPM/EM guidance and the frontier review.
+
 **Decision:** Deliver a reusable engineering constitution to the seats that can act on it, through each seat's real context channel — not one shared document (the seats do not share a channel) and not a gate per principle (most principles are review-only or undecidable). Two role-shaped artifacts land: (1) the coder guidance is **inlined into `.opencode/prompts/coder.md`**, replacing the dangling "Follow CONVENTIONS.md" reference (the tool-less coder never receives that file — verified: `orchestrate.sh` `build_context` sends only the file-under-edit) with the complete load-bearing convention subset plus four net-new habits (validate-at-boundary, fail-safe-under-doubt, invalid-states-as-a-tie-breaker-within-the-brief, don't-swallow-errors); (2) the review checklist `docs/REVIEW-RUBRIC.md` is **embedded in the `update-template.sh --review` bundle** (the cold adversarial reviewer's seat — NOT the conductor, which is a dispatcher/reporter), conditional on the file's presence so it rides only Blueprint's own reviews. Ownership is **Blueprint-only**: the rubric stays out of `.manifest-template`, mechanically pinned by `selftest_gates.py::test_review_bundle_embeds_blueprint_owned_rubric`.
 
 **Alternatives considered:** (a) One shared doc for all seats — rejected: physically undeliverable; coder gets inline `coder.md` only, the cold reviewer needs it inside a self-contained bundle, the EM/TPM are air-gapped. (b) Turn each principle into a gate — rejected: of ~30 principles only ~7 are structural and ~6 mechanically checked; the rest are review-only or not mechanically decidable, and a blanket gate (e.g. ruff `T20` for `print`) false-positives on legitimate CLI output (Vortex `cli.py`). (c) Fleet-distribute the rubric now — deferred: no child has an app-code review seat yet, so distribution would add drift/manifest surface without changing behavior. (d) A canonical parent doc with per-seat projection — deferred (YAGNI) until a third consumer lands or the two artifacts first drift.
