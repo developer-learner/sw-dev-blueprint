@@ -10458,3 +10458,29 @@ def test_oracle_gap_group1_pins_mutated_values():
     # refreeze_delta.py — D-140 notice condition (mutant dropped `not`)
     src = (SCRIPTS / "refreeze_delta.py").read_text()
     assert 'if not (delta["changed_contract_ids"] or changed_tests or inventory_files):' in src
+
+
+def test_review_bundle_embeds_blueprint_owned_rubric():
+    """The --review bundle carries the engineering review checklist so the cold
+    reviewer applies it against the two-question contract. Ownership is
+    Blueprint-only (2026-08-30): the rubric file must exist in Blueprint and the
+    embed must be conditional on its presence, so the fleet-distributed script
+    stays inert in a copied/linked child that never received the file.
+
+    Pins, in order: the conditional guard, the cat, and the checklist markers
+    in update-template.sh source; that the Blueprint-owned file exists; and that
+    it is deliberately ABSENT from .manifest-template (the mechanical anchor of
+    the Blueprint-only decision — fleet-distributing it later must be a
+    conscious change that trips this test)."""
+    src = (SCRIPTS / "update-template.sh").read_text()
+    assert 'if [ -f docs/REVIEW-RUBRIC.md ]; then' in src, "review embed guard missing"
+    assert 'cat docs/REVIEW-RUBRIC.md' in src, "review embed cat missing"
+    assert "=== REVIEW CHECKLIST" in src and "=== END CHECKLIST ===" in src, \
+        "review checklist markers missing"
+
+    rubric = SCRIPTS.parent / "docs" / "REVIEW-RUBRIC.md"
+    assert rubric.is_file(), "Blueprint-owned rubric file missing — embed is dead"
+
+    manifest = (SCRIPTS / ".manifest-template").read_text()
+    assert "docs/REVIEW-RUBRIC.md" not in manifest, \
+        "rubric is Blueprint-only (2026-08-30) — it must NOT be in .manifest-template"
