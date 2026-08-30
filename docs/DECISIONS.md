@@ -23,6 +23,35 @@
 
 ## D-172 — 2026-08-30 — Engineering principles as role-shaped guidance, delivered per channel
 
+> **Amended 2026-08-30 (correction, SUPERSEDES the reviewer/five-seat framing
+> below): there is no reviewer role, and the `--review` embed is reverted.**
+> Verified against the tree: the D-27 ladder is CEO, TPM, Conductor, EM, Coder —
+> **no reviewer**; `models.env` assigns models to **EM and Coder only**
+> (`SWBP_EM_MODEL`, `SWBP_CODER_MODEL`), and `llm-call.sh` is invoked only as
+> `em`/`coder`. `update-template.sh --review` is a **flag**, not a seat: it emits
+> a second-model read of a **control-plane template diff** (fleet-sync safety,
+> D-61), never application code. The "cold reviewer" was a conversational
+> artifact imported from generic SW-eng review practice, not a system role.
+>
+> **Consequence:** the initial `--review` rubric embed + `docs/REVIEW-RUBRIC.md`
+> + its selftest are **reverted** as a category error (a general application
+> code-review rubric wired into a control-plane-diff review). App-code "review"
+> in this pipeline **is** the frozen discriminating tests (TPM-authored) +
+> mechanical gates + live CEO acceptance (D-44) — there is no review seat by
+> design (same philosophy that makes the conductor near-vestigial).
+>
+> **Corrected consumer map (this is the whole set):**
+> - **Coder** — inline projection in `coder.md` (pipeline system prompt). ✅ done.
+> - **EM** — inline projection in `em.md`/`em-plan.md` (pipeline system prompt). Stage 2.
+> - **TPM** — a **human-operated** frontier chat seat (CEO-assigned, not in
+>   `models.env`); its subset rides the `tpm-pack.sh` bundle. Stage 2.
+> - **Conductor** — process-only, may be a bare shell; NOT a constitution
+>   consumer. **Reviewer** — does not exist.
+>
+> The TPM/EM/coder authority split in the note below still holds; only the
+> reviewer and "five-seat" counts are wrong. If a whole-change engineering
+> rubric is ever wanted, its home is the CEO acceptance step (D-44), not a seat.
+
 > **Amended 2026-08-30 (scope correction): the intended end state is five-seat,
 > not coder+reviewer.** The original decision's "defer EM and TPM" reads as
 > optional; it is not — it is a *staged rollout* of a five-seat end state, and

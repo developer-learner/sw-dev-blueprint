@@ -237,16 +237,6 @@ if [ "$REVIEW" = "1" ]; then
   echo "Reply with a verdict line first — CONFIRM or MISMATCH — then your"
   echo "reasoning. Do not soften a MISMATCH; the human approves on your word."
   echo ""
-  # Blueprint-owned engineering rubric (out of .manifest-template by design):
-  # present in Blueprint, absent in copied/linked children, so the checklist
-  # rides only Blueprint's own control-plane reviews. Conditional keeps the
-  # fleet-distributed script inert where the file was intentionally not shipped.
-  if [ -f docs/REVIEW-RUBRIC.md ]; then
-    echo "=== REVIEW CHECKLIST (apply when judging the two questions above) ==="
-    cat docs/REVIEW-RUBRIC.md
-    echo "=== END CHECKLIST ==="
-    echo ""
-  fi
   echo "=== CLAIMS (template commit log, ${BASE_REF:0:12}..${TARGET:0:12}) ==="
   echo "$CLAIMS"
   echo ""
