@@ -1813,14 +1813,64 @@ def cmd_milestone_scope(delta_paths):
     print("\n".join(sorted(set(ids))))
 
 
+def changed_contracts_section(delta_paths: list[Path]) -> str:
+    """Machine-computed claim authority for the EM's active ERD context.
+
+    The EM's contracts context (contracts-delta.py body slice) carries full
+    bodies for every entry pinned to an inventory file — changed or not — so
+    a weak EM claims the unchanged self-owned ones and the plan gate rejects
+    the ride-alongs (vortex v14: src.vortex.app:build_app / src.vortex.ui:
+    UI_PAGE; the gate names the ids on rejection, but the 4-bit EM could not
+    reliably trim them and the TPM then had to hand-write a negative
+    allow-list errata into the ERD-DELTA to steer it). Surfacing the DELTA
+    range's changed_contract_ids union in the context the EM already reads
+    makes the claim set explicit in the INPUT, not only in the rejection:
+    the same union the ride-along gate enforces (D-138 range, same
+    delta_changed_contract_ids authority — no second source of truth).
+    Ids render backtick-quoted, one per line: contract_ids()' unpinned-id
+    naming check is a substring match on this file, and the quotes keep it
+    exact (a changed id is then legitimately claimable; an unchanged one is
+    not named and stays out of the verbatim list).
+    """
+    changed = sorted(delta_changed_contract_ids(delta_paths))
+    out = [
+        "## Changed contracts (machine-computed from the active DELTA range)",
+        "",
+    ]
+    if changed:
+        out.append(
+            "The milestone's DELTA snapshots declare these contracts changed:")
+        out.extend(f"- `{contract_id}`" for contract_id in changed)
+        out.append("")
+        out.append(
+            "Claim rule: a task claims only ids listed here, plus cross-file "
+            "interfaces its work directly depends on (pinned to another file, "
+            "or unpinned). A contract pinned to the task's OWN file that is "
+            "not listed here must not be claimed — the plan gate rejects "
+            "ride-along claims (v99: a GET-only milestone claiming PUT/DELETE "
+            "dragged unchanged behavior into acceptance and invalidation)."
+        )
+    else:
+        out.append(
+            "The milestone's DELTA snapshots declare NO contracts changed. "
+            "Claim no self-owned contract: a task's contracts array holds "
+            "only cross-file interfaces its work directly depends on (pinned "
+            "to another file, or unpinned) — or is empty."
+        )
+    return "\n".join(out)
+
+
 def cmd_active_erd_context(delta_paths):
-    """Emit the compact, complete active ERD instruction packet (D-166)."""
+    """Emit the compact, complete active ERD instruction packet (D-166),
+    closed by the machine-computed changed-contracts claim authority."""
     paths = [Path(path) for path in delta_paths]
     contracts = load_json(CONTRACTS, "frozen contracts")
     if not active_inventory_files(paths, contracts):
         print("(active milestone has no behavioral build inventory)")
         return
     print(compact_active_erd_context(active_erd_delta_texts(paths)))
+    print()
+    print(changed_contracts_section(paths))
 
 
 def cmd_active_inventory(delta_paths):

@@ -32,15 +32,6 @@
 **Rough size:** Small (observation, not code)
 **Depends on:** the next testchat milestone run where a task organically fails twice
 
-### EM plan gate: give the EM a self-correction signal on carried-contract claims
-**Priority:** P2
-**Why:** A milestone (vortex v14/v15, 2026-08-27) halted at the plan gate twice because the 4-bit EM claimed unchanged, self-owned contracts (`build_app`, `UI_PAGE`, module ids) that `contracts-delta.py`'s module-match mode surfaces as candidates while `DELTA-vN.json`'s `changed_contract_ids` excludes them. The gate's rejection text ("unchanged self-owned contracts must not ride") names no ids and the EM cannot infer changed-vs-carried from the valid-id list alone; the freeze had to ship a v15 errata carrying a negative allow-list ("never claim these four ids") to steer it. Two structural fixes would make this class self-correcting; do one of them:
-- (a) `validate-plan.py` plan-gate errors name the specific offending ids with a "carried — not in DELTA.changed_contract_ids" tag, so the EM can drop exactly those on the retry; or
-- (b) `contracts-delta.py` surfaces the `changed_contract_ids` set from the active DELTA range directly into `active-erd-delta.md` (the EM's ERD context is currently `ERD-DELTA.md`, which carries the prose but not the machine-computed claimed set), so a future TPM need not hand-write the errata.
-The best fix supersedes the errata pattern entirely: `validate-plan.py --synthesize-plan` (B3) already produces the plan without an EM call when the ERD-DELTA carries verbatim coder briefs per inventory file + a DAG statement + ownership pins — ships as the vortex v16 mechanical-lane experiment; this ticket is the cheaper EM-lane fallback for when that precondition doesn't hold.
-**Rough size:** Medium
-**Depends on:** none (post-hoc; does not block the vortex v15/v16 milestone)
-
 ---
 
 ## Icebox (someday/maybe)
@@ -55,6 +46,7 @@ The best fix supersedes the errata pattern entirely: `validate-plan.py --synthes
 
 | Task | Completed | Notes |
 |------|-----------|-------|
+| EM plan gate: give the EM a self-correction signal on carried-contract claims | 2026-08-30 | D-173: `--active-erd-context` closes with a machine-computed changed-contracts section (the same `delta_changed_contract_ids` union the ride-along gate enforces) + claim rule. Option (a) was already in place — the v14 archive proves the rejection names the ids; the ticket's "names no ids" clause was an inaccurate recollection and is superseded. Option (b) is the fix that shipped, rendered in `validate-plan.py` (the file's owner), not `contracts-delta.py`. B3's mechanical lane remains the best fix when its precondition holds. |
 | Correction-log row: Perl `s{}{}` interpolation eats shell variables in generated code | 2026-08-23 | Added to CLAUDE.md: generator-level interpolation can erase intended shell variables before the shell ever sees them; use literal patching or explicitly escape and exercise generated invocations. |
 | EM diagnosis taxonomy: represent transient/environmental failures | 2026-08-23 | D-169 adds a positive-evidence-only verdict. The shell preserves an operator-review record and halts; it never retries, re-probes, rewrites the plan, or escalates to TPM automatically. |
 | EM diagnosis hardening: A/B denser diagnosis brief | 2026-08-23 | Three archived consults replayed through both variants: both fixed 2 schema-invalid replies; neither could honestly classify a transient failure. Dense candidate not shipped; evidence isolates the missing verdict taxonomy. |

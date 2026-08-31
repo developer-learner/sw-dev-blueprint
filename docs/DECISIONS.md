@@ -21,6 +21,49 @@
 
 ## Decisions
 
+## D-173 — 2026-08-30 — Machine-computed changed-contracts section in the EM's active ERD context
+
+**Decision:** `validate-plan.py --active-erd-context` (the file the shell
+passes the EM as `ERD-delta:`) now closes with a machine-computed
+"Changed contracts" section: the union of `changed_contract_ids` across the
+active D-138 DELTA range — the same `delta_changed_contract_ids` authority
+the ride-along plan gate enforces — plus a one-paragraph claim rule. The
+claimable set is explicit in the EM's INPUT, not only in the gate's
+rejection. Ids render backtick-quoted, one per line, so `contract_ids()`'
+unpinned-id substring check on the same file stays exact. The raw
+ERD-DELTA-vN.md snapshots stay immutable (D-166 boundary: the renderer
+changes only the model-facing view; B3 synthesis still consumes raw slices).
+
+**Alternatives considered:** (a) Naming the offending ids in the gate's
+rejection — already in place and verified in the v14 archive (`claims
+contract(s) ['src.vortex.app', 'src.vortex.app:build_app'] … Trim these
+claims`); the backlog's "names no ids" was an inaccurate recollection, so
+this entry supersedes that clause. (b) This input-side fix — the one the
+ticket names. (c) B3's mechanical lane (`--synthesize-plan`): the best fix
+and already shipped — "ride-along claims are never synthesized"; it is the
+vortex v16 experiment, and this entry is the EM-lane fallback for when its
+precondition (verbatim briefs for every inventory file) does not hold.
+
+**Reason:** The vortex v14/v15 double-halt (2026-08-27): the 4-bit EM claimed
+unchanged self-owned contracts (`src.vortex.app:build_app`,
+`src.vortex.ui:UI_PAGE`) that the contracts-delta body slice carries in full
+for every inventory-pinned entry; the gate rejected the ride-alongs; the EM
+could not reliably trim from the rejection; the TPM then hand-wrote a
+negative allow-list errata ("never claim these four ids") into the
+ERD-DELTA to steer it. Surfacing the machine's authority in the input makes
+the class self-correcting regardless of EM tier, and the TPM no longer needs
+the errata pattern — the escalation bundle cats the same file, so the TPM
+sees the machine section too. Side effect (deliberate): changed UNPINNED ids
+(ui/external) now appear in `contract_ids()`' verbatim list via the same
+substring check — conservative and correct: a changed id is claimable, an
+unchanged one is not named and stays out.
+
+**Do not suggest:** reverting the section to TPM prose (the errata pattern
+it replaces); a second source of truth for the changed set (the section must
+render from `delta_changed_contract_ids` or the gate and the EM's input
+drift); writing it into the immutable ERD-DELTA-vN.md snapshots; an em.md
+prompt change for this (the section is self-describing inside the packet).
+
 ## D-172 — 2026-08-30 — Engineering principles as role-shaped guidance, delivered per channel
 
 > **Amended 2026-08-30 (correction, SUPERSEDES the reviewer/five-seat framing

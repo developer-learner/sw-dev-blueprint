@@ -295,6 +295,87 @@ def test_claim_gate_inert_without_delta_stack(repo):
     assert r.returncode == 0, r.stderr
 
 
+# --- Claim authority in the EM's active ERD context (D-173) -----------------
+# The ride-along gate above names the offending ids on REJECTION; the
+# vortex v14/v15 double-halt showed a weak EM still cannot reliably trim
+# from a rejection alone, so the TPM hand-wrote a negative allow-list
+# errata into the ERD-DELTA. The structural fix surfaces the same union
+# (delta_changed_contract_ids over the active range) in the context the EM
+# already reads, so the claim set is explicit in the input.
+
+def _active_erd_context(repo, *delta_names):
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_PLAN), "--active-erd-context",
+         *[f"scripts/.approved/{name}" for name in delta_names]],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_active_erd_context_surfaces_changed_contracts(repo):
+    """The changed set is rendered into the EM's ERD context: the changed
+    id is listed, the unchanged self-owned id is not, and the claim rule
+    names the gate it is steering against."""
+    approved = repo / "scripts" / ".approved"
+    (approved / "DELTA-v1.json").write_text(json.dumps({
+        "changed_contract_ids": ["src.b:handler"],
+        "changed_tests": [], "changed_files": ["src/b.py"],
+    }))
+    (approved / "ERD-DELTA.md").write_text("# ERD-DELTA\nchange b\n")
+    r = _active_erd_context(repo, "DELTA-v1.json")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "## Changed contracts (machine-computed from the active DELTA range)" \
+        in r.stdout
+    assert "`src.b:handler`" in r.stdout
+    assert "- `src.a`" not in r.stdout
+    assert "must not be claimed" in r.stdout
+    # The prose slice stays intact ahead of the machine section.
+    assert "# ERD-DELTA\nchange b" in r.stdout
+
+
+def test_active_erd_context_empty_changed_set_forbids_self_owned_claims(repo):
+    """A delta that changes no contracts says so explicitly — the exact
+    case where a weak EM is most tempted to claim its file's whole
+    registered surface."""
+    approved = repo / "scripts" / ".approved"
+    (approved / "DELTA-v1.json").write_text(json.dumps({
+        "changed_contract_ids": [],
+        "changed_tests": ["tests/test_b.py::test_two"],
+        "changed_files": ["src/b.py"],
+    }))
+    (approved / "ERD-DELTA.md").write_text("# ERD-DELTA\ntests only\n")
+    r = _active_erd_context(repo, "DELTA-v1.json")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "declare NO contracts changed" in r.stdout
+    assert "Claim no self-owned contract" in r.stdout
+
+
+def test_active_erd_context_unions_skipped_freeze_range(repo):
+    """A skipped-freeze milestone (every delta since the last success) is
+    the union of its changed sets — the same D-138 range the gate enforces,
+    so the EM's input and the gate's authority cannot drift."""
+    approved = repo / "scripts" / ".approved"
+    (approved / "VERSION").write_text("3\n")
+    (approved / "DELTA-v1.json").write_text(json.dumps({
+        "changed_contract_ids": ["src.a"],
+        "changed_tests": [], "changed_files": ["src/a.py"],
+    }))
+    (approved / "DELTA-v2.json").write_text(json.dumps({
+        "changed_contract_ids": ["src.b:handler"],
+        "changed_tests": [], "changed_files": ["src/b.py"],
+    }))
+    (approved / "DELTA-v3.json").write_text(json.dumps({
+        "changed_contract_ids": [],
+        "changed_tests": ["tests/test_a.py::test_one"],
+        "changed_files": ["src/a.py"],
+    }))
+    (approved / "ERD-DELTA.md").write_text("# ERD-DELTA\nrange\n")
+    r = _active_erd_context(repo, "DELTA-v1.json", "DELTA-v2.json",
+                            "DELTA-v3.json")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "`src.a`" in r.stdout
+    assert "`src.b:handler`" in r.stdout
+
+
 def test_file_outside_build_lane_fails(repo):
     plan = good_plan()
     plan["tasks"][0]["file"] = "tests/test_a.py"
@@ -6660,7 +6741,14 @@ def test_first_freeze_v0_to_v1_succeeds(greenfield_repo):
     )
     assert active.returncode == 0, (active.stdout, active.stderr)
     assert active.stdout.startswith("## Active freeze instructions — v1\n")
-    assert active.stdout.endswith((approved / "ERD.md").read_text())
+    # The ERD body stays byte-for-byte present; the machine-computed
+    # changed-contracts section (D-173) now closes the packet, so the body
+    # is no longer the final bytes.
+    assert (approved / "ERD.md").read_text() in active.stdout
+    assert "## Changed contracts (machine-computed from the active DELTA range)" \
+        in active.stdout
+    assert "`src.app:app`" in active.stdout
+    assert "Claim rule:" in active.stdout
 
 
 def test_refreeze_identical_staged_test_does_not_widen_delta(freezable_repo):
