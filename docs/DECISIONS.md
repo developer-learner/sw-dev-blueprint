@@ -85,14 +85,16 @@ prompt change for this (the section is self-describing inside the packet).
 >
 > **Corrected consumer map (this is the whole set):**
 > - **Coder** — inline projection in `coder.md` (pipeline system prompt). ✅ done.
-> - **EM** — inline projection in `em.md`/`em-plan.md` (pipeline system prompt). Stage 2.
+> - **EM** — inline projection in `em-plan.md` (pipeline system prompt). ✅ done
+>   in D-172 stage 2 (`f6d4f68`).
 > - **TPM** — a CEO-assigned seat that may be a web chat, a scoped repo agent
 >   via `tpm-agent.sh`, OR the same LLM already on the job (D-139; ladder line).
 >   Not human-only. Its projection therefore lives in **`docs/TPM-ROLE.md`** —
 >   the one source that reaches every mode (verified: `tpm-pack.sh` slices it for
 >   chat, `tpm-agent.sh` tells the agent to "read TPM-ROLE.md in full",
 >   `tpm-view.sh` copies it into the materialized view). Appending to
->   `tpm-pack.sh` alone would miss agent mode. Stage 2.
+>   `tpm-pack.sh` alone would miss agent mode. ✅ done in D-172 stage 2
+>   (`f6d4f68`).
 > - **Conductor** — process-only, may be a bare shell; NOT a constitution
 >   consumer. **Reviewer** — does not exist.
 >
@@ -114,10 +116,11 @@ prompt change for this (the section is self-describing inside the packet).
 > being coherent and non-drifting, which is the case FOR the canonical source.
 >
 > **Corrected end state (authoritative; supersedes every conflicting line
-> below):** Coder projection — done (`coder.md`). EM projection — pending
-> (`em.md`/`em-plan.md`). TPM projection — pending (`TPM-ROLE.md`, reaching chat +
-> agent + view). Conductor — process-only. No standing application-code reviewer.
-> Canonical parent — adopted as a doc, mechanical projection deferred.
+> below):** Coder projection — done (`coder.md`). EM projection — done
+> (`em-plan.md`). TPM projection — done (`TPM-ROLE.md`, reaching chat + agent +
+> view). Conductor — process-only. No standing application-code reviewer.
+> Canonical parent — adopted as `docs/ENGINEERING-CONSTITUTION.md`; mechanical
+> projection remains deferred.
 > **Superseded below:** the "five-seat" count, the cold-reviewer seat and its
 > "done" status, the embedded `--review` rubric, and any reading of the
 > canonical-parent trigger as still-open. The TPM/EM/coder *authority* split in
