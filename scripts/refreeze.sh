@@ -564,9 +564,12 @@ fi
 if [ "$MODE" = "diff" ]; then
   echo ""
   echo "DIFF-SHA: $DIFF_SHA"
-  echo "(nothing applied — dry-run preview. Install by re-running without flags:"
-  echo "  scripts/refreeze.sh $IN)"
-  echo "  The mechanical preflights above ARE the verdict (D-121)."
+  echo "PREVIEW ONLY — nothing was applied; all preflights above are GREEN"
+  echo "  (D-121: these ARE the verdict — apply is cleared)."
+  echo "  Re-running with --diff prints this same preview and changes nothing."
+  echo ""
+  echo ">>> TO APPLY, run the SAME command without --diff:"
+  echo ">>>     scripts/refreeze.sh $IN"
   exit 0
 fi
 
