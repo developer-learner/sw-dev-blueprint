@@ -30,10 +30,11 @@
 #   refreeze.sh [<staging-dir>]             auto: preflight-green → apply
 #                                           (D-95/D-121; halts on any
 #                                           preflight failure)
-#   refreeze.sh --diff [<staging-dir>]      validate + print full diff and its
+#   refreeze.sh [--diff] [<staging-dir>]   validate + print full diff and its
 #                                           DIFF-SHA, apply nothing (read-only
 #                                           preview; the install is the same
-#                                           command without the flag)
+#                                           command without the flag). The flag
+#                                           is recognized at any argv position.
 # Default staging dir: scripts/.approved/incoming
 # Staging layout — ONLY the changed files, full new content, paths preserved:
 #   PRD.md  ERD.md  ERD-DELTA.md  contracts.json
@@ -52,10 +53,18 @@ cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 APPROVED="scripts/.approved"
 
 MODE="auto"
-case "${1:-}" in
-  --diff)        MODE="diff"; shift ;;
-esac
-IN="${1:-$APPROVED/incoming}"
+IN=""
+# The flag is recognized at ANY argv position: `refreeze.sh <staging-dir>
+# --diff` must be a read-only preview exactly like `refreeze.sh --diff
+# <staging-dir>` — a first-argument-only check let the flag-last form fall
+# through to a full apply (the "preview" mutated the frozen lane).
+for _arg in "$@"; do
+  case "$_arg" in
+    --diff) MODE="diff" ;;
+    *) [ -z "$IN" ] && IN="$_arg" ;;
+  esac
+done
+IN="${IN:-$APPROVED/incoming}"
 
 die() { echo "REFREEZE FAIL: $*" >&2; exit 1; }
 

@@ -4848,6 +4848,28 @@ def test_refreeze_diff_mode_runs_preflight(stageable_repo):
     assert "DIFF-SHA" not in combined, combined
 
 
+def test_refreeze_diff_flag_position_is_readonly(freezable_repo):
+    """`--diff` must be a read-only preview at ANY argv position.
+    Regression: the flag was only recognized as the FIRST argument, so
+    `refreeze.sh <staging-dir> --diff` silently ran the full apply — the
+    "preview" committed a new freeze version (vortex v23 incident). The
+    PREVIEW-ONLY marker proves the run entered diff mode rather than merely
+    failing early in auto mode; HEAD + VERSION prove it mutated nothing."""
+    repo = freezable_repo
+    head_before = subprocess.run(["git", "rev-parse", "HEAD"],
+                                 cwd=repo, capture_output=True, text=True).stdout.strip()
+    r = subprocess.run(
+        ["bash", "scripts/refreeze.sh", "scripts/.approved/incoming", "--diff"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    combined = r.stdout + r.stderr
+    assert "PREVIEW ONLY — nothing was applied" in combined, combined
+    head_after = subprocess.run(["git", "rev-parse", "HEAD"],
+                                cwd=repo, capture_output=True, text=True).stdout.strip()
+    assert head_after == head_before, "flag-last --diff must not commit"
+    assert (repo / "scripts" / ".approved" / "VERSION").read_text() == "1\n"
+
+
 
 
 
