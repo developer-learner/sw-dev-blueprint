@@ -3003,6 +3003,77 @@ def test_plan_revisions_helper_precedes_early_exit_trap():
     assert source.count("plan_revisions_used() {") == 1
 
 
+def test_orchestrate_exit_row_carries_fault_role():
+    """The terminal measurement row must name the fault attribution.
+
+    Vortex backlog: a failed milestone's counters row recorded rc + phase
+    but not whether the EM, coder, TPM, or the pipeline was at fault —
+    post-hoc analysis required a human to read archived transcripts.
+    FAULT_ROLE is set at each terminal halt site (the seat the operator
+    looks at) and defaults to the harness itself; the exit row carries it."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    # The exit row field + the harness default.
+    assert "fault_role=${FAULT_ROLE:-pipeline}" in source
+    assert 'FAULT_ROLE="pipeline"' in source
+    # Success attributes to no seat.
+    none_at = source.index('FAULT_ROLE="none"')
+    assert none_at < source.index('  record_measurement 0 "" ""')
+    # Batch halt -> the TPM rung owns the next action.
+    tpm_at = source.index('FAULT_ROLE="tpm"')
+    assert tpm_at < source.index("  exit 2\n}", tpm_at)
+    # Fail-fast task halt -> the coder's transcripts are the evidence.
+    coder_at = source.index('FAULT_ROLE="coder"')
+    assert coder_at < source.index(
+        "die \"task $id failed on first attempt", coder_at)
+    # Both EM-invalid halts (plan revisions, diagnosis retry) attribute to EM:
+    # the nearest FAULT_ROLE assignment before each die is the em one.
+    for die in ('die "plan invalid after $revs EM revisions',
+                'die "EM diagnosis for $id still invalid after one retry'):
+        die_at = source.index(die)
+        em_at = source.rindex('FAULT_ROLE="em"', 0, die_at)
+        assert source.rindex("FAULT_ROLE=", 0, die_at) == em_at, die
+    # The D-169 positive-evidence verdict halts for operator review.
+    env_at = source.index('FAULT_ROLE="environment"')
+    assert env_at < source.index(
+        "die \"task $id diagnosed transient/environmental", env_at)
+
+
+def test_archive_em_meta_records_model_id(tmp_path):
+    """Every archived EM call must record WHICH model produced it.
+
+    Vortex backlog: .em-archive recorded outcomes but not the model, so
+    failures could not be correlated with model versions post-hoc.
+    SWBP_EM_MODEL is the D-105 runtime contract; archive_em stamps it into
+    meta.txt (unset when the env var is absent, never a silent blank)."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    fn = re.search(r"^archive_em\(\) \{.*?^\}$", source, re.M | re.S)
+    assert fn, "archive_em extractor drift"
+
+    def run(model_env):
+        archive = tmp_path / f"arch-{model_env or 'unset'}"
+        logdir = tmp_path / "logs"
+        logdir.mkdir(exist_ok=True)
+        (logdir / "em-last.prompt").write_text("p")
+        script = f"""#!/usr/bin/env bash
+set -euo pipefail
+ARCHIVE_DIR="{archive}"
+LOG_DIR="{logdir}"
+FROZEN_V=9
+APPROVED=/nonexistent
+{'export SWBP_EM_MODEL=' + repr(model_env) if model_env else 'unset SWBP_EM_MODEL'}
+{fn.group(0)}
+archive_em plan.json ok
+"""
+        (tmp_path / "harness.sh").write_text(script)
+        subprocess.run(["bash", str(tmp_path / "harness.sh")],
+                       check=True, capture_output=True, text=True)
+        meta = next(archive.glob("*/meta.txt"))
+        return meta.read_text()
+
+    assert "em_model=mtplx-27b\n" in run("mtplx-27b")
+    assert "em_model=unset\n" in run(None)
+
+
 def test_full_suite_execution_is_confined_to_tests_directory():
     """No-argument run_tests cannot discover archives or selftests.
 
@@ -9944,6 +10015,26 @@ def test_metrics_report_records_row_and_is_idempotent(tmp_path):
     assert row[8] == "1"                        # flake at spec v7
     assert row[9] == "1" and row[10] == "1"     # rc=0 vs rc=9, spec 7 only
     assert "already recorded" in r.stdout
+
+
+def test_metrics_report_self_ignores_sink(tmp_path):
+    """The .measurement sink must never surface in the tree.
+
+    The Blueprint's own tree shipped an untracked .measurement/ (created by
+    a direct metrics-report run, which — unlike orchestrate.sh's writers —
+    never self-ignored the dir). append_row now writes the same '*'
+    self-ignore the .em-archive/.coder-archive/.measurement orchestrate
+    writers use, so the dir stays clean in the Blueprint and in children
+    whose .gitignore predates the .measurement/ entry."""
+    root = _metrics_root(tmp_path, with_git=True)
+    assert not (root / ".measurement" / ".gitignore").exists()
+    r = subprocess.run(
+        [sys.executable, str(METRICS_REPORT), "--root", str(root)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    gi = root / ".measurement" / ".gitignore"
+    assert gi.exists() and gi.read_text().strip() == "*"
 
 
 def test_metrics_report_spec_scoping_ignores_other_specs(tmp_path):

@@ -248,6 +248,13 @@ def evidence_block(row: dict[str, str]) -> str:
 
 def append_row(path: Path, row: dict[str, str]) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Self-ignore the sink (same pattern as orchestrate.sh's .em-archive /
+    # .measurement writers): the dir is runtime state in the Blueprint's own
+    # tree too, and a bare `git add -A` must never sweep it in. Existing
+    # children whose .gitignore predates the .measurement/ entry rely on this.
+    gi = path.parent / ".gitignore"
+    if not gi.exists():
+        gi.write_text("*\n")
     if path.is_file():
         for line in path.read_text().splitlines():
             fields = line.split("\t")

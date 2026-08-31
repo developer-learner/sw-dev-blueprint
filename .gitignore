@@ -28,6 +28,10 @@ htmlcov/
 # EM call archive (prompt+reply pairs for offline bench-testing, backlog item 6)
 .em-archive/
 
+# Run-measurement sink (counters, timings copies, metrics.tsv) — runtime
+# state written by orchestrate.sh / metrics-report.py, never committed
+.measurement/
+
 # EM consult output — consumed and archived by the orchestrator, never committed
 tasks/diagnosis.json
 

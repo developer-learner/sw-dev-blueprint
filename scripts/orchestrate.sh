@@ -350,6 +350,16 @@ MEAS_DIR=".measurement"
 mkdir -p "$MEAS_DIR" 2>/dev/null || true
 [ -f "$MEAS_DIR/.gitignore" ] || printf '*\n' > "$MEAS_DIR/.gitignore" 2>/dev/null || true
 meas() { printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$1" >> "$MEAS_DIR/counters" 2>/dev/null || true; }
+# Terminal attribution for the exit row (Vortex backlog: fault_role): which
+# seat does the operator look at after this run? Set at the terminal halt
+# sites below; the default names the harness itself. Values:
+#   none         success
+#   coder        task failed its strike allowance (fail-fast halt)
+#   em           EM output schema-invalid after its retry/revision budget
+#   tpm          run halted at the TPM escalation rung (batch halt)
+#   environment  EM verdict transient_or_environmental (D-169 operator review)
+#   pipeline     budget halt, gate die, crash — the harness, not a seat
+FAULT_ROLE="pipeline"
 
 # D-112: verdict scope. Default: milestone done = the delta's mapped
 # (dependent) tests green. --full-suite opts the verdict run into the whole
@@ -500,7 +510,7 @@ record_measurement() {  # record_measurement <rc> <phase> <task>
   if [ -d "$MEAS_DIR" ]; then
     [ -f "$LOG_DIR/timings.tsv" ] \
       && cp "$LOG_DIR/timings.tsv" "$MEAS_DIR/timings-$(date -u +%FT%TZ).tsv" 2>/dev/null || true
-    meas "exit rc=$rc phase=${phase:-<none>} task=${task:-<none>} spec=${FROZEN_V:-unknown} plane=${SWBP_PLANE_SHA:-unpinned} revisions=$(plan_revisions_used) elapsed=$(run_elapsed)s"
+    meas "exit rc=$rc phase=${phase:-<none>} task=${task:-<none>} spec=${FROZEN_V:-unknown} plane=${SWBP_PLANE_SHA:-unpinned} revisions=$(plan_revisions_used) fault_role=${FAULT_ROLE:-pipeline} elapsed=$(run_elapsed)s"
   fi
 }
 
@@ -668,8 +678,8 @@ archive_em() {
   cp "$LOG_DIR/em-last.err" "$entry/stderr.log" 2>/dev/null || true
   cp tasks/plan.json "$entry/plan.json" 2>/dev/null || true
   cp "$APPROVED/contracts.json" "$entry/contracts.json" 2>/dev/null || true
-  printf 'spec_version=%s\nout=%s\ntimestamp=%s\noutcome=%s\n' \
-    "${FROZEN_V:-unknown}" "$out" "$ts" "$outcome" > "$entry/meta.txt"
+  printf 'spec_version=%s\nout=%s\ntimestamp=%s\noutcome=%s\nem_model=%s\n' \
+    "${FROZEN_V:-unknown}" "$out" "$ts" "$outcome" "${SWBP_EM_MODEL:-unset}" > "$entry/meta.txt"
   LAST_ARCHIVE_ENTRY="$entry"
 }
 
@@ -1572,7 +1582,8 @@ D-78/D-79 satisfiability audit of frozen spec v$FROZEN_V (mechanical, spec-only)
 $audit" "-"
         finalize_batch
       fi
-      die "plan invalid after $revs EM revisions — halting for the human (Rule 4).
+      FAULT_ROLE="em"
+  die "plan invalid after $revs EM revisions — halting for the human (Rule 4).
   The D-79 spec audit found no unsatisfiable contract, so the spec is not
   provably at fault — the ladder's actor path (EM model quality, prompt, or a
   spec problem the audit cannot see) applies.
@@ -1785,6 +1796,7 @@ if isinstance(d, dict):
       fi
     fi
   done
+  FAULT_ROLE="em"
   die "EM diagnosis for $id still invalid after one retry — halting (Rule 4): $verrs"
 }
 
@@ -1922,6 +1934,7 @@ halt_transient_or_environmental() {  # $1 id  $2 file  $3 evidence  $4 diagnosis
   # operator-initiated run possible; it does not schedule an automatic retry.
   set_counter "$id" strikes 0
   echo "operator review record: $review"
+  FAULT_ROLE="environment"
   die "task $id diagnosed transient/environmental — no automatic retry or re-probe; inspect $review"
 }
 
@@ -1985,6 +1998,7 @@ finalize_batch() {  # writes the single copy-pasteable batch and halts
   echo "  HALT: $n escalation(s) need the TPM"
   echo "  -> $batch"
   echo "=========================================="
+  FAULT_ROLE="tpm"
   exit 2
 }
 
@@ -2256,6 +2270,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     for _lf in "$LOG_DIR/$id"-a*.raw "$LOG_DIR/$id"-a*.log; do
       [ -f "$_lf" ] && echo "    $_lf"
     done
+    FAULT_ROLE="coder"
     die "task $id failed on first attempt — review the logs, fix the plan or spec, and re-run"
   fi
 
@@ -2496,6 +2511,7 @@ EOF
   # D-126 ordering: persist this successful run while timings.tsv still
   # exists, before teardown and before metrics-report reads the durable sink.
   # The EXIT trap observes SUCCESS_RECORDED and does not duplicate the row.
+  FAULT_ROLE="none"
   record_measurement 0 "" ""
   SUCCESS_RECORDED=1
   rm -rf "$STATE_DIR"
