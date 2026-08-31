@@ -562,11 +562,30 @@ if [ -n "$SWEEP_FILES" ]; then
 fi
 
 if [ "$MODE" = "diff" ]; then
+  # Repeat-preview detector (verify-loop guard): a --diff that reprints an
+  # identical DIFF-SHA with no apply between is the signature of an agent
+  # (or operator) re-confirming green instead of applying. Record this
+  # preview's SHA in the .pipeline-state scratch the --diff path already
+  # writes to (refreeze-pending.diff / the contracts-merge preview land
+  # there too — read-only w.r.t. the tree and frozen lane; the marker is
+  # gitignored ephemeral scratch, wiped by teardown), and escalate the
+  # message when the previous preview matched. Single-slot by design: only
+  # an immediately repeated identical preview nags — alternating previews of
+  # two distinct deltas each carry a different SHA and never false-trigger.
+  mkdir -p .pipeline-state
+  _prev_preview_sha=$(cat .pipeline-state/last-preview-sha 2>/dev/null || true)
+  printf '%s\n' "$DIFF_SHA" > .pipeline-state/last-preview-sha
   echo ""
   echo "DIFF-SHA: $DIFF_SHA"
   echo "PREVIEW ONLY — nothing was applied; all preflights above are GREEN"
   echo "  (D-121: these ARE the verdict — apply is cleared)."
-  echo "  Re-running with --diff prints this same preview and changes nothing."
+  if [ "$_prev_preview_sha" = "$DIFF_SHA" ]; then
+    echo "  NOTE: you already previewed this exact diff and did not apply it."
+    echo "  A --diff changes nothing and will keep printing this; the only"
+    echo "  remaining step is the apply below."
+  else
+    echo "  Re-running with --diff prints this same preview and changes nothing."
+  fi
   echo ""
   echo ">>> TO APPLY, run the SAME command without --diff:"
   echo ">>>     scripts/refreeze.sh $IN"

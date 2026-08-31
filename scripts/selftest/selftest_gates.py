@@ -4897,6 +4897,48 @@ def test_refreeze_debt_sweep_silent_on_justified_swallow(stageable_repo):
     assert "DIFF-SHA" in r.stdout, r.stdout
 
 
+# --- refreeze.sh --diff repeat-preview detector (verify-loop guard) ----------
+# A back-to-back IDENTICAL --diff (same DIFF-SHA, no apply between) is the
+# signature of an agent re-confirming green instead of applying. The detector
+# escalates the message on the second identical preview so the output CHANGES
+# — the signal the original verify-loop lacked. Single-slot: the note keys on
+# the immediately preceding preview's SHA, recorded in .pipeline-state scratch.
+
+def test_refreeze_diff_first_preview_is_clean(stageable_repo):
+    """Negative-space half (Rule 6): the FIRST preview must NOT carry the
+    repeat note — otherwise the escalation is vacuous (always present)."""
+    debt_delta(stageable_repo,
+               "def f():\n"
+               "    try:\n"
+               "        risky()\n"
+               "    except Exception:\n"
+               "        pass  # best-effort cleanup; failure is safe to drop\n")
+    first = _run_refreeze_diff(stageable_repo)
+    assert first.returncode == 0, (first.stdout, first.stderr)
+    assert "already previewed" not in first.stdout, first.stdout
+
+
+def test_refreeze_diff_repeat_preview_escalates(stageable_repo):
+    """The second identical preview names the loop. Its premise — that the
+    two DIFF-SHAs are equal — is asserted explicitly, so the escalation is
+    proven to fire on a genuine repeat, not by luck."""
+    debt_delta(stageable_repo,
+               "def f():\n"
+               "    try:\n"
+               "        risky()\n"
+               "    except Exception:\n"
+               "        pass  # best-effort cleanup; failure is safe to drop\n")
+    first = _run_refreeze_diff(stageable_repo)
+    second = _run_refreeze_diff(stageable_repo)
+    assert first.returncode == 0, (first.stdout, first.stderr)
+    assert second.returncode == 0, (second.stdout, second.stderr)
+    assert "already previewed" in second.stdout, second.stdout
+    sha1 = re.search(r"DIFF-SHA: ([0-9a-f]+)", first.stdout)
+    sha2 = re.search(r"DIFF-SHA: ([0-9a-f]+)", second.stdout)
+    assert sha1 and sha2 and sha1.group(1) == sha2.group(1), (
+        first.stdout, second.stdout)
+
+
 # --- run_coder: gate-failure propagation (review blocker #1, drive-coder.sh) -
 # The 2026-07-16 pre-publish review's worst finding: run_coder is always
 # invoked as an if-condition, which suppresses `set -e` for its whole body,
