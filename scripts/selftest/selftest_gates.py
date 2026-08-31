@@ -10546,3 +10546,27 @@ def test_oracle_gap_group1_pins_mutated_values():
     # refreeze_delta.py — D-140 notice condition (mutant dropped `not`)
     src = (SCRIPTS / "refreeze_delta.py").read_text()
     assert 'if not (delta["changed_contract_ids"] or changed_tests or inventory_files):' in src
+
+
+def test_engineering_constitution_projections_are_delivered():
+    """D-172 stage 2: each role projection must reach its seat's real channel so
+    a dangling reference cannot recur (the CONVENTIONS.md gap that started this).
+    Pins the coder/EM projections in their pipeline prompts, the TPM projection
+    in TPM-ROLE.md (the one source reaching chat+agent+view), and that the
+    canonical source exists. Content is prose (checked here by presence), not a
+    gate — the constitution is projection-only by design."""
+    root = SCRIPTS.parent
+    constitution = root / "docs" / "ENGINEERING-CONSTITUTION.md"
+    assert constitution.is_file(), "canonical ENGINEERING-CONSTITUTION.md missing"
+
+    coder = (root / ".opencode" / "prompts" / "coder.md").read_text()
+    assert "coder projection of `docs/ENGINEERING-CONSTITUTION.md`" in coder, \
+        "coder projection/cite missing from coder.md"
+
+    emplan = (root / ".opencode" / "prompts" / "em-plan.md").read_text()
+    assert "Constrained-compiler discipline (engineering-constitution EM projection)" in emplan, \
+        "EM projection missing from em-plan.md"
+
+    tpm = (root / "docs" / "TPM-ROLE.md").read_text()
+    assert "engineering-constitution TPM projection" in tpm, \
+        "TPM projection missing from TPM-ROLE.md"
