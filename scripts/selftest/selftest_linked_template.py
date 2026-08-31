@@ -1,6 +1,7 @@
 """Linked Blueprint distribution: one source, project-owned state only."""
 
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -186,6 +187,35 @@ def test_link_template_rejects_wrong_approval_hash_accepts_correct(tmp_path):
     assert (child / ".template-link").read_text().startswith("mode=linked\n")
     assert f"ref={c2}" in (child / ".template-version").read_text()
     assert _git(child, "status", "--porcelain") == ""
+
+
+def test_linked_gate_worktree_hook_env_queries_blueprint_store(tmp_path):
+    """Regression (linked worktree): git sets GIT_DIR to the (absolute)
+    worktree gitdir in hook environments, and a bare `git -C <blueprint>`
+    inherits it — querying the CHILD's object store instead of the
+    Blueprint's, so the linked-ref check failed with 'lacks pinned ref'
+    on every commit made from a linked worktree. The gate must clear the
+    repo-local git env for that one call and still pass."""
+    source, child, _c1, c2, _paths = _fixture(tmp_path)
+    _approve_from_preview(source, child, c2)
+
+    wt = tmp_path / "child-wt"
+    _git(child, "worktree", "add", "-q", "-b", "wt-branch", str(wt))
+    wt_gitdir = Path(_git(wt, "rev-parse", "--git-dir"))
+    assert wt_gitdir.is_absolute(), \
+        "worktree gitdir must be absolute — that is the bug trigger"
+
+    # The hook environment git builds for a worktree: absolute GIT_DIR and
+    # GIT_WORK_TREE, cwd at the worktree root.
+    env = dict(os.environ)
+    env["GIT_DIR"] = str(wt_gitdir)
+    env["GIT_WORK_TREE"] = str(wt)
+    result = subprocess.run(
+        ["bash", "scripts/phase-gate.sh", "manifest"],
+        cwd=wt, env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "gate ok: manifest" in result.stdout
 
 
 def test_link_template_blocks_traversal_retired_path(tmp_path):

@@ -60,7 +60,20 @@ if [ -f .template-link ]; then
     exit 1
   }
   linked_pin="$(grep '^ref=' .template-version | cut -d= -f2 | tr -d '[:space:]')"
-  git -C "$link_root" cat-file -e "$linked_pin^{commit}" 2>/dev/null || {
+  # The linked-ref check must query the Blueprint's own object store. In a
+  # hook environment — especially a linked worktree, where git sets GIT_DIR
+  # to the (absolute) worktree gitdir — inherited repo-local git env pins
+  # the repo to the CHILD's store and defeats `git -C`. Clear every GIT_*
+  # variable except GIT_EXEC_PATH (not repo-local) in a subshell so the
+  # gate's own repo context below is untouched.
+  (
+    for _gv in $(env | grep -o '^GIT_[A-Z_]*' | sort -u); do
+      if [ "$_gv" != "GIT_EXEC_PATH" ]; then
+        unset "$_gv"
+      fi
+    done
+    exec git -C "$link_root" cat-file -e "$linked_pin^{commit}"
+  ) 2>/dev/null || {
     echo "GATE FAIL: linked Blueprint lacks pinned ref $linked_pin"
     exit 1
   }
