@@ -1,9 +1,13 @@
 # T11 — Mature OSS adoption subject #2 (decision note)
 
-> The subject choice is the CEO's. This note records what run #2 is, the
-> constraints that shape the choice (D-165/D-172), the selection
-> criteria, five verified candidates with fit assessments, a
-> recommendation, and the program shape a "go" commits to.
+> **CEO ruling 2026-09-01: Rich approved for Phase 0. Phase 0 DONE
+> (D-175); Phase 1 spec DRAFTED (v1 = Table bulk construction); the
+> freeze + live run await the Linux dev VM slot.**
+>
+> This note records what run #2 is, the constraints that shaped the
+> choice (D-165/D-172), the selection criteria, five verified candidates
+> with fit assessments, the recommendation, the ruling, and the program
+> shape.
 >
 > Source: vortex backlog item 18.
 
@@ -56,31 +60,51 @@ was too close to its own domain to expose.
 | **Uvicorn** (encode/uvicorn) | 0.52.4 | BSD-3 | ASGI server | Mature and small, but async-server shape is close to Vortex's own domain — lowest seam novelty of the five. |
 | **Scrapy** (scrapy/scrapy) | 2.18.0 | BSD-3 | crawler engine + middleware | Highest seam novelty (plugin/middleware architecture, downloader, spider API) but the heaviest: ~100+ files, twisted reactor in the stack, slower suite. D-165's "workable-but-heavy" path at its heaviest; the first freeze's inventory is a project in itself. |
 
-## Recommendation
+## Recommendation → Ruling
 
-**Rich.** It is the only candidate that is simultaneously mature,
-tractable, zero-service, and a *new contract surface* for the
+**Recommended:** Rich. It is the only candidate that is simultaneously
+mature, tractable, zero-service, and a *new contract surface* for the
 frozen-spec machinery (rendered output rather than routes/DOM). Gunicorn
 is the fallback if the CEO prefers process-supervision shape; Click if
 the priority is a fast, cheap second data point over seam novelty.
 
-The milestone #1 feature is **not** pre-chosen here — the TPM names it at
-spec time from the subject's own small, real feature space (the house
-rule: the spec is the TPM's; this note only fixes the subject).
+**Ruling (2026-09-01): Rich approved for Phase 0** — pin the exact
+source tag/commit, establish a clean baseline, then schedule the live
+milestone around the single-run machine constraint.
+
+The milestone #1 feature is not pre-chosen by this note — the spec names
+it from the subject's own small, real feature space. **Spec v1 (drafted
+2026-09-01, Phase 1 prep): M1 = `Table.add_rows(rows)` +
+`Table.from_rows(columns, rows)`** in `rich/table.py` — purely additive,
+both thin delegates to the existing `add_row` cell machinery; 12-test
+frozen suite with deterministic rendered-output contracts (the new
+contract surface this subject was chosen for). Staged in
+`scripts/.approved/incoming/` in rich-adoption, tracked copy at
+`tasks/v1-spec-draft/`; `refreeze.sh --diff` all preflights green;
+tests fail cleanly against the unmodified code (pre-milestone target
+state).
+
+## Phase 0 execution record (2026-09-01, D-175)
+
+- Subject pinned: tag `v15.0.0` = commit `6ac483cbea39cab124dfd3483bba70ffafb71050` (MIT, PyPI 15.0.0) at `~/dev/rich-adoption`.
+- Clean baseline: **956 passed / 25 skipped / 0 failed** with `poetry.lock` deps (pygments 2.19.2, pytest 7.4.4, markdown-it-py 3.0.0) on Python 3.14.6. Finding: pygments 2.21.0 (latest) fails 8 `tests/test_syntax.py` tests — **the lockfile is the dependency authority** for the legacy baseline.
+- Legacy snapshot: `legacy-pin.json` (73 files under `tests/`, sha256 each) — provenance, never an oracle.
+- Plane install: **linked** (not copied) at Blueprint `1684e0b` via `link-template.sh` approve-hash flow — linked is the current norm (Vortex/Testchat) and gives the D-168 guard the exact pinned Git object; this run #2 is born on the D-174 broker plane and doubles as the broker's first adoption cycle (first child commit `0127c3bf` carries the full `Swbp-*` trailer set).
+- Project files adapted under Rule 3 (`.gate-paths` `build=rich/`, CLAUDE.md, CONVENTIONS.md, tasks/, gitignore plane lines); pre-spec tunnel state recorded (D-173 pattern).
+- Child verification green: legacy suite, plane selftests 548/548 (venv needed `pytest-json-report` — env gap, not a plane defect), phase-gate manifest, check-drift in sync.
+- **Legacy-suite fate (the D-172 guard decision):** the 956-test upstream suite is NOT carried into the frozen gate — it stays a pinned snapshot (provenance + manual baseline); the spec's own tests are the only gate. Rationale: D-165's carry-in pattern fit Vortex's 27-nodeid product suite (the product's own acceptance tests); a 956-test upstream suite as the per-milestone gate would be slow, dependency-sensitive (the pygments pin), and mostly unrelated to the milestone. Recorded in the child's tasks/ + this note.
 
 ## Program shape (what a go commits to)
 
-- **Phase 0 — install (XS).** Clone the subject to a local experiment
-  repo; install the plane verbatim from Blueprint HEAD (hash-verified
-  against `scripts/.manifest-template`); adapt project-owned files under
-  Rule 3 and re-pin in `scripts/.manifest-project`; pin the legacy suite
-  as a byte-hash snapshot (`legacy-pin.json` pattern, D-172); record the
-  pre-spec tunnel state (D-173).
-- **Phase 1 — first freeze + first milestone (M–L).** The first freeze
-  decides the legacy suite's fate (carried or retired — D-172's guard);
-  one real small milestone runs TPM → refreeze → orchestrate on the Lima
-  VM with local models. This is the live validation of D-165's
-  snapshot-plus-go-forward theory on a second subject.
+- **Phase 0 — install (XS). DONE 2026-09-01** (record above; D-175).
+- **Phase 1 — first freeze + first milestone (M–L).** Spec DRAFTED
+  (v1 = Table bulk construction, 12-test frozen suite, preflights
+  green). At run time (Linux dev VM — orchestrate hard-dies on Darwin,
+  D-152): advance the plane pin via update-template → `refreeze.sh
+  scripts/.approved/incoming` (spec v1, carries `legacy-pin.json` into
+  `scripts/.approved/`) → `orchestrate.sh`. Schedules around Vortex's
+  runs (single-run machine). The first post-adoption run is also the
+  live validation of the D-174 broker on a second child.
 - **Phase 2 — findings (S).** Ledger the adoption findings as DECISIONS
   entries (the D-173/D-174 pattern); write the findings doc (seam
   classes discovered, gate hits, what the framework got wrong); verdict
