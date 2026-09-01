@@ -29,6 +29,21 @@ commits, not `refreeze.sh` (children's specs still freeze there)
       legacy 956-test suite stays a pinned snapshot, not carried into
       the frozen gate (D-165). Freeze + live run await the Linux dev VM
       slot (orchestrate hard-dies on Darwin, D-152).
+- 2026-09-01 (later): **Fleet pin adoption (D-177).** The Track A
+      reconcile (manifest-only re-hash) had left both legacy children
+      check-drift RED (`MISSING_IN_CHILD: scripts/git-provenance.sh` —
+      union semantics: template@HEAD lists the file, children lacked
+      it) with pre-broker pins (Vortex `ec81667`, Testchat `9a5ac32`).
+      CEO delegated the pin decision to Track C; **adopted now at
+      `6f51d63`** — "defer" was not a stable option (pre-broker pins
+      can't be drift-green while the shared checkout is post-M1).
+      `link-template.sh --ref 6f51d63` on both: Vortex `b7fb2c2`,
+      Testchat `f08ad6e` (both `[template-link 6f51d6313669]` with the
+      full `Swbp-*` trailer set); pins advanced, check-drift green on
+      both, trees clean. **Fleet state: all three children on the
+      D-174 broker plane** (Vortex `6f51d63`, Testchat `6f51d63`,
+      rich-adoption `1684e0b` — advances at its Phase 1 run time).
+      Vortex's next live run = the broker's second live validation.
 
 - 2026-08-23: **D-169 implemented.** Diagnosis now has an explicit,
   positive-evidence-only `transient_or_environmental` verdict. It writes a

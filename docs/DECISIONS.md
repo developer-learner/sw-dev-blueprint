@@ -21,6 +21,54 @@
 
 ## Decisions
 
+## D-177 — 2026-09-01 — Fleet pin adoption: Vortex + Testchat move to the D-174 broker plane at 6f51d63
+
+**Decision:** ADOPT NOW (delegated by the CEO to Track C, which had
+flagged and verified the split-brain). Both legacy children re-linked
+via `link-template.sh --ref 6f51d63` (approve-hash flow): Vortex
+`b7fb2c2 [template-link 6f51d6313669]`, Testchat `f08ad6e
+[template-link 6f51d6313669]`. Pins advanced (Vortex
+`ec81667`→`6f51d63`; Testchat `9a5ac32`→`6f51d63`); check-drift
+green on both; the link commits carry the full `Swbp-*` trailer set
+(first broker commits on both children).
+
+**Why adopt (and why "defer" was not a stable option):**
+1. **Forced by check-drift's union semantics.** The expected file set
+   is the UNION of template@HEAD manifest + child manifest
+   (`check-drift.sh` lines 58–61). The moment the shared checkout
+   passed `1b455f0` (M1 added `scripts/git-provenance.sh` to the
+   template manifest), every child lacking that file went
+   `MISSING_IN_CHILD` red — and the file only exists in planes ≥
+   `1b455f0`. Keeping a pre-broker pin while the shared checkout sits
+   at a post-M1 ref means a **permanently red drift gate**; the only
+   gate-green states are "adopt" or "roll the shared checkout back"
+   (rejected — it is the fleet's published plane).
+2. **The earlier manifest-only reconcile was the wrong tool for a
+   plane advance.** `regen-manifest.sh` re-hashes files that exist; it
+   cannot discover/install new template files (house rule), so it
+   greened the manifest self-consistency gate while check-drift stayed
+   red. `link-template.sh --ref` is the plane-advance tool: it
+   installs missing files (symlinks in linked mode), re-hashes the
+   manifest including new entries, advances the pin, and commits
+   through the broker. (Testchat's re-link also installed
+   `gate-inventory.tsv` + `gate-tiering.py` symlinks added upstream
+   after its `9a5ac32` pin.)
+3. **The broker plane is verified before adoption:** 548/548
+   selftests, release gate green, and rich-adoption's first adoption
+   cycle clean (child commit `0127c3bf` with full trailer set, legacy
+   suite 956/25, child selftests 548/548). M1 changes only how
+   commits are made (author/committer separation + trailers) and adds
+   coder-prompt capture; orchestration logic is untouched.
+
+**Consequences:** the next live runs on Vortex and Testchat execute
+the D-174 broker plane — Vortex's next run is the broker's second
+live validation (after rich-adoption's first). Fleet state:
+**all three children now on the broker plane** (Vortex `6f51d63`,
+Testchat `6f51d63`, rich-adoption `1684e0b` — rich-adoption's pin
+advances at its Phase 1 run time, per its runbook).
+
+---
+
 ## D-176 — 2026-09-01 — T7 M2 design: trust anchor, durable evidence, attestation semantics
 
 **Decision:** M2 (signing + verifier) is designed to completion per the
