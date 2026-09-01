@@ -773,6 +773,15 @@ check_ci_health
 echo "OK (frozen spec v$FROZEN_V)"
 mark "pre-flight done (spec v$FROZEN_V)"
 
+# T7 M1 (D-174): provenance broker — the pipeline's single commit path (the
+# model never runs git, D-127). The run id is generated once per spec version
+# and is stable across resumes; .pipeline-state/run-id dies with the success
+# teardown, so its lifecycle is exactly one milestone attempt sequence.
+# A plane without the broker is a broken plane: source fails closed.
+source "$PLANE_DIR/scripts/git-provenance.sh"
+SWBP_RUN_ID="$(swbp_run_id "$FROZEN_V")"
+export SWBP_RUN_ID
+
 # D-116: the EM's standing context is a generated minimal summary (standing
 # rules + per-file map), never the accumulated standing ERD — the milestone
 # slice is ERD-DELTA.md (D-107). A generation failure falls back to the full
@@ -1015,6 +1024,9 @@ em_call() {
       printf '%s\n' "$budget_warning" | tee -a "$LOG_DIR/em-last.err" >&2
     fi
   fi
+  # T7 M1 (D-174): meta sidecar — the provider-returned model/call id the
+  # [plan] broker commit prefers over the mapped env var (never fabricated).
+  SWBP_LLM_META_OUT="$LOG_DIR/em-last.meta" \
   timeout "$AGENT_TIMEOUT" $PLANE_DIR/scripts/llm-call.sh em "$sys_prompt" \
         --schema "$schema" --max-time "$AGENT_TIMEOUT" \
     < "$LOG_DIR/em-last.prompt" \
@@ -1101,8 +1113,13 @@ brief; transcribe it into working code immediately."
   # D-116: context minimalism — the coder's brief is self-contained (Rule 8:
   # exact path, signatures, inputs/outputs, acceptance), so the frozen
   # contracts are not pasted per call; the coder gets the brief + the file.
+  # T7 M1 (D-174): the coder prompt was never byte-archived before — tee it
+  # alongside the reply so the [task] trailer's Prompt-SHA256 is computable
+  # and re-verifiable against the durable archive.
   { printf '%s\n' "$instr"; build_context "$existing"; } \
-    | SWBP_MAX_OUTPUT="$out_budget" timeout "$AGENT_TIMEOUT" $PLANE_DIR/scripts/llm-call.sh coder .opencode/prompts/coder.md \
+    | tee "$LOG_DIR/$id-a$attempt.prompt" \
+    | SWBP_MAX_OUTPUT="$out_budget" SWBP_LLM_META_OUT="$LOG_DIR/$id-a$attempt.meta" \
+      timeout "$AGENT_TIMEOUT" $PLANE_DIR/scripts/llm-call.sh coder .opencode/prompts/coder.md \
         --max-time "$AGENT_TIMEOUT" \
     > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
     || { CODER_EVIDENCE="coder call failed: $(tail -3 "$LOG_DIR/$id-a$attempt.log" | tr '\n' ' ')"; write_state phase ""; return 1; }
@@ -1122,6 +1139,10 @@ brief; transcribe it into working code immediately."
        "$CODER_ARCHIVE_DIR/$FROZEN_V.$id.$coder_revs.$attempt.raw" || true
     cp "$LOG_DIR/$id-a$attempt.log" \
        "$CODER_ARCHIVE_DIR/$FROZEN_V.$id.$coder_revs.$attempt.log" || true
+    cp "$LOG_DIR/$id-a$attempt.prompt" \
+       "$CODER_ARCHIVE_DIR/$FROZEN_V.$id.$coder_revs.$attempt.prompt" || true
+    cp "$LOG_DIR/$id-a$attempt.meta" \
+       "$CODER_ARCHIVE_DIR/$FROZEN_V.$id.$coder_revs.$attempt.meta" || true
   }
   if [ -n "$existing" ]; then
     # D-59 edit-block path: fail-closed applier; target untouched on any error
@@ -1524,7 +1545,14 @@ ensure_plan() {
       if [ -z "$(git status --porcelain -- tasks/plan.json 2>/dev/null)" ]; then
         echo "plan unchanged — no [plan] commit needed"
       else
-        git add tasks/plan.json && git commit -m "[plan] validated against spec v$FROZEN_V"
+        # T7 M1 (D-174): broker commit — author is the observed EM model,
+        # trailers bind the archived prompt/reply bytes by sha256. B3 runs
+        # (mechanical plan, no EM call) have no archive entry: the broker
+        # omits the hash trailers when the files are absent.
+        SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/em-last.meta" 2>/dev/null | head -1)" \
+        SWBP_PROV_PROMPT_FILE="${LAST_ARCHIVE_ENTRY:-}/prompt.txt" \
+        SWBP_PROV_REPLY_FILE="${LAST_ARCHIVE_ENTRY:-}/reply.json" \
+          swbp_commit em "[plan] validated against spec v$FROZEN_V" tasks/plan.json
       fi
       return 0
     fi
@@ -2198,7 +2226,14 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     if [ -z "$(git status --porcelain -- "$file" 2>/dev/null)" ]; then
       echo "no change in $file — no [task] commit needed"
     else
-      git add "$file" && git commit -m "[task $id] attempt $((strikes + 1))"
+      # T7 M1 (D-174): broker commit — author is the observed coder model,
+      # trailers bind the prompt/reply bytes (scratch copies; the durable
+      # archive holds identical bytes) by sha256.
+      SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/$id-a$attempt.meta" 2>/dev/null | head -1)" \
+      SWBP_PROV_TASK="$id" \
+      SWBP_PROV_PROMPT_FILE="$LOG_DIR/$id-a$attempt.prompt" \
+      SWBP_PROV_REPLY_FILE="$LOG_DIR/$id-a$attempt.raw" \
+        swbp_commit coder "[task $id] attempt $((strikes + 1))" "$file"
     fi
     # D-74: lint the one file the coder wrote, BEFORE the mapped tests — lint
     # findings are exact-location retry feedback (the D-71 validator-fed
@@ -2532,7 +2567,7 @@ EOF
     success_subject="$success_subject (plane ${SWBP_PLANE_SHA:0:12})"
   fi
   git diff --cached --quiet \
-    || git commit -m "$success_subject" 2>/dev/null || true
+    || swbp_commit pipeline "$success_subject" 2>/dev/null || true
   post_success_sha=""
   post_success_sha=$(git rev-parse HEAD 2>/dev/null || true)
   recorded_subject=""

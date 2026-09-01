@@ -1,12 +1,14 @@
 # T7 — Model-specific Git provenance (decision note)
 
-> Milestone kickoff, awaiting the CEO's build/no-build call. This note
-> records the problem, the current evidence situation, a concrete design
-> (the trusted commit broker), the options, a recommendation, and the
-> blind-test plan. The go/no-go and scope are the CEO's; if approved, the
-> implementation lands upstream in the Blueprint and is adopted by
-> Vortex/Testchat through their own `update-template.sh` pull step —
-> never a push from the Blueprint.
+> **CEO ruling 2026-09-01: Option 3 approved as staged. M1 is authorized
+> and IMPLEMENTED (this Blueprint, D-174); M2 (signing + verifier) is
+> authorized only after the three M2 prerequisites below land.**
+>
+> This note records the problem, the current evidence situation, the
+> design (the trusted commit broker), the options, the ruling, and the
+> blind-test plan. The implementation lives upstream in the Blueprint and
+> is adopted by Vortex/Testchat through their own `update-template.sh`
+> pull step — never a push from the Blueprint.
 >
 > Source: vortex backlog item 13 (filed 2026-08-22, Codex (GPT-5)).
 
@@ -63,9 +65,14 @@ Every site above routes through it. It does three things:
   `swbp-<role>-<modelslug>` / `swbp-<role>-<modelslug>@swbp.invalid`, set
   via `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` on the single commit
   invocation. `role` ∈ `em|coder|tpm|pipeline|human`; `modelslug` is the
-  sanitized observed model id (`SWBP_EM_MODEL` / `SWBP_CODER_MODEL`;
-  lowercase, non-alphanumeric → `-`, ≤32 chars) or the literal `unset`
-  when the env var is absent — never fabricated.
+  sanitized observed model id (lowercase, non-`[a-z0-9._-]` → `-`,
+  ≤64 chars — the email local-part limit) or the literal `unset` when
+  nothing was observed — never fabricated. The observed id is the
+  **provider-returned** model (the response envelope's `model` field,
+  exposed by llm-call.sh's `SWBP_LLM_META_OUT` sidecar — the same field
+  the D-62 seat check treats as the server's claim) when the server
+  reports one, else the role's mapped model (`SWBP_EM_MODEL` /
+  `SWBP_CODER_MODEL`), else `unset`.
 - **Committer** = always the ambient human identity (Arc Elixir). The
   committer is the principal accountable for the repo; the author is the
   provenance label.
@@ -76,7 +83,7 @@ Every site above routes through it. It does three things:
 |---|---|---|
 | `Swbp-Role:` | all | the site's role |
 | `Swbp-Model:` | all | observed model id or `unset` |
-| `Swbp-Run:` | `[plan]` `[task]` `[success]` | run id, generated at run start (`<UTC ts>-v<spec>-p<plane sha12>`), persisted in `.pipeline-state/run-id` so a resume keeps the same run |
+| `Swbp-Run:` | `[plan]` `[task]` `[success]` | run id, generated at run start (`<UTC compact>-<6 hex>`, e.g. `20260901T143022Z-a1b2c3`), persisted in `.pipeline-state/run-id` as `<id> spec=<v>` so a resume with the same spec keeps the same run; a new spec version (post-refreeze) starts a new one; the file dies with the success teardown, so the id lifecycle is exactly one milestone attempt sequence |
 | `Swbp-Task:` | `[task]` | task id |
 | `Swbp-Plane:` | all pipeline sites | D-168 pinned plane SHA |
 | `Swbp-Prompt-SHA256:` | `[plan]` `[task]` | sha256 of the exact archived prompt bytes |
@@ -119,6 +126,33 @@ which is the "pipeline-owned attestation" the filing asks for. An author
 label alone remains spoofable by a host-level actor; the signature is
 what closes that.
 
+### M2 prerequisites (CEO ruling 2026-09-01 — signing is NOT authorized until these are designed to completion)
+
+1. **Durable trust anchor.** A public key stored only in the repo it
+   verifies is insufficient by itself (a compromised pipeline can re-pin
+   its own key). M2 must add a pinned key fingerprint + rotation and
+   revocation rules, published out-of-band of the verified repo (e.g.
+   the CEO's playbook / a separate pinned location); the verifier checks
+   the signing key's fingerprint against the pinned anchor, not merely
+   "verifies with the in-repo public key". Rotation = new key +
+   documented re-pin procedure; revocation = a fingerprint blocklist.
+2. **Durable evidence storage.** A trailer hash is unreverifiable later
+   if the corresponding archived bytes are deleted (the archives are
+   self-ignoring and CWD-local — they do not survive a push or a machine
+   loss). M2 must make the milestone's prompt/reply bytes durable —
+   e.g. committed under a per-run evidence path bound to the run id,
+   hash-verified against the trailers — so `Swbp-Prompt-SHA256` /
+   `Swbp-Reply-SHA256` are re-verifiable from the repo alone.
+3. **Attestation semantics, stated for the record.** Signing attests
+   what the TRUSTED PIPELINE RECORDED (the broker's trailer values), not
+   independently which model generated the response. Only the pipeline's
+   own call path (llm-call.sh, D-62 seat check) can make that claim. M2
+   documentation and the verifier output must say exactly this. Provider-
+   returned model/run identifiers are preferred over environment
+   variables when available — M1 already does this for the model id
+   (meta sidecar); M2 extends the same preference to any run identifier
+   the provider returns.
+
 ## Options
 
 1. **Decline** — keep the shared identity; the archives + metrics remain
@@ -136,31 +170,54 @@ what closes that.
    cycle — the house pattern: advisory teeth, then real teeth) +
    Vortex/Testchat adoption (M).
 
-## Recommendation
+## Recommendation → Ruling
 
-**Option 3, staged M1 → M2.** The pain the filing names is attribution
-(M1 fixes it); the "trusted" in "trusted commit broker" is the signature
-(M2 earns it). If the CEO wants the smallest coherent step, option 2 is
-self-sufficient — it is M1 exactly; M2 is the add-on.
+**Recommended:** Option 3, staged M1 → M2. The pain the filing names is
+attribution (M1 fixes it); the "trusted" in "trusted commit broker" is
+the signature (M2 earns it). If the CEO wanted the smallest coherent
+step, option 2 is self-sufficient — it is M1 exactly; M2 is the add-on.
+
+**Ruling (2026-09-01):** Option 3 approved as staged, **M1 authorized
+now**; M2 authorized after the trust-anchor and evidence-retention
+details (prerequisites above) are added. M1 landed as D-174.
+
+## M1 implementation record (D-174, 2026-09-01)
+
+- `scripts/git-provenance.sh` — `swbp_commit`, `swbp_run_id`,
+  `swbp_model_slug` (sourced library; fail-closed source in
+  orchestrate.sh preflight).
+- Sites wired: orchestrate [plan]/[task]/[success]; refreeze [refreeze
+  vN] (role=tpm, `SWBP_TPM_MODEL` default `human`); update-template ×4,
+  link-template, bootstrap (role=human, ambient author).
+- llm-call.sh: `SWBP_LLM_META_OUT` sidecar (`model=`, `call_id=` from the
+  response envelope) — opt-in, no-op for existing callers.
+- Coder prompt capture: `tee` to `$LOG_DIR/<id>-a<attempt>.prompt`,
+  archived as `.coder-archive/<v>.<task>.<rev>.<attempt>.prompt` (+`.meta`).
+- Selftests: `scripts/selftest/selftest_provenance.py` (10 tests, blind
+  fixture repo driving the REAL broker; full suite 548 green).
+- Manifest: `git-provenance.sh` added to `.manifest-template` (76
+  entries); modified scripts re-pinned.
 
 ## Blind-test plan (freeze-first, house style)
 
-Authored before implementation, against a fixture repo:
+Authored before implementation, against a fixture repo. M1 items landed
+in `selftest_provenance.py`; M2 items land with M2.
 
-1. Broker commit carries the expected author name/email, the ambient
+1. ✅ Broker commit carries the expected author name/email, the ambient
    committer, and the exact trailer set/values.
-2. Planted prompt/reply bytes → trailer hashes equal their sha256; the
-   verifier detects a tampered archive.
-3. Signed commit verifies against the committed public key; a wrong-key
-   commit fails verification.
-4. `SWBP_EM_MODEL` absent → `Swbp-Model: unset` (never fabricated).
-5. Source-shape: all pipeline commit sites route through the broker
-   (the group-1 oracle-gap pattern — assert the call, not just the
-   helper).
-6. Verifier names a non-broker commit planted in a fixture history (gate
-   mode fails; report mode warns).
-7. Resume keeps the same `Swbp-Run` id across a halted/resumed
-   milestone.
+2. ✅ (hash half) Planted prompt/reply bytes → trailer hashes equal
+   their sha256; absent bytes → trailer omitted. ⏳ (M2) the verifier
+   detects a tampered archive.
+3. ⏳ (M2) Signed commit verifies against the pinned trust anchor; a
+   wrong-key commit fails verification.
+4. ✅ `SWBP_EM_MODEL` absent → `Swbp-Model: unset` (never fabricated);
+   ✅ provider-returned model preferred over the mapped env var.
+5. ✅ Source-shape: all pipeline commit sites route through the broker
+   (a bare `git commit` at a pipeline site fails the suite).
+6. ⏳ (M2) Verifier names a non-broker commit planted in a fixture
+   history (gate mode fails; report mode warns).
+7. ✅ Resume keeps the same `Swbp-Run` id (same spec reuses; a new spec
+   version generates a new one).
 
 ## Adoption path
 
@@ -170,11 +227,11 @@ never pushes). The first post-adoption run is the live validation — the
 `[success]` subject plus trailers self-document, the same way D-168's
 plane SHA does.
 
-## Open questions (decide at go, or take the defaults)
+## Open questions (resolved by default at the 2026-09-01 ruling)
 
 - Author email domain: `@swbp.invalid` (RFC 6761 reserved — never
-  routable) — default.
+  routable) — **default taken**.
 - `SWBP_TPM_MODEL` best-effort env for `[refreeze]`, default `human` —
-  default.
+  **default taken**.
 - Signing key: GPG (portable, `git commit -S` native) over SSH —
-  default.
+  **default taken** (M2).

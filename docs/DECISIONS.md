@@ -21,6 +21,65 @@
 
 ## Decisions
 
+## D-174 — 2026-09-01 — T7 M1: the trusted commit broker (model-specific Git provenance, unsigned)
+
+**Decision:** Every pipeline `git commit` now routes through
+`scripts/git-provenance.sh` (`swbp_commit`) — the single trusted commit
+path (the model never runs git, D-127). Broker commits carry:
+author/committer separation (author = `swbp-<role>-<modelslug>@swbp.invalid`
+for em/coder/tpm/pipeline, ambient identity for human; committer always
+ambient) and `Swbp-*` trailers: Role, Model, Run, Task ([task] only),
+Plane, Prompt-SHA256, Reply-SHA256. The model value is the
+provider-returned id (new `SWBP_LLM_META_OUT` sidecar in llm-call.sh,
+the D-62 seat field) when the server reports one, else the role's mapped
+model, else `unset` — never fabricated. The run id is generated once per
+spec version (`.pipeline-state/run-id`, wiped on success teardown) and is
+stable across resumes. The coder prompt is now byte-captured
+(`tee` → `.coder-archive/…prompt`) — it was not archived before, so
+`[task]` Prompt-SHA256 was previously uncomputable. Sites wired:
+orchestrate [plan]/[task]/[success], refreeze [refreeze vN] (role=tpm),
+update-template ×4, link-template, bootstrap (all role=human). No signing
+in M1. CEO ruling 2026-09-01: Option 3 approved as staged, M1 authorized
+now; M2 (GPG signing + verifier) authorized only after the trust-anchor
+and evidence-retention details below land.
+
+**Alternatives considered:** (a) Trailer-only, no broker (git config
+per call) — rejected: the commit sites are the hole; a convention with no
+single choke point is exactly what drifted before. (b) Signing in M1 —
+rejected by the CEO: the trust anchor (a public key stored only in the
+repo it verifies is insufficient) and durable evidence storage were not
+designed. (c) Committing the prompt/reply bytes into the tree — deferred
+to M2's evidence-retention design (see Do-not-suggest).
+
+**Reason:** T7's value is that `[task]`/`[plan]` commits answer "which
+model, which prompt, which run" from the git log alone; the broker makes
+that true at every site with one auditable mechanism, and the source-shape
+selftest (a bare `git commit` at a pipeline site fails the suite) keeps it
+true. M1 is live-verifiable on the next run with zero new failure modes
+(the broker adds no gate; the [success] site keeps its `|| true`).
+
+**M2 prerequisites (CEO-mandated, not yet designed to completion):**
+(1) Trust anchor: a pinned key fingerprint + rotation/revocation rules,
+published out-of-band of the repo the key verifies; the verifier checks
+the signing key against the pinned anchor, not merely "verifies with the
+in-repo public key". (2) Evidence retention: prompt/reply bytes must be
+durable — a trailer hash is unreverifiable if the archived bytes are
+deleted; the M2 design commits (or otherwise durably stores) the
+milestone's evidence bytes and binds them to the run id. (3) Attestation
+semantics, stated for the record: signing attests what the TRUSTED
+PIPELINE RECORDED (the broker's trailer values), not independently which
+model generated a reply; provider-returned model/run identifiers are
+preferred over environment variables when available (M1 already does
+this for the model id).
+
+**Do not suggest:** reverting any commit site to a bare `git commit`
+"for simplicity" (the source-shape selftest exists because this is the
+hole); fabricating a model id when none was observed (`unset` is the
+honest value); wiring `--expect-model` seat verification into the pipeline
+calls as part of this (a new hard-halt path is a separate decision);
+auto-extending `.manifest-template`'s file list (regen-manifest preserves
+the list by design — new files are added deliberately).
+
 ## D-173 — 2026-08-30 — Machine-computed changed-contracts section in the EM's active ERD context
 
 **Decision:** `validate-plan.py --active-erd-context` (the file the shell

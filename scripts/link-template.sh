@@ -19,6 +19,9 @@ if [ -z "${SWBP_LINK_REEXEC:-}" ]; then
 fi
 cd "$SWBP_LINK_REEXEC"
 
+# T7 M1 (D-174): provenance broker — link commits carry Swbp-Role: human.
+source scripts/git-provenance.sh
+
 die() { echo "LINK-TEMPLATE FAIL: $*" >&2; exit 1; }
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -166,5 +169,5 @@ bash scripts/phase-gate.sh manifest HEAD
 
 git add -A -- .template-link .template-version scripts/.manifest-template \
   scripts/.manifest-project $OLD_PATHS $NEW_PATHS
-git commit -m "[template-link ${TARGET:0:12}]"
+swbp_commit human "[template-link ${TARGET:0:12}]"
 echo "linked: $SOURCE_REL @ $TARGET"

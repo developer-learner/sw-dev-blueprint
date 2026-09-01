@@ -17,6 +17,11 @@
 
 set -euo pipefail
 
+# T7 M1 (D-174): provenance broker — the bootstrap commit carries
+# Swbp-Role: human. Sourced from this script's own dir: bootstrap runs in a
+# fresh target dir where no repo-relative plane exists yet.
+source "$(cd "$(dirname "$0")" && pwd)/git-provenance.sh"
+
 PROJECT_NAME=${1:-"my-project"}
 
 echo "🚀 Bootstrapping project: $PROJECT_NAME"
@@ -143,7 +148,7 @@ if [ ! -d .git ]; then
   git init
   ensure_git_worktree_ready
   git add .
-  git commit -m "chore: bootstrap from sw-dev-blueprint template"
+  swbp_commit human "chore: bootstrap from sw-dev-blueprint template"
 fi
 
 # --- Gate hooks for the interactive/human path (D-30) ---

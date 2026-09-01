@@ -2948,13 +2948,16 @@ def test_metrics_guard_binds_to_this_runs_success_commit(tmp_path):
                        cwd=arm_dir, check=True)
         script = """#!/usr/bin/env bash
 set -euo pipefail
+# T7 M1 (D-174): the extracted guard block commits through the broker.
+source {broker}
 STATE_DIR="{state}"
 LOG_DIR="$STATE_DIR/logs"
 MEAS_DIR="{mea}"
 METRICS_REPORT_TOOL="{tool}"
 FROZEN_V=106
 __GUARD_BLOCK__
-""".format(state=state, mea=mea, tool=SCRIPTS / "metrics-report.py")
+""".format(state=state, mea=mea, tool=SCRIPTS / "metrics-report.py",
+           broker=SCRIPTS / "git-provenance.sh")
         script = script.replace("__GUARD_BLOCK__", block)
         return subprocess.run(
             ["bash", "-c", script], cwd=arm_dir, capture_output=True, text=True,
@@ -3550,6 +3553,7 @@ def stageable_repo(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "scripts").mkdir(exist_ok=True)
     for name in (
+        "git-provenance.sh",
         "refreeze.sh",
         "phase-gate.sh",
         "spec_artifacts.py",
@@ -6556,6 +6560,7 @@ def freezable_repo(tmp_path):
     # fixture mirrors a correct child; the unignored case has its own test.
     (tmp_path / ".gitignore").write_text("scripts/.approved/incoming/\n")
     for name in (
+        "git-provenance.sh",
         "refreeze.sh",
         "refreeze_delta.py",
         "contracts-merge.py",
@@ -6761,6 +6766,7 @@ def _install_refreeze_scripts(repo):
     """Copy the scripts a full refreeze apply path needs into a fixture repo,
     plus the passthrough sandbox adapter (no containers in selftests)."""
     for name in (
+        "git-provenance.sh",
         "refreeze.sh",
         "refreeze_delta.py",
         "contracts-merge.py",
@@ -9033,7 +9039,8 @@ def template_pull_pair(tmp_path):
         "ref=0000000000000000000000000000000000000000\n"
     )
 
-    for name in ("update-template.sh", "regen-manifest.sh", "phase-gate.sh"):
+    for name in ("git-provenance.sh", "update-template.sh", "regen-manifest.sh",
+                 "phase-gate.sh"):
         target = child / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
         target.chmod(0o755)

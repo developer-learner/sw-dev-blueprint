@@ -66,6 +66,9 @@ AGENT_TIMEOUT=900
 MAX_PLAN_REVISIONS=1
 SWBP_RUN_BUDGET=0
 FROZEN_V=$(cat "$APPROVED/VERSION")
+# T7 M1 (D-174): ensure_plan's [plan] commit routes through the broker —
+# source the REAL one (anti-drift, same rule as drive-plan.sh).
+source "$REPO/scripts/git-provenance.sh"
 # Anti-drift mirrors, same rule as drive-plan.sh.
 EM_TASK_KEYS=$(sed -n "s/^EM_TASK_KEYS='\(.*\)'$/\1/p" "$REPO/scripts/orchestrate.sh")
 [ -n "$EM_TASK_KEYS" ] || { echo "drive-plan-live: could not extract EM_TASK_KEYS" >&2; exit 65; }

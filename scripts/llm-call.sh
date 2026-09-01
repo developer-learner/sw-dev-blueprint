@@ -219,5 +219,19 @@ if content.count("```") == 2:
     m = re.search(r"```[a-zA-Z0-9_-]*\n(.*?)\n```", content, re.DOTALL)
     if m:
         content = m.group(1)
+
+# T7 M1 (D-174): provenance meta sidecar. The response envelope's OWN
+# "model" and "id" fields — the provider-returned identifiers the commit
+# broker prefers over the caller's mapped env var (the D-62 seat check above
+# already treats resp["model"] as the server's claim). Written only when the
+# pipeline sets SWBP_LLM_META_OUT; unset = no file, existing callers and
+# selftests are untouched. A server that reports nothing yields empty values
+# — the broker then falls back to the mapped model, never fabricates.
+meta_out = os.environ.get("SWBP_LLM_META_OUT")
+if meta_out:
+    with open(meta_out, "w") as f:
+        f.write("model=%s\n" % (resp.get("model") or ""))
+        f.write("call_id=%s\n" % (resp.get("id") or ""))
+
 sys.stdout.write(content)
 PYEOF

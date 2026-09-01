@@ -65,6 +65,9 @@ AGENT_TIMEOUT=60
 MAX_PLAN_REVISIONS="${MAX_PLAN_REVISIONS:-2}"
 SWBP_RUN_BUDGET=0
 FROZEN_V=$(cat "$APPROVED/VERSION")
+# T7 M1 (D-174): ensure_plan's [plan] commit routes through the broker —
+# source the REAL one (anti-drift, same rule as the function extract() above).
+source "$REPO/scripts/git-provenance.sh"
 # Wave 1: ensure_plan's extracted prompt references EM_TASK_KEYS (defined in
 # orchestrate.sh's init, not exported) — mirror it by extraction, same
 # anti-drift rule as the function extract() above. Fail loudly if the

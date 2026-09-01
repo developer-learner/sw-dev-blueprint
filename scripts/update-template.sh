@@ -59,6 +59,8 @@ if [ -z "${SWBP_UT_REEXEC:-}" ]; then
   SWBP_UT_REEXEC="$_repo" exec bash "$_tmp" "$@"
 fi
 cd "$SWBP_UT_REEXEC"
+# T7 M1 (D-174): provenance broker — template commits carry Swbp-Role: human.
+source scripts/git-provenance.sh
 die() { echo "UPDATE-TEMPLATE FAIL: $*" >&2; exit 1; }
 # Cross-platform sed -i (GNU vs BSD/macOS)
 sed_inplace() { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
@@ -118,7 +120,7 @@ if [ "$STAMP" = "1" ]; then
   sed_inplace "s/^ref=.*/ref=$TARGET/" .template-version
   bash scripts/regen-manifest.sh scripts/.manifest-project
   git add .template-version scripts/.manifest-project
-  git commit -m "[template-stamp ${TARGET:0:12}]" >/dev/null 2>&1 \
+  swbp_commit human "[template-stamp ${TARGET:0:12}]" >/dev/null 2>&1 \
     || echo "(already stamped at this ref — no commit needed)"
   echo "stamped: $SLUG @ ${TARGET:0:12} (was: $BIRTH)"
   exit 0
@@ -287,7 +289,7 @@ if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then
   sed_inplace "s/^ref=.*/ref=$TARGET/" .template-version
   bash scripts/regen-manifest.sh scripts/.manifest-project
   git add .template-version scripts/.manifest-project
-  git commit -m "[template-update ${TARGET:0:12}] (ref advance only)" 2>/dev/null || echo "(ref already current)"
+  swbp_commit human "[template-update ${TARGET:0:12}] (ref advance only)" 2>/dev/null || echo "(ref already current)"
   exit 0
 fi
 if [ -n "$MANIFEST_DRIFT" ] && [ -z "$CHANGED$REMOVED" ]; then
@@ -298,7 +300,7 @@ if [ -n "$MANIFEST_DRIFT" ] && [ -z "$CHANGED$REMOVED" ]; then
   git -C "$CLONE" show "$TARGET:scripts/.manifest-template" > scripts/.manifest-template
   bash scripts/phase-gate.sh manifest HEAD || die "post-apply integrity check failed — do not commit; inspect"
   git add .template-version scripts/.manifest-project scripts/.manifest-template
-  git commit -m "[template-update ${TARGET:0:12}] (manifest verbatim)" 2>/dev/null || echo "(ref already current)"
+  swbp_commit human "[template-update ${TARGET:0:12}] (manifest verbatim)" 2>/dev/null || echo "(ref already current)"
   exit 0
 fi
 [ -n "$CHANGED$REMOVED" ] || { echo "update-template: internal error — content changed yet no apply branch taken" >&2; exit 1; }
@@ -355,7 +357,7 @@ done
 git add .template-version scripts/.manifest-template scripts/.manifest-project
 for f in $CHANGED; do git add "$f"; done
 for f in $REMOVED; do git add -A -- "$f"; done
-git commit -m "[template-update ${TARGET:0:12}]"
+swbp_commit human "[template-update ${TARGET:0:12}]"
 
 echo ""
 echo "=============================================="

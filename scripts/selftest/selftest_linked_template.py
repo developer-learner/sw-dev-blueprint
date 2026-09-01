@@ -40,6 +40,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, str, str, list[str]]:
     child = tmp_path / "child"
     paths = [
         ".github/workflows/check-drift.yml",
+        "scripts/git-provenance.sh",
         "scripts/link-template.sh",
         "scripts/phase-gate.sh",
         "scripts/regen-manifest.sh",

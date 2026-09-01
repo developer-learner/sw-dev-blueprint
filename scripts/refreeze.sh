@@ -50,6 +50,9 @@
 set -euo pipefail
 
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
+# T7 M1 (D-174): provenance broker — the freeze commit carries
+# Swbp-Role: tpm (model = SWBP_TPM_MODEL when set, else "human").
+source scripts/git-provenance.sh
 APPROVED="scripts/.approved"
 
 MODE="auto"
@@ -965,7 +968,7 @@ for f in $CHANGED_DOCS; do git add "$APPROVED/$f"; done
 [ -n "$VERSIONED_ERD_DELTA" ] && git add "$VERSIONED_ERD_DELTA"
 if [ "$RETIRE_ERD_DELTA" -eq 1 ]; then git add "$APPROVED/ERD-DELTA.md"; fi
 for f in $CHANGED_CAPTURES; do git add "$APPROVED/$f"; done
-git commit -m "[refreeze v$NEW]" || {
+swbp_commit tpm "[refreeze v$NEW]" || {
   # D-151, extended: the on_refreeze_exit trap owns the rollback for EVERY
   # post-apply failure now; this block just reports and exits non-zero.
   commit_rc=$?
