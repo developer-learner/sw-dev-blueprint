@@ -153,6 +153,11 @@ what closes that.
    (meta sidecar); M2 extends the same preference to any run identifier
    the provider returns.
 
+**Design status (2026-09-01): all three prerequisites are designed to
+completion in `tasks/T7-m2-design.md` (D-176). Awaiting the CEO's go
+for M2 code (M2a: key management + signing + evidence + verifier
+report-mode; M2b: clean adoption cycle + T1 gate flip).**
+
 ## Options
 
 1. **Decline** — keep the shared identity; the archives + metrics remain

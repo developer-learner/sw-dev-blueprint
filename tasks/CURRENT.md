@@ -20,6 +20,8 @@ REVIEW, CURRENT, manifest ownership) + child sync queue
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-09-01: **T7 M1 landed (D-174) + T7 M2 designed (D-176) + T11 Phase 0 done (D-175).** CEO ruling of the day: Option 3 approved as staged (M1 now, M2 after the three prerequisites), Rich approved for Phase 0, T6 untouched. M1: trusted commit broker at every pipeline commit site, author/committer separation, `Swbp-*` trailers, provider-returned model preference, run-id, coder-prompt byte-capture; suite 548 green; published `1b455f0` + bootstrap fix `1684e0b`. M2 design (no code yet, awaiting go): out-of-band pinned-fingerprint trust anchor, atomic durable evidence under `.swbp-evidence/<run-id>/`, attestation semantics stated for the record, verifier report-first → T1 after one clean cycle — `tasks/T7-m2-design.md`. T11 Phase 0: rich-adoption born — rich 15.0.0 pinned at `v15.0.0`/`6ac483cb`, baseline 956/25/0 with lockfile deps (pygments 2.21.0 breaks 8 legacy tests → lockfile is the dependency authority), 73-file legacy pin, plane LINKED at `1684e0b` (run #2 born on the broker plane; first child commit `0127c3bf` carries the full trailer set), pre-spec tunnel state recorded, child verification green. Phase 1 (v1 spec + first freeze + live run) awaits the machine slot; the spec can be drafted now.
+
 - 2026-08-23: **D-169 implemented.** Diagnosis now has an explicit,
   positive-evidence-only `transient_or_environmental` verdict. It writes a
   preserved operator-review record and halts with no automatic retry,

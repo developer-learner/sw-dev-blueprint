@@ -21,6 +21,103 @@
 
 ## Decisions
 
+## D-176 — 2026-09-01 — T7 M2 design: trust anchor, durable evidence, attestation semantics
+
+**Decision:** M2 (signing + verifier) is designed to completion per the
+CEO's 2026-09-01 prerequisites; full design in
+`tasks/T7-m2-design.md`. The load-bearing choices:
+(1) **Trust anchor** = pinned key fingerprints stored OUT-OF-BAND of the
+verified repo — machine tier `~/.swbp/provenance/pinned-fingerprints`
+(authoritative for gate mode, CEO-only writer) + public tier
+`docs/PROVENANCE.md` (portability); the in-repo `pub.asc` is
+verification material, not the anchor. Key: dedicated Ed25519, no
+passphrase (unattended signing; security = location + 0600, outside the
+sandbox), 2-year expiry to force rotation. Rotation = bounded overlap
+(both fingerprints pinned, last commit signed by the old key);
+revocation = append-only fingerprint list that takes precedence over
+pinning, permanent. (2) **Durable evidence** = prompt/reply/meta bytes
+committed ATOMICALLY with the `[plan]`/`[task]` commit under
+`.swbp-evidence/<run-id>/<entry>/` (not git-ignored) — trailer and
+bytes in the same commit object, so verification needs only the repo;
+5 MB fail-closed size guard; evidence is append-only per run and the
+verifier detects later tampering. (3) **Attestation semantics** stated
+for the record and carried by all M2 artifacts: the signature attests
+that the pipeline's broker made the commit with the recorded trailer
+values; it does NOT independently prove which model generated a reply;
+provider-returned identifiers preferred — extended to a new
+`Swbp-Call-Id:` trailer (the provider's own call receipt from the meta
+sidecar). Verifier `check-provenance.py`: report mode first (T2
+advisory), hard gate (T1) only after one clean adoption cycle (D-170
+pattern); gate scope = broker commits + pipeline-subject commits (a
+pipeline subject without `Swbp-Role:` is the hole and fails); non-broker
+human commits out of scope; pre-M2 history reported as `pre-m2` and
+skipped.
+
+**Alternatives considered:** separate evidence branch (cross-ref binding
+weakens the proof, two things to drift) — rejected; separate evidence
+repo (operational surface, overkill) — rejected; passphrase-protected
+key (blocks unattended mid-run signing) — rejected; in-repo public key
+as the anchor (a compromised pipeline re-pins its own key) — rejected,
+hence the out-of-band pinned fingerprint.
+
+**Reason:** the CEO's three M2 prerequisites were the gap between M1's
+recorded provenance and the filing's "pipeline-owned attestation" bar;
+this design closes them without changing what the pipeline does, and
+keeps the house adoption pattern (advisory teeth, then real teeth).
+
+**Do not suggest:** treating the in-repo `pub.asc` as sufficient trust
+(it is not the anchor); moving the pinned fingerprints into any
+verified repo; signing with a passphrase-protected key in the run path;
+retroactively signing pre-M2 history; claiming the signature proves
+which model generated a reply (the §0 semantics are the ceiling);
+auto-committing evidence over an existing run-id (append-only per run).
+
+## D-175 — 2026-09-01 — T11 Phase 0: rich 15.0.0 adopted as subject #2 (linked plane at the D-174 broker)
+
+**Decision:** Per the CEO's 2026-09-01 ruling (Rich approved for
+Phase 0), `~/dev/rich-adoption` is the second mature-OSS adoption
+subject (D-172): rich 15.0.0 (Textualize/rich, MIT), pinned at tag
+`v15.0.0` = commit `6ac483cbea39cab124dfd3483bba70ffafb71050`. Phase 0
+completed: (1) clean baseline **956 passed / 25 skipped / 0 failed** at
+the pin with `poetry.lock` deps (pygments 2.19.2, pytest 7.4.4,
+markdown-it-py 3.0.0) on Python 3.14.6 — finding: pygments 2.21.0
+(latest) fails 8 `tests/test_syntax.py` tests, so **the lockfile is the
+dependency authority for the legacy baseline**; (2) `legacy-pin.json`
+— 73-file sha256 snapshot of `tests/` (D-165: provenance, never an
+oracle; carried into `scripts/.approved/` at the first freeze);
+(3) project files adapted under Rule 3 (`.gate-paths` `build=rich/`,
+CLAUDE.md, CONVENTIONS.md, tasks/, gitignore plane lines);
+(4) control plane **linked** (not copied) at Blueprint `1684e0b`
+(post-D-174) via `link-template.sh` approve-hash flow — this run #2 is
+born on the broker plane and doubles as the broker's first adoption
+cycle (first child commit `0127c3bf` carries the full `Swbp-*` trailer
+set, role=human);
+(5) pre-spec tunnel state recorded (D-173 pattern: no
+`scripts/.approved/` yet; first `refreeze.sh` = spec v1 = first tunnel
+entry); (6) child verification green: legacy suite, plane selftests
+548/548 (the venv needed `pytest-json-report` installed — an env gap,
+not a plane defect), phase-gate manifest, check-drift in sync.
+Local-only, no remote, never pushed upstream (D-165).
+
+**Alternatives considered:** copied install (D-172's original pattern)
+— superseded: linked is the current norm (Vortex/Testchat) and gives
+the D-168 guard the exact pinned Git object; a different subject — the
+CEO chose Rich from the five verified candidates (Gunicorn fallback,
+Click low-cost).
+
+**Reason:** D-172 requires subject #2 to be mature OSS, a different
+shape from Vortex, and the live validation of the plane on a real
+upstream codebase; Rich adds the rendered-output contract surface
+never frozen before, and being born on the broker plane makes its first
+run the M1 adoption validation for free.
+
+**Do not suggest:** pushing this repo anywhere (no remote, by design);
+using the legacy suite as an oracle or gate (D-165); running the legacy
+suite against latest deps for baseline claims (lockfile authority);
+scheduling its live milestone run over a Vortex/Testchat live run
+(single-run machine); editing plane files through the symlinks (plane
+changes happen upstream in the Blueprint).
+
 ## D-174 — 2026-09-01 — T7 M1: the trusted commit broker (model-specific Git provenance, unsigned)
 
 **Decision:** Every pipeline `git commit` now routes through
