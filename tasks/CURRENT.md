@@ -116,6 +116,17 @@ names). Open queue: third batch landed same day as **D-154** (fail-open
 > needed. Also temporary context for this session that isn't worth a
 > DECISIONS.md entry.
 
+- **2026-09-01 (Track C session)**: CEO-gated decision notes prepared —
+  `tasks/T7-provenance-decision.md` (Git provenance: trusted commit broker
+  design, options 1–3, recommendation full-staged M1/M2, blind-test plan)
+  and `tasks/T11-oss-subject-decision.md` (OSS adoption subject #2: five
+  PyPI-verified candidates, recommendation Rich, program shape Phase 0–2).
+  T6 (organic ladder observation) status recorded in `tasks/TODO.md` §7 —
+  no new organic run since 2026-08-30; close criterion (one uninterrupted
+  full-ladder run accepted against D-70/D-69) still unmet. No code written
+  (Rule 3: T7/T11 gated on the CEO's go/subject). Both repos' trees clean
+  after this commit.
+
 - **2026-08-08 (session end — 2)**: post-handoff hygiene batch closed in
   testchat (`d0ac352`): AC-48 audit DONE (text recovered from refreeze v20,
   §5.1 lint fails — re-cut drafted into the next TPM bundle; see testchat

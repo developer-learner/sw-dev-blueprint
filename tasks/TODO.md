@@ -96,6 +96,17 @@ All 10 closed: source-text assertions added to `selftest_gates.py` (`test_group1
 ## Vortex recording hook for the catch ledger
 - [x] [V] Vortex recording hook for the catch ledger — done 2026-08-26: the wiring itself is the shared `refreeze.sh` (inherited via symlink; `record_catch` at all 8 hard-gate die sites, best-effort `|| true`, never masks the verdict). The missing piece was hygiene: `.catch-ledger.json` (CWD-relative runtime witness) was unignored in both repos — it would dirty the child's tree and ride `git add -A` into freeze commits. Now gitignored in the Blueprint (template → future children) and in Vortex. Live-fire in a throwaway vortex clone: capsule-altering staged PRD → `check-prd-additive` catch recorded (spec v14) → proper die; ledger lands in the child root, tree stays clean.
 
+## 7. CEO-gated items — decision notes prepared (2026-09-01, Track C)
+
+> Per the cross-cutting rules: these items cannot start code until the CEO
+> decides; the Track C LLM prepares option notes, not code. T-numbers are the
+> session register in `vortex/tasks/TODO.md`; item numbers are the canonical
+> backlog register in `vortex/tasks/BACKLOG.md`.
+
+- [ ] [B] **T7 (backlog #13) — model-specific Git provenance: CEO build/no-build.** Design note prepared at `tasks/T7-provenance-decision.md` (trusted commit broker: author/committer separation, provenance trailers, prompt/reply hashes, pipeline GPG signing + verifier; staged M1/M2; blind-test plan; recommendation: full, staged). Awaiting the go; no code until then.
+- [ ] [B] **T11 (backlog #18) — mature OSS adoption subject #2: CEO subject choice.** Candidate note prepared at `tasks/T11-oss-subject-decision.md` (D-165/D-172 constraints; five PyPI-verified candidates — Rich, Gunicorn, Click, Uvicorn, Scrapy; recommendation: Rich, fallback Gunicorn). Awaiting the choice; no adoption until then.
+- [ ] [B] **T6 (backlog #9) — observe one organic two-strike ladder climb.** Status 2026-09-01: no new organic run since 2026-08-30 (last: spec v20 success, plane `605a998`). Rungs observed so far span multiple runs — 08-22/23: schema-valid `brief_wrong` diagnosis + materially revised brief + usable TPM batch; 08-28: D-71 diagnosis retry rung (2× schema-invalid → retry) then a D-169 `transient_or_environmental` halt; 08-28→08-30: task-level failure, resume, success. Still missing per the backlog's own close criterion: **one uninterrupted organic run** exercising the complete retry → diagnosis → revised-brief/TPM path with the outcome accepted against D-70/D-69. Observe, don't manufacture — closes on the next qualifying run.
+
 ## Standing (recurring, not completable)
 - [ ] [V] Post-blueprint-landing verification — full product suite (all test files, scope labeled, never a subset) + CI green, after every blueprint commit touching linked files
   - **Executed 2026-08-26 (pi session):** since the `cd58d3b` sync, the two blueprint commits touched `tasks/TODO.md` only (not linked) — no verification strictly owed; ran the full baseline anyway. It caught a real defect: the 2026-08-25 batch (`4164698`, `560850ab`) had left the CI selftest lint red (1× F841 unused `outer`, 5× E741 `l` in `selftest_gates.py`) — origin's CI selftest job has been red since `560850ab`. Fixed in `ffebfe9` (ruff-clean + manifest regen; 525 selftests green). Vortex side: pin advanced to `ffebfe9` (`4f1c441`), check-drift IN_SYNC, ruff scripts+src clean, mypy clean, selftests 525/525, full product suite 58/58 across all 10 test files, coverage 88.71% ≥ 80 floor.
