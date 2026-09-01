@@ -19,9 +19,6 @@ if [ -z "${SWBP_LINK_REEXEC:-}" ]; then
 fi
 cd "$SWBP_LINK_REEXEC"
 
-# T7 M1 (D-174): provenance broker — link commits carry Swbp-Role: human.
-source scripts/git-provenance.sh
-
 die() { echo "LINK-TEMPLATE FAIL: $*" >&2; exit 1; }
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -57,6 +54,17 @@ git -C "$FROM" rev-parse --show-toplevel >/dev/null 2>&1 \
 PROJECT="$(pwd -P)"
 SOURCE="$(cd "$FROM" && pwd -P)"
 [ "$PROJECT" != "$SOURCE" ] || die "linked mode applies to a child, not the Blueprint repository"
+
+# T7 M1 (D-174): provenance broker — link commits carry Swbp-Role: human.
+# Fresh installs have no child broker yet (the plane being installed), so
+# fall back to the source checkout's copy; fail closed if neither exists.
+if [ -f scripts/git-provenance.sh ]; then
+  source scripts/git-provenance.sh
+elif [ -f "$SOURCE/scripts/git-provenance.sh" ]; then
+  source "$SOURCE/scripts/git-provenance.sh"
+else
+  die "scripts/git-provenance.sh missing from child and source checkout"
+fi
 TARGET="$(git -C "$SOURCE" rev-parse "${REF:-HEAD}")" || die "cannot resolve ref ${REF:-HEAD}"
 BASE_REF="$(grep '^ref=' .template-version | cut -d= -f2 | tr -d '[:space:]')"
 TARGET_MANIFEST="$(mktemp)"
