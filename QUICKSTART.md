@@ -158,10 +158,9 @@ Go deeper strictly on demand:
   have it author the four
   artifacts — read `docs/TPM-ROLE.md` (the seat's job description) and
   `docs/CEO-PLAYBOOK.md` (the operator rhythm), then repeat Steps 4–6 with
-  its output. Note: a real project also runs the curated cleanup
-  (BLUEPRINT.md Bootstrap Step 4 — delete the one-shot `bootstrap.sh` /
-  `new-project.sh`); this walkthrough project skipped it because it is
-  throwaway.
+  its output. Note: a real project also completes the full onboarding
+  (BLUEPRINT.md Steps 3–7 — real description, adapted stack, all placeholders
+  filled); this walkthrough project skipped that because it is throwaway.
 - **The first time a run exits 2:** read `docs/ESCALATION.md` — the failure
   ladder and the TPM bundle round-trip. Not before.
 - **Several projects from this template:** now the fleet tools matter —

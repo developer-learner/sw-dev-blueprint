@@ -491,7 +491,7 @@ stack); initial notes in docs/; the Key Contacts rows in CLAUDE.md (or
 ask for their names). The PRD itself is NOT yours to write — that is the
 TPM's job, and it arrives via `scripts/refreeze.sh` (Rule 6).
 
-### Step 4 — Run bootstrap, then curated cleanup
+### Step 4 — Run bootstrap and verify the stamp
 
 `scripts/bootstrap.sh` sets up the venv, git hooks (`core.hooksPath`), and
 stamps `.template-version` with the template commit this child was born from
@@ -682,8 +682,10 @@ When a project reaches feature-complete and enters maintenance mode:
    or "complete" in the Feature Flags table
 5. **README** — if the app is distributed as a binary, add an "End users"
    section alongside the "Developers" build instructions
-6. **Run curated cleanup** — Step 4 (strip template-only files) if not done
-   already
+6. **Prune leftover blueprint-usage docs if you want** — `QUICKSTART.md`, the
+   one-pager, and `examples/` are safe to remove once your product stands
+   alone, but NEVER a manifest-owned file (the setup scripts, `INTRO.md`, the
+   prompts): the integrity gate fails closed on a missing one (see Step 4)
 
 The project is not "dead" — it is transitioned. Future sessions should check
 BACKLOG.md first rather than CURRENT.md.
