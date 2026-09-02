@@ -2229,10 +2229,10 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
       # T7 M1 (D-174): broker commit — author is the observed coder model,
       # trailers bind the prompt/reply bytes (scratch copies; the durable
       # archive holds identical bytes) by sha256.
-      SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/$id-a$attempt.meta" 2>/dev/null | head -1)" \
+      SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/$id-a$((strikes + 1)).meta" 2>/dev/null | head -1)" \
       SWBP_PROV_TASK="$id" \
-      SWBP_PROV_PROMPT_FILE="$LOG_DIR/$id-a$attempt.prompt" \
-      SWBP_PROV_REPLY_FILE="$LOG_DIR/$id-a$attempt.raw" \
+      SWBP_PROV_PROMPT_FILE="$LOG_DIR/$id-a$((strikes + 1)).prompt" \
+      SWBP_PROV_REPLY_FILE="$LOG_DIR/$id-a$((strikes + 1)).raw" \
         swbp_commit coder "[task $id] attempt $((strikes + 1))" "$file"
     fi
     # D-74: lint the one file the coder wrote, BEFORE the mapped tests — lint
