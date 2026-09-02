@@ -48,21 +48,20 @@ cd myproj
 
 Bootstrap fills the project-name placeholder, builds the venv, enables the
 pre-commit gate (`core.hooksPath=.githooks`), stamps `.template-version`, and
-**arms the placeholder gate (D-160)**: from here, a commit fails closed while
-any unfilled `[PLACEHOLDER]` token survives. So fill the rest first — `[NAME]`,
-the stack and description in `CLAUDE.md` / `README.md` / `docs/` — then verify
-and commit exactly as BLUEPRINT.md Steps 6–7 describe:
+**arms the placeholder gate (D-160)**: from here a commit fails closed while any
+unfilled bracketed placeholder token survives. So fill the rest first — the
+bracketed tokens in `CLAUDE.md` / `README.md` / `docs/` (contact names, tech
+stack, the one-paragraph description), per BLUEPRINT.md Steps 6–7 — then commit:
 
 ```bash
-# BLUEPRINT.md Step 7: this grep must return nothing before you commit
-grep -rnE '\[[A-Z][A-Za-z0-9_ ]+\]|\[[A-Z][a-z]+ [a-z]|\[[a-z][a-z_]+ [a-z]' . \
-  --include='*.md' --include='*.json' --exclude-dir=.git \
-  --exclude='DECISIONS.md' --exclude='BLUEPRINT.md' | grep -vE '\]\('
 git add -A && git commit -m "chore: instantiate myproj from sw-dev-blueprint"
 ```
 
-The commit matters: the orchestrator refuses a dirty tree (pre-flight,
-fail-closed).
+The pre-commit hook runs the placeholder gate and, if any token survives, prints
+the exact file and line to fix — that is the authoritative check, so don't
+hand-roll a grep to pre-check (a naive one flags the intentional tokens the gate
+excludes: the correction log, handoffs, task templates). The commit also matters
+because the orchestrator refuses a dirty tree (pre-flight, fail-closed).
 
 (The durable path for real projects is GitHub's "Use this template" — see
 README "Starting a new project". Not needed today.)

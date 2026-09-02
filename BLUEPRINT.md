@@ -504,13 +504,15 @@ grep '^ref=' .template-version   # must NOT read ref=UNSTAMPED
 If it reads `UNSTAMPED` (offline bootstrap), stamp later with
 `scripts/update-template.sh --stamp`.
 
-Then delete the one-shot setup scripts; preserve the memory layer
-(`BLUEPRINT.md`, `CLAUDE.md` / `AGENTS.md`, `CONVENTIONS.md`, all of `docs/`)
-and the control plane (`scripts/`, `.githooks/`):
-
-```bash
-rm -f scripts/bootstrap.sh scripts/new-project.sh
-```
+Leave the one-shot setup scripts in place. `scripts/bootstrap.sh` and
+`scripts/new-project.sh` are inert after setup, but they are template-owned
+(pinned in `scripts/.manifest-template`) and the integrity gate fails closed on
+any missing manifested file (`phase-gate.sh` sets `actual="MISSING"` and the
+hash compare rejects it) — so deleting them per project bricks the next commit.
+Preserve the whole control plane (`scripts/`, `.githooks/`) and the memory layer
+(`BLUEPRINT.md`, `CLAUDE.md` / `AGENTS.md`, `CONVENTIONS.md`, all of `docs/`).
+Retiring a template-owned file is a fleet-level change via
+`scripts/update-template.sh` (D-101), never a per-child `rm`.
 
 If unsure whether a file is memory-layer or scaffold, halt and ask (Rule 4).
 

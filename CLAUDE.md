@@ -50,7 +50,7 @@ Testing:      pytest
 │   └── CURRENT.md        # session notes — active work, halt notes (the PRD lives in scripts/.approved/)
 ├── scripts/
 │   ├── bootstrap.sh / new-project.sh
-│   │                         # one-time setup (core.hooksPath, .template-version stamp; new-project.sh is deleted at Step-4 cleanup)
+│   │                         # one-time setup (core.hooksPath, .template-version stamp); template-owned, kept after setup (manifest gate fails on a missing file)
 │   ├── orchestrate.sh        # shell-driven task-DAG conductor (owns ALL procedure)
 │   ├── llm-call.sh           # ONE bare HTTP completion per call, no harness (D-53)
 │   ├── phase-gate.sh         # lane + integrity gate (INV-2, frozen spec; portable sha256)
