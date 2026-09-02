@@ -967,13 +967,16 @@ def validate():
     if not isinstance(mapping, dict):
         fail(["contracts.test_mapping must be an object mapping node-ids "
               "to the file that behaviorally owns them"])
+    # D-116/D-124: match pins on the stable family, so a shape-flipped pin
+    # (suffixed `name[chromium]` vs bare `name`) still resolves to its owner.
+    family_map = _family_mapping(mapping)
     AUTO_PLACED.clear()
     by_file = {t["file"]: t for t in tasks}
     if mapping:
         for t in tasks:
             moved = []
             for n in t["tests"]:
-                owner_file = mapping.get(n)
+                owner_file = family_map.get(_id_family(n))
                 if not owner_file or owner_file == t["file"]:
                     continue
                 owner = by_file.get(owner_file)
@@ -1057,7 +1060,8 @@ def validate():
         # empties a task the acceptance gate then rejects on re-validation
         # (M35b: the v84 run committed exactly that emptied plan as "plan ok").
         moved = [n for n in t["tests"]
-                 if n.split("::")[0] in browser_files and mapping.get(n) is None]
+                 if n.split("::")[0] in browser_files
+                 and family_map.get(_id_family(n)) is None]
         if not moved:
             continue
         t["tests"] = [n for n in t["tests"] if n not in moved]
@@ -1692,6 +1696,28 @@ def _id_family(node_id):
     return (module + "::" + name.split("[", 1)[0]) if sep else node_id
 
 
+def _family_mapping(mapping):
+    """Family-keyed view of a contracts.test_mapping: {family: owner_file}.
+
+    D-116/D-124: node-ids flip between `name[chromium]` and `name` across
+    collection methods, so a raw `mapping.get(n)` misses a shape-flipped pin
+    (v117: the router UI test's pinned `[chromium]` id never matched the bare
+    id the static fallback recorded, so the D-124 completeness repair dropped
+    it and its task entered the plan with no runnable mapped test). Match on
+    the stable family instead. Two keys sharing a family (parametrized
+    variants of one test) must pin the same behavioral owner — a conflict is
+    a spec error, not something to silently last-win."""
+    fm = {}
+    for k, v in mapping.items():
+        f = _id_family(k)
+        if f in fm and fm[f] != v:
+            fail([f"contracts.test_mapping: family {f} is pinned to two files "
+                  f"({fm[f]} and {v}) — parametrized variants of one test must "
+                  f"share a behavioral owner"])
+        fm[f] = v
+    return fm
+
+
 def milestone_scope_ids(mapping, changed_files, changed_tests,
                         granularity="file", current_ids=None):
     """The authoritative milestone node-id set for ONE delta: which of its
@@ -1719,14 +1745,17 @@ def milestone_scope_ids(mapping, changed_files, changed_tests,
     owner file the delta staged rides even if the producer dropped it.
     """
     current = set(current_ids) if current_ids is not None else None
-    scope = {n for n in changed_tests if current is None or n in current}
+    current_families = (
+        {_id_family(c) for c in current} if current is not None else None)
+    scope = {n for n in changed_tests
+             if current is None or _id_family(n) in current_families}
     if mapping:
         pinned = {_id_family(k) for k in mapping}
         if granularity != "function":
             scope = {n for n in scope if _id_family(n) in pinned}
         scope |= {n for n, owner in mapping.items()
                   if owner in set(changed_files)
-                  and (current is None or n in current)}
+                  and (current is None or _id_family(n) in current_families)}
     return sorted(scope)
 
 
@@ -2358,10 +2387,11 @@ def cmd_subtree_scope(prior_path, delta_paths):
     # changed id that was previously mapped belongs to a hit task by
     # construction (the mapping intersection is what made the task hit), so
     # nothing here is still mapped on a carried task — no overmap possible.
+    current_families = {_id_family(c) for c in current_ids}
     map_ids = sorted(
-        (changed_tests & current_ids)
+        {n for n in changed_tests if _id_family(n) in current_families}
         | {n for t in tasks if t["id"] in hit for n in t["tests"]
-           if n in current_ids}
+           if _id_family(n) in current_families}
     )
     if map_ids and not (reemit or new_files):
         fail(["subtree scope refused: the delta changes mapped/new tests but "
@@ -2522,12 +2552,14 @@ def cmd_merge_subtree(prior_path, subtree_path, scope_path):
             fail(errs)
 
     all_ids = carried_ids | {t["id"] for t in sub_tasks}
+    current_families = {_id_family(c) for c in current_ids}
     for t in carried:
         # Stale mappings cannot survive on carried tasks by construction
         # (a removed id was mapped -> its task was hit -> re-emitted), but
         # the delta files are computed by refreeze.sh — filter defensively
         # rather than trust a second tool's invariant.
-        t["tests"] = [n for n in t["tests"] if n in current_ids]
+        t["tests"] = [n for n in t["tests"]
+                      if _id_family(n) in current_families]
         t["depends_on"] = [d for d in t["depends_on"] if d in all_ids]
     merged = {
         "version": int(prior.get("version", 1)) + 1,

@@ -21,6 +21,25 @@
 
 ## Decisions
 
+## D-178 — 2026-09-02 — validate-plan.py node-id matching aligned to the D-116/D-124 family (shape-flipped pins)
+
+**Decision:** All six raw node-id match sites in `scripts/validate-plan.py` now match on the stable `_id_family` (module + bare test name, parametrization stripped) instead of the literal id, and a new `_family_mapping()` helper builds the family-keyed view of `contracts.test_mapping` with a collision guard. The six sites: (1) the pinned-owner auto-placement lookup, (2) the D-64 final-task sweep's pin-exemption check, (3) the `milestone_scope_ids` changed-tests∩current line, (4) the D-124 completeness repair, (5) the subtree re-plan `map_ids`, and (6) the subtree-merge carried-task test filter.
+
+**Reason:** Node-ids legitimately flip between `name[chromium]` and `name` across collection methods (pytest-style suffixed ids vs the static/AST bare ids). D-116/D-124 already matched the *slice* on family, but six other sites still compared literal ids, so a shape-flipped pin was silently dropped at those sites. This bit live in testchat v117: the frozen router UI test was pinned with its `[chromium]` suffix while the current static fallback recorded the bare id, so the D-124 completeness repair (raw `n in current`) never admitted it and T4 entered the plan with no runnable mapped test and no smoke signal — a plan-gate halt. Aligning all six sites to the family makes the milestone intersection, the auto-placement, and the D-64 exemption shape-invariant in both flip directions. The collision guard turns the one non-benign family collapse (two pins, one family, different owners) into an explicit plan-gate failure instead of a silent last-win.
+
+**Behavior change (intended):** a shape-flipped browser pin now runs at its *declared owner task* (via the D-124 repair + auto-placement) rather than being swept to the DAG's final task by D-64. That is the D-124 intent; it can surface DOM-timing/spec-authoring issues that final-task placement had masked — the owner is the acceptance point, so that is the point.
+
+**Do not suggest:** reverting any of the six sites to literal-id matching "to keep the diff small"; reintroducing a raw `mapping.get(n)` or `n in current_ids` for a shape-flipped pin; or relaxing the collision guard to last-win (a family pinned to two files is a spec defect, not a tie to break).
+
+**Verified by:**
+- `scripts/selftest/selftest_family_match.py` (new): 7 tests — suffixed-pin/bare-current and the mirror entering the slice via D-124, changed-test∩current family match, the collision guard (fail) and shared-owner collapse, and end-to-end shape-flipped auto-placement + D-64 exemption.
+- Mutation check: reverting site 4 (D-124) to raw matching fails exactly the two D-124 slice tests; restoring re-greens all 7.
+- No regression: `selftest_milestone_trim.py` (13) and `selftest_gates.py` (464) green.
+
+**Cross-reference:** testchat correction-log 2026-09-02 (the v115 dropped-verbatim-brief root cause + the v117 shape-flip halt); D-116 (node-id relabel), D-124 (completeness repair), D-64 (browser-test final-task placement).
+
+---
+
 ## D-177 — 2026-09-01 — Fleet pin adoption: Vortex + Testchat move to the D-174 broker plane at 6f51d63
 
 **Decision:** ADOPT NOW (delegated by the CEO to Track C, which had
