@@ -1,7 +1,11 @@
 # TODO — combined (vortex + blueprint) — 2026-08-24
 
-Single home for open work across both sessions. Lane tags:
-**[B]** blueprint session · **[V]** vortex session.
+A **transient, non-authoritative** cross-session working checklist. Lane tags:
+**[B]** blueprint · **[V]** vortex · **[T]** testchat. It coordinates in-flight
+work across repos; it is NOT the source of truth. The blueprint's authoritative
+queue is `BACKLOG.md`, its live status is `CURRENT.md`, and each other repo's
+work is authoritative in that repo's own tracker. Close items out to those
+homes; when this list is empty it can be retired.
 Suggested green-light order: 2 → 3 (sweep, then ledger/tiering) → 4 (scope) → 5 (when funded) → 6 (when the milestone comes).
 
 **Open work is split into two buckets:**

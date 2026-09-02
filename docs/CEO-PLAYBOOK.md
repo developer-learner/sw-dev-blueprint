@@ -64,8 +64,10 @@ LM Studio — no specific model required, D-41) and `scripts/bootstrap.sh`.
 4. **Build.** The conductor runs `SANDBOX=1 scripts/orchestrate.sh` and
    reports. The pipeline plans (EM), builds (coder), tests, retries, and
    escalates internally.
-   - **Exit 0** — every frozen test passes. A measurement, not an opinion.
-     This means "built as specified" — NOT yet "milestone done" (D-44).
+   - **Exit 0** — the milestone's delta-mapped tests pass (D-112): a
+     measurement, not an opinion. The full frozen suite is an optional
+     regression check, not the completion criterion. This means "built as
+     specified" — NOT yet "milestone done" (D-44).
    - **Exit 2** — it's stuck and has written a briefing. Tell the TPM:
      *"read .pipeline-state/escalations/BATCH.md and fix the spec."*
      Then step 3 again (install its delta), and the conductor reruns

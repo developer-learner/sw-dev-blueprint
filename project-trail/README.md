@@ -15,8 +15,10 @@ Rules:
 - **Project-authored, routinely.** The working session (conductor seat)
   writes notes as part of normal doc upkeep — same authorship lane as
   `docs/` and `tasks/CURRENT.md` — and the human adds whatever they like.
-  Expected cadence: most working sessions leave a note, not only incidents;
-  breadth is the point, the corpus is the product. Pipeline phases (EM/coder)
+  Expected cadence: a narrative note for what is worth remembering — major
+  incidents, decisions, and explorations — not a mechanical per-session entry.
+  Breadth is welcome, but the signal is what a future reader could not
+  reconstruct from the tree (DECISIONS.md, specs, git). Pipeline phases (EM/coder)
   remain structurally excluded — this directory is outside every
   `.gate-paths` lane, so INV-2 fails closed on any pipeline-phase write.
 - **Notes are narrative, never evidence.** An agent-written note is a claim

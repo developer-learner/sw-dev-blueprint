@@ -89,13 +89,17 @@ DELETE /api/v1/[resource]/:id       delete
 
 ## Pipeline Decisions Index (template)
 
-> **Not for child projects to edit.** This section indexes the template's own
-> pipeline decisions — see `docs/DECISIONS.md` for the full entries with
-> reasons, alternatives, and "do not suggest." INV-3 used to require every
-> non-documentation-only D-entry here and mechanically enforce it via the
-> `architect`-phase gate in `scripts/phase-gate.sh`; that phase was retired
-> 2026-07-22 (see D-25 amendment) because post-D-53 nothing invokes it.
-> Keeping this index maintained is now a PM-review discipline, not a gate.
+> **Not for child projects to edit.** This is a *curated* map of the
+> architecturally load-bearing pipeline decisions, grouped by concern — a
+> reading aid, deliberately NOT an exhaustive mirror of the ledger.
+> `docs/DECISIONS.md` is the complete, authoritative record (D-001 → the
+> latest, with reasons, alternatives, and "do not suggest"); when this map and
+> the ledger disagree, the ledger wins. INV-3 used to require every
+> non-documentation-only D-entry here and enforce it via the `architect`-phase
+> gate in `scripts/phase-gate.sh`; that phase was retired 2026-07-22 (see D-25
+> amendment) because post-D-53 nothing invokes it. Since then this has been a
+> selective index, not a maintained-complete one — consult the ledger for any
+> decision not listed here.
 >
 > If your child project has never touched the pipeline, you can leave this
 > section alone. The sections *above* this line are the template skeleton
@@ -199,3 +203,21 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-47**: External TPM review of D-40..D-46 adjudicated
 - **D-59**: The coder edits existing files through anchored blocks
 - **D-76/D-84**: `project-trail/` running project record (né `postmortems/`) — unauthoritative, conductor- and human-authored, zero pipeline dependency, narrative never evidence
+
+### Recent pipeline architecture (post-D-108 highlights)
+
+> Selective — the ledger holds the rest. Added here because each changed how
+> the pipeline is built, verified, or governed.
+
+- **D-112**: Feature verdict is the delta's dependent set; the full frozen suite is an on-demand regression check, not the completion criterion
+- **D-116**: Context minimalism — the EM's standing ERD is a generated summary, the coder's context drops the contracts, task consults are scoped to the task
+- **D-121**: The refreeze lane has no human approval step — installs are gate-verdict-only
+- **D-126**: The metrics layer — a per-milestone aggregate over data the pipeline already writes (`.measurement/metrics.tsv`), the D-115 admission input
+- **D-133**: Mechanical plan synthesis (B3) — a complete ERD-DELTA transcribes into the plan with no EM call
+- **D-139**: TPM and milestone runs are CEO-gated at launch — inform first, ask who takes the TPM seat
+- **D-140**: Active milestones carry exact work, per-freeze instructions, and runnable test scope
+- **D-160**: Placeholder gate mechanized — bootstrap arms `.placeholder-gate`; phase-gate enforces BLUEPRINT Step 7
+- **D-166**: Active ERD context deduplicates the execution payload without dropping skipped-freeze instructions
+- **D-168**: Runs execute from an immutable snapshot of the child's pinned plane ref, never from moving symlink targets
+- **D-172**: Engineering principles delivered as role-shaped guidance per channel — `docs/ENGINEERING-CONSTITUTION.md` is the canonical source
+- **D-174**: The trusted commit broker — model-specific Git provenance (author/committer split, `Swbp-*` trailers), unsigned

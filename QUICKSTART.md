@@ -44,12 +44,25 @@ the other way around, a thinking model is loaded — swap it before going on.
 git clone https://github.com/developer-learner/sw-dev-blueprint myproj
 cd myproj
 ./scripts/bootstrap.sh myproj
+```
+
+Bootstrap fills the project-name placeholder, builds the venv, enables the
+pre-commit gate (`core.hooksPath=.githooks`), stamps `.template-version`, and
+**arms the placeholder gate (D-160)**: from here, a commit fails closed while
+any unfilled `[PLACEHOLDER]` token survives. So fill the rest first — `[NAME]`,
+the stack and description in `CLAUDE.md` / `README.md` / `docs/` — then verify
+and commit exactly as BLUEPRINT.md Steps 6–7 describe:
+
+```bash
+# BLUEPRINT.md Step 7: this grep must return nothing before you commit
+grep -rnE '\[[A-Z][A-Za-z0-9_ ]+\]|\[[A-Z][a-z]+ [a-z]|\[[a-z][a-z_]+ [a-z]' . \
+  --include='*.md' --include='*.json' --exclude-dir=.git \
+  --exclude='DECISIONS.md' --exclude='BLUEPRINT.md' | grep -vE '\]\('
 git add -A && git commit -m "chore: instantiate myproj from sw-dev-blueprint"
 ```
 
-Bootstrap fills placeholders, builds the venv, enables the pre-commit gate
-(`core.hooksPath=.githooks`), and stamps `.template-version`. The commit
-matters: the orchestrator refuses a dirty tree (pre-flight, fail-closed).
+The commit matters: the orchestrator refuses a dirty tree (pre-flight,
+fail-closed).
 
 (The durable path for real projects is GitHub's "Use this template" — see
 README "Starting a new project". Not needed today.)

@@ -134,21 +134,22 @@ path.
 | 7 | `docs/CEO-PLAYBOOK.md` | Operator runbook for the human at the top of the ladder |
 | 8 | `docs/PRODUCT.md` | What we're building and why |
 | 9 | `docs/ARCHITECTURE.md` | Data models, API, key flows |
-| 10 | `docs/TESTING.md` | How we test + machine-readable report format |
-| 11 | `scripts/.approved/` | **The frozen spec** — PRD, ERD, contracts, VERSION (every session once it exists — the oracle) |
-| 12 | `tasks/CURRENT.md` | Session notes: active work, halt notes, status (every session) |
-| 13 | `tasks/BACKLOG.md` | Upcoming work queue (planning sessions) |
+| 10 | `docs/ENGINEERING-CONSTITUTION.md` | Non-negotiable engineering principles (D-172) — the canonical rules the roles and prompts project onto |
+| 11 | `docs/TESTING.md` | How we test + machine-readable report format |
+| 12 | `scripts/.approved/` | **The frozen spec** — PRD, ERD, contracts, VERSION (every session once it exists — the oracle) |
+| 13 | `tasks/CURRENT.md` | Session notes: active work, halt notes, status (every session) |
+| 14 | `tasks/BACKLOG.md` | Upcoming work queue (planning sessions) |
 
 **Tier 3 — when something fails, or reference:**
 
 | Order | File | Purpose | Trigger |
 |-------|------|---------|---------|
-| 14 | `docs/ESCALATION.md` | The failure ladder + TPM bundle format | First run that exits 2 |
-| 15 | `docs/DECISIONS.md` | Why choices were made (the decision ledger) | Before suggesting alternatives |
-| 16 | `scripts/orchestrate.sh` + `scripts/phase-gate.sh` | The procedure owner + the gate | Before hand-running the pipeline internals |
-| 17 | `docs/CONDUCTOR-ROLE.md` | System prompt for the conductor seat | Setting up a conductor |
-| 18 | `opencode.json` + `.opencode/prompts/*.md` | OpenCode conductor config (optional, D-53) + the EM/coder prompt surface read by `scripts/llm-call.sh` | Conductor setup; prompt work |
-| 19 | `docs/DEV-VM-SETUP.md` | The macOS host / Linux VM boundary | macOS hosts — required before any run there |
+| 15 | `docs/ESCALATION.md` | The failure ladder + TPM bundle format | First run that exits 2 |
+| 16 | `docs/DECISIONS.md` | Why choices were made (the decision ledger) | Before suggesting alternatives |
+| 17 | `scripts/orchestrate.sh` + `scripts/phase-gate.sh` | The procedure owner + the gate | Before hand-running the pipeline internals |
+| 18 | `docs/CONDUCTOR-ROLE.md` | System prompt for the conductor seat | Setting up a conductor |
+| 19 | `opencode.json` + `.opencode/prompts/*.md` | OpenCode conductor config (optional, D-53) + the EM/coder prompt surface read by `scripts/llm-call.sh` | Conductor setup; prompt work |
+| 20 | `docs/DEV-VM-SETUP.md` | The macOS host / Linux VM boundary | macOS hosts — required before any run there |
 
 > **Platform note:** `scripts/orchestrate.sh` hard-refuses to run on macOS
 > and requires a Linux environment (Lima VM on Apple Silicon, or bare

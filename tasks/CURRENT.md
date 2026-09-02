@@ -4,6 +4,10 @@
 > and test suite live frozen in `scripts/.approved/` + `tests/` and change
 > only via `scripts/refreeze.sh` (D-31). Update this file at the start and end
 > of every working session; halt notes (Rule 4) land here.
+>
+> **Scope:** this file is *status* — what is active or halted now. The
+> prioritized queue of not-yet-started work is `BACKLOG.md`; the transient
+> cross-session working checklist is `TODO.md`. Don't grow a second queue here.
 
 ---
 
@@ -15,8 +19,8 @@ notes below and in `docs/DECISIONS.md`. The per-project instance of this file
 (in a derived repo like testchat) tracks that project's milestone instead,
 using the fields below:
 
-**Feature:** templates/tools — external review remediation pack (INTRO,
-REVIEW, CURRENT, manifest ownership) + child sync queue
+**Feature:** templates/tools — T7 trusted-commit-broker (M1 landed D-174, M2
+designed D-176) + T11 rich-adoption (Phase 0 done D-175, v1 spec drafting)
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 

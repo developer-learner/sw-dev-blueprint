@@ -24,7 +24,7 @@ what you must read grows with what you're doing, not all at once.
 sw-dev-blueprint/
 ├── QUICKSTART.md              # ⚡ Zero to a green frozen suite on one Linux box — a human's first stop
 ├── BLUEPRINT.md               # 🌱 Master seed doc — read after this README; its Document Map sets the full order
-├── CLAUDE.md                  # 🧠 Master LLM context (auto-read by OpenCode + Claude Code)
+├── CLAUDE.md                  # 🧠 Master LLM context (read by OpenCode + Claude Code via their file tools — best-effort, not auto-loaded)
 ├── AGENTS.md                  # Symlink → CLAUDE.md (OpenCode's preferred filename)
 ├── CONVENTIONS.md             # Code style rules
 ├── opencode.json              # OPTIONAL — only if using OpenCode as your conductor (D-53)
@@ -38,6 +38,7 @@ sw-dev-blueprint/
 │   ├── CONDUCTOR-ROLE.md         # The conductor seat's job description
 │   ├── DECISIONS.md              # Why choices were made (prevents LLM drift)
 │   ├── DEV-VM-SETUP.md           # Linux VM for orchestration + test execution
+│   ├── ENGINEERING-CONSTITUTION.md # Non-negotiable engineering principles (D-172) — canonical
 │   ├── ESCALATION.md             # Failure ladder + TPM bundle format
 │   ├── PRODUCT.md                # Evergreen product context
 │   ├── SANDBOX-VALIDATION.md     # Sandbox construction + validation evidence

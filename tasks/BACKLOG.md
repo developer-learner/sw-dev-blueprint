@@ -3,6 +3,10 @@
 > Ordered by priority. Top = next up.
 > When starting a task, move it to CURRENT.md and expand it into a full spec.
 > Source: testchat M1–M4 supervised-run retrospective (2026-07-05).
+>
+> **Scope:** this is the blueprint's authoritative future-work queue. Active
+> work → `CURRENT.md`; transient cross-session/cross-repo working notes →
+> `TODO.md` (not authoritative). Other repos' backlogs live in those repos.
 
 ---
 

@@ -3,7 +3,8 @@
 > OpenCode and Claude Code can read this file via their file tools. You are
 > expected to read it at the start of every session, and to consult it again
 > before any action that touches the document layer (`BLUEPRINT.md`,
-> `CONVENTIONS.md`, `docs/DECISIONS.md`, this file's correction log).
+> `CONVENTIONS.md`, `docs/DECISIONS.md`, `docs/ENGINEERING-CONSTITUTION.md`,
+> this file's correction log).
 > Keep it current. Every correction you make to the LLM should be recorded here
 > so the mistake never happens again.
 
@@ -44,7 +45,7 @@ Testing:      pytest
 │   ├── services/         # business logic
 │   └── utils/            # shared utilities
 ├── tests/                # TPM-authored frozen suite (INV-1); changes only via refreeze.sh
-├── docs/                 # architecture, decisions, product, TPM role, escalation
+├── docs/                 # architecture, engineering constitution, decisions, product, TPM role, escalation
 ├── tasks/                # EM write lane (plan.json) + session notes + backlog
 │   └── CURRENT.md        # session notes — active work, halt notes (the PRD lives in scripts/.approved/)
 ├── scripts/
@@ -207,6 +208,33 @@ Seven rules for agents working in this repo, derived from failures in prior sess
 6. **"Detected" ≠ "enforced"; "nothing went wrong" ≠ "safeguard works."** Keep standalone-test results and live-run results as separate claims. An untriggered safeguard is inconclusive, not green.
 
 7. **Decide trivial calls; escalate only contested principles.** If the PM has stated the governing principle ("put it where process docs live"), execute — don't re-ask for confirmation or surface options for a low-stakes choice. Escalate only when the principle itself is unclear, or when correctness is genuinely at stake (then asking is correct, not a failure).
+
+---
+
+## Documentation Impact Sweep
+
+> Recording a decision is not propagating it. `docs/DECISIONS.md` says WHY the
+> system changed; the guides below must then teach it AS IT NOW WORKS. Run this
+> sweep IN THE SAME CHANGE as the code/decision — the doc drift this repo has
+> accumulated (stale exit-0 criterion, an un-indexed canonical doc, a quickstart
+> whose first commit could not pass) all came from recording without sweeping.
+
+For every meaningful change, ask — and update wherever the answer is yes:
+
+- [ ] Human behavior changed → `README.md` / `QUICKSTART.md` / `docs/CEO-PLAYBOOK.md`
+- [ ] Milestone procedure changed → `BLUEPRINT.md` / `docs/ESCALATION.md` / `docs/TESTING.md`
+- [ ] LLM responsibility changed → this file / role docs / `.opencode/prompts/*` (mirror the rule, never fork it)
+- [ ] Architecture changed → `docs/ARCHITECTURE.md` decision map + `docs/ENGINEERING-CONSTITUTION.md`
+- [ ] Current status changed → `tasks/CURRENT.md` (status) / `tasks/BACKLOG.md` (queue)
+- [ ] Decision made → `docs/DECISIONS.md`
+- [ ] A gate or flag was removed → grep EVERY guide for the retired token; `scripts/doc-consistency.sh` only warns on a fixed enumerated list, so it will not catch a new one
+- [ ] Major incident or lesson → the correction log below (+ a `project-trail/` narrative for the ones worth a story)
+- [ ] A design/spike doc reached its end state → mark it historical
+
+One canonical source per rule: entry points and role docs POINT at it, they do
+not restate it. When you touch a manifest-owned doc (anything in
+`scripts/.manifest-project` or `.manifest-template`), regenerate the manifest in
+the same change (`scripts/regen-manifest.sh <manifest>`).
 
 ---
 

@@ -1,6 +1,9 @@
 # CONVENTIONS.md — Code Style & Patterns
 
-> OpenCode reads this file. These rules apply to every code change in this project.
+> The code-style contract for this project — it applies to every code change.
+> Conductors and human devs read this file directly. The coder seat is a bare
+> HTTP completion with no file access (D-53), so these rules are ALSO mirrored
+> into `.opencode/prompts/coder.md`; keep the two in sync.
 
 ---
 
@@ -21,8 +24,11 @@ import logging
 logger = logging.getLogger(__name__)
 logger.info("User %s created project %s", user_id, project_id)
 
-# ❌ Never print()
-print("something happened")  # NO
+# ❌ Never print() for application logging — route diagnostics through logging (above)
+print("something happened")  # NO — this is logging; use logger.info(...)
+
+# ✅ Deliberate stdout/stderr AT a CLI / user-facing boundary is correct
+sys.stdout.write(rendered_output)  # OK — the program's output, not logging
 
 # ❌ Never bare except
 try:
