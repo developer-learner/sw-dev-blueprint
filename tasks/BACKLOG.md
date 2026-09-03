@@ -36,6 +36,16 @@
 **Rough size:** Small (observation, not code)
 **Depends on:** the next testchat milestone run where a task organically fails twice
 
+**Status 2026-09-03 — qualifying run observed (testchat T8 build, 2026-09-02); awaiting the CEO call.**
+The v115 run (plane `6132185`, 01:28–01:35) exercised the full ladder organically on two tasks:
+- **retry** — T1 and T3 each struck twice per brief revision (`MAX_TASK_STRIKES=2`); 8 coder calls total (`.coder-archive/115.T{1,3}.{0,1}.{1,2}.*`).
+- **schema-valid diagnosis** — 2× `brief_wrong` carrying `verdict`+`reason`+`revised_brief`: T1 at 01:29:54 (brief's bare-exception clause violated D-74 lint BLE001/S110), T3 at 01:34:27 (brief contradicted the router-gate design) (`.em-archive/2026-09-02_{012954,013427}_diagnosis/reply.json`).
+- **`brief_wrong` revision actually changes the brief** — in-run: the EM's `revised_brief` was written to the task brief and retried. T1 r0→r1 prompt diff: "On non-200 or exception return []" → "catch specific exceptions (httpx.HTTPError, OSError, ValueError) — do NOT use a bare `except Exception` (BLE001) — log the exception… no lint violations (BLE001, S110)" — exactly the diagnosed defect.
+- **`caps-exhausted` packages a usable TPM bundle** — both tasks exhausted `MAX_BRIEF_REVISIONS=1` → `package_escalation "caps-exhausted"` (`orchestrate.sh:2364/2385`) → batch halt. The bundle drove the v116 brief-only refreeze (`641aa8d`) → v119 success. (The bundle file itself was transient `.pipeline-state/escalations/`, since cleaned; the code path and its effect are durable.)
+- **D-69 budget contains the total** — run ≈ 7 min ≪ 1200 s default; bounded, no thrash.
+- **outcome accepted** — v119 `[success]` (`aa3deea`, plane `6132185a850e` recorded in the commit); milestone closed by the v121 consolidation (`c6d78fe`).
+What the run exposed: brief defects (lint awareness, router-gate consistency) — not machinery defects. The ladder caught, diagnosed, revised, and escalated exactly as designed.
+
 ---
 
 ## Icebox (someday/maybe)
@@ -50,6 +60,7 @@
 
 | Task | Completed | Notes |
 |------|-----------|-------|
+| Immutable-plane update across a successful multi-task run: live proof | 2026-09-03 | Plane update `403dc9f` `[template-link 6132185a850e]` (testchat, 2026-09-02 01:20 — `6f51d63`→`6132185`, the T7 M1 `orchestrate.sh` fix) followed by a successful **8-task** run on the new plane: v119 `[success]` `aa3deea` (09:53, commit records `plane 6132185a850e`; T3 real coder work `119.T3.0.1`). Corroborated by the v121 8-task no-edit success (`c6d78fe`, `run-exit.log` rc=0 69 s) and by the v115 run's 8-coder-call ladder exercise on the same plane (the hardest run shape the new plane could face). |
 | EM plan gate: give the EM a self-correction signal on carried-contract claims | 2026-08-30 | D-173: `--active-erd-context` closes with a machine-computed changed-contracts section (the same `delta_changed_contract_ids` union the ride-along gate enforces) + claim rule. Option (a) was already in place — the v14 archive proves the rejection names the ids; the ticket's "names no ids" clause was an inaccurate recollection and is superseded. Option (b) is the fix that shipped, rendered in `validate-plan.py` (the file's owner), not `contracts-delta.py`. B3's mechanical lane remains the best fix when its precondition holds. |
 | Correction-log row: Perl `s{}{}` interpolation eats shell variables in generated code | 2026-08-23 | Added to CLAUDE.md: generator-level interpolation can erase intended shell variables before the shell ever sees them; use literal patching or explicitly escape and exercise generated invocations. |
 | EM diagnosis taxonomy: represent transient/environmental failures | 2026-08-23 | D-169 adds a positive-evidence-only verdict. The shell preserves an operator-review record and halts; it never retries, re-probes, rewrites the plan, or escalates to TPM automatically. |
