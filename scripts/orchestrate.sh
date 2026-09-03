@@ -2204,6 +2204,16 @@ while :; do
   strikes=$(counter "$id" strikes)
   echo "--- Task $id -> $file (strike $((strikes + 1))/$MAX_TASK_STRIKES) ---"
 
+  # D-74 diff-scoped lint baseline: the file's pre-task state (HEAD before the
+  # FIRST attempt) is the legacy line set the coder inherits and — under D-59
+  # anchored edits — is not briefed to touch. Capture it ONCE at strike 0 and
+  # reuse it across strikes, so a later strike's diff cannot smuggle an earlier
+  # strike's new violation past the gate as "unchanged". An empty capture
+  # (greenfield, no commits yet) reads as NONE at the gate → whole-file lint.
+  if [ "$strikes" = "0" ]; then
+    git rev-parse HEAD > "$TASK_STATE/$id.lintbase" 2>/dev/null || : > "$TASK_STATE/$id.lintbase"
+  fi
+
   attempt_brief="$brief
 
 Write EXACTLY one file: $file — the gate rejects any other change, including new files. Before finishing, re-open $file and confirm it satisfies every acceptance condition in this brief."
@@ -2267,12 +2277,25 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     # coder actually touched; staged tests get D-67 at the freeze door.
     # Fail-closed on a missing ruff by design: a gate that skips silently is
     # not a gate.
+    #
+    # DIFF-SCOPED (amend 2026-09-03): lint-changed.py runs the SAME ruff (same
+    # rule set / child config) but reports only findings on lines THIS task
+    # changed vs its strike-0 baseline — a pre-existing violation on a line the
+    # coder was never briefed to touch (and under D-59 cannot touch) no longer
+    # burns a strike. Syntax/IO errors still gate regardless of scope; a genuine
+    # ruff tooling error (rc>=2) still dies (fail-closed).
     if [ "$no_edit" != "1" ]; then
       case "$file" in
         *.py)
           command -v ruff >/dev/null 2>&1 \
             || die "ruff not found — the coder-output lint gate (D-74) requires it: pip install ruff"
-          if ! LINT_OUT=$(ruff check --no-cache "$file" 2>&1); then
+          lintbase=$(cat "$TASK_STATE/$id.lintbase" 2>/dev/null || true)
+          [ -n "$lintbase" ] || lintbase=NONE
+          LINT_OUT=$(python3 "$PLANE_DIR/scripts/lint-changed.py" "$file" "$lintbase" 2>&1) \
+            && lint_rc=0 || lint_rc=$?
+          if [ "${lint_rc:-0}" -ge 2 ]; then
+            die "coder-output lint gate (D-74) tooling error: $(printf '%s' "$LINT_OUT" | tr '\n' ' ' | head -c 300)"
+          elif [ "${lint_rc:-0}" -ne 0 ]; then
             pass=0
             evidence="lint failed (D-74): $(printf '%s' "$LINT_OUT" | tr '\n' ' ' | head -c 600)"
           fi
@@ -2302,7 +2325,7 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     mark "task $id PASS"
     set_tstat "$id" done
     python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field fingerprint > "$TASK_STATE/$id.fp"
-    rm -f "$TASK_STATE/$id.lastfail"
+    rm -f "$TASK_STATE/$id.lastfail" "$TASK_STATE/$id.lintbase"
     continue
   fi
 
