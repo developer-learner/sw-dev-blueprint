@@ -24,27 +24,7 @@
 
 ## Up Next
 
-### Trim CLAUDE.md / split the decision log into DECISIONS.md
-**Priority:** P3
-**Why:** `CLAUDE.md` (~79 KB) is ~2× the master seed doc and is what every agent loads each run, so its size is a direct per-run context cost — and by BLUEPRINT.md's own standard (L729, "length is a smell to investigate") the flagship doc set should practice the context-budgeting the blueprint preaches. The `.gitignore` doctrine block already names `DECISIONS.md` as the intended home for D-entries, so the target state is documented; this task moves the decision log (D-33, D-40, D-95/96, …) out of the hot path into `DECISIONS.md` without losing history, and trims BLUEPRINT.md/CLAUDE.md accordingly. This is a curation task with real judgment (correction log, doctrine, cross-references) — do it as a focused solo change, NOT bundled into a hygiene commit, to avoid a contested rebase against active parallel sessions.
-**Rough size:** Medium (curation, not code)
-**Depends on:** a quiet window with no competing large edits to CLAUDE.md/BLUEPRINT.md
-
-### Escalation-ladder validation: observe the first run that climbs it
-**Priority:** P2
-**Why:** D-70 (2026-07-15, CEO directive) armed the ladder — `MAX_TASK_STRIKES` now defaults to 2, ending ~23 milestones of the consult/verdict machinery as dead code. Arming is not validating (Rule 6): the item closes only when a real run exercises it. Observe on the first milestone where a task strikes twice: schema-valid diagnosis produced; `brief_wrong` revision actually changes the brief; `caps-exhausted` packages a usable TPM bundle; D-69 budget contains the total. Then the CEO calls it: validated, or fix what the run exposed.
-**Rough size:** Small (observation, not code)
-**Depends on:** the next testchat milestone run where a task organically fails twice
-
-**Status 2026-09-03 — qualifying run observed (testchat T8 build, 2026-09-02); awaiting the CEO call.**
-The v115 run (plane `6132185`, 01:28–01:35) exercised the full ladder organically on two tasks:
-- **retry** — T1 and T3 each struck twice per brief revision (`MAX_TASK_STRIKES=2`); 8 coder calls total (`.coder-archive/115.T{1,3}.{0,1}.{1,2}.*`).
-- **schema-valid diagnosis** — 2× `brief_wrong` carrying `verdict`+`reason`+`revised_brief`: T1 at 01:29:54 (brief's bare-exception clause violated D-74 lint BLE001/S110), T3 at 01:34:27 (brief contradicted the router-gate design) (`.em-archive/2026-09-02_{012954,013427}_diagnosis/reply.json`).
-- **`brief_wrong` revision actually changes the brief** — in-run: the EM's `revised_brief` was written to the task brief and retried. T1 r0→r1 prompt diff: "On non-200 or exception return []" → "catch specific exceptions (httpx.HTTPError, OSError, ValueError) — do NOT use a bare `except Exception` (BLE001) — log the exception… no lint violations (BLE001, S110)" — exactly the diagnosed defect.
-- **`caps-exhausted` packages a usable TPM bundle** — both tasks exhausted `MAX_BRIEF_REVISIONS=1` → `package_escalation "caps-exhausted"` (`orchestrate.sh:2364/2385`) → batch halt. The bundle drove the v116 brief-only refreeze (`641aa8d`) → v119 success. (The bundle file itself was transient `.pipeline-state/escalations/`, since cleaned; the code path and its effect are durable.)
-- **D-69 budget contains the total** — run ≈ 7 min ≪ 1200 s default; bounded, no thrash.
-- **outcome accepted** — v119 `[success]` (`aa3deea`, plane `6132185a850e` recorded in the commit); milestone closed by the v121 consolidation (`c6d78fe`).
-What the run exposed: brief defects (lint awareness, router-gate consistency) — not machinery defects. The ladder caught, diagnosed, revised, and escalated exactly as designed.
+(quiet — nothing queued; the 2026-09-03 sweep closed the last two items, see Completed)
 
 ---
 
@@ -60,6 +40,8 @@ What the run exposed: brief defects (lint awareness, router-gate consistency) �
 
 | Task | Completed | Notes |
 |------|-----------|-------|
+| Escalation-ladder validation: first organic end-to-end run | 2026-09-03 | **CEO call: validated.** The v115 run (testchat T8 build, 2026-09-02, plane `6132185`) exercised the full ladder organically on two tasks: T1/T3 each struck twice (`MAX_TASK_STRIKES=2`, 8 coder calls) → schema-valid `brief_wrong` diagnoses with `verdict`+`reason`+`revised_brief` (`.em-archive/2026-09-02_{012954,013427}_diagnosis`) → in-run brief revisions (prompt-diff proven: the rewritten brief fixed exactly the diagnosed BLE001/S110 defect) → `caps-exhausted` TPM bundles → batch halt → v116 brief-only refreeze (`641aa8d`) → v119 success (`aa3deea`); D-69 budget contained the total (≈7 min ≪ 1200 s). What the run exposed was brief defects (lint awareness, router-gate consistency), not machinery defects — the ladder caught, diagnosed, revised, and escalated exactly as designed. |
+| Trim CLAUDE.md / split the heavy log out of the hot path | 2026-09-03 | D-181: the 67 KB LLM Correction Log (~80% of the file) moved verbatim to `docs/CORRECTION-LOG.md`; CLAUDE.md 84 KB → 17 KB. Three anchors preserve the guardrail: session-start doc list, the read-before-control-plane/gate/doc-layer-change instruction, and the Documentation Impact Sweep routing. |
 | Immutable-plane update across a successful multi-task run: live proof | 2026-09-03 | Plane update `403dc9f` `[template-link 6132185a850e]` (testchat, 2026-09-02 01:20 — `6f51d63`→`6132185`, the T7 M1 `orchestrate.sh` fix) followed by a successful **8-task** run on the new plane: v119 `[success]` `aa3deea` (09:53, commit records `plane 6132185a850e`; T3 real coder work `119.T3.0.1`). Corroborated by the v121 8-task no-edit success (`c6d78fe`, `run-exit.log` rc=0 69 s) and by the v115 run's 8-coder-call ladder exercise on the same plane (the hardest run shape the new plane could face). |
 | EM plan gate: give the EM a self-correction signal on carried-contract claims | 2026-08-30 | D-173: `--active-erd-context` closes with a machine-computed changed-contracts section (the same `delta_changed_contract_ids` union the ride-along gate enforces) + claim rule. Option (a) was already in place — the v14 archive proves the rejection names the ids; the ticket's "names no ids" clause was an inaccurate recollection and is superseded. Option (b) is the fix that shipped, rendered in `validate-plan.py` (the file's owner), not `contracts-delta.py`. B3's mechanical lane remains the best fix when its precondition holds. |
 | Correction-log row: Perl `s{}{}` interpolation eats shell variables in generated code | 2026-08-23 | Added to CLAUDE.md: generator-level interpolation can erase intended shell variables before the shell ever sees them; use literal patching or explicitly escape and exercise generated invocations. |
