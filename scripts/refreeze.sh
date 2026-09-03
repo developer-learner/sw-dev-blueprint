@@ -431,17 +431,22 @@ python3 scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
   --staging "$IN" --approved "$APPROVED" --repo-tests tests \
   || { record_catch check-test-direction; die "S6 rejected the delta (reverse-direction lint) — see findings above; restage a URL-scoped test or re-attribute the AC"; }
 
-# --- D-78: freeze-time satisfiability preflight ---
+# --- D-78/D-179: freeze-time satisfiability + inventory preflight ---
 # The plan gate's exact plan↔inventory bijection means a new route or
 # entry_point whose implementing file is outside contracts.files is
 # unimplementable by ANY EM — every plan gets rejected, and the ladder burns
 # EM strikes and model swaps against an impossible spec (testchat v51/M28:
 # ~75 minutes, two EM swaps, one seat escalation). The unsatisfiability is
-# provable from the spec alone, so it is proved HERE, before the human reads
-# the diff — in --diff mode too, so the CEO never reviews a doomed delta.
+# provable from the spec alone, so it is proved HERE, before the freeze applies
+# — and in --diff mode too, so a preview never presents a doomed delta as valid.
+# D-179 applies the plan gate's existing membership rule at the same door:
+# after D-136 merges carried scalar metadata, every smoke_checks/no_edit_files
+# entry must still name a member of the new contracts.files inventory. Vortex
+# v27 passed the freeze with stale manager.py entries and failed only after the
+# first plan call; this check rejects that merged state before the cycle starts.
 if [ -f "$IN/contracts.json" ]; then
   python3 scripts/validate-plan.py --spec-preflight "$APPROVED/contracts.json" "$MERGED_CONTRACTS" \
-    || { record_catch validate-plan; die "satisfiability preflight rejected the delta (D-78) — add the named implementing file(s) to contracts.files (or fix the entry_point) and restage"; }
+    || { record_catch validate-plan; die "spec preflight rejected the delta (D-78/D-179) — repair the named inventory mismatch or implementing-file gap and restage"; }
 fi
 
 # --- Item 1: every changed test function must carry an owning-file pin ---

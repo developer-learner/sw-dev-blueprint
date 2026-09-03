@@ -227,11 +227,16 @@ EM and coder are mapped to models in `~/.config/sw-dev-blueprint/models.env`
 ```bash
 SWBP_EM_MODEL=<id as served by LM Studio>
 SWBP_CODER_MODEL=<id as served by LM Studio>
+# Optional endpoint overrides (defaults: localhost:1234):
+# SANDBOX_LLM_HOST=host.lima.internal
+# SANDBOX_LLM_PORT=1234
 ```
 
 The repo never names a model. Load whatever you like in LM Studio;
 `scripts/llm-call.sh` hard-halts rather than silently substituting a model
-if a role has no mapping.
+if a role has no mapping. `scripts/orchestrate.sh` reads the same endpoint
+settings before its reachability probe; explicit per-run environment values
+win independently for host and port (D-180).
 
 > ⚠️ **Rule 1:** Do NOT use a thinking model for any agent tier.
 > Verify with Pre-Flight Step 0 that `content` is populated and

@@ -71,11 +71,11 @@ Podman becomes native.
    red-before-green check use only the inner Podman sandbox. Run operational
    refreezes in the VM; there is no macOS pytest fallback.
 4. **Model server stays on the host (GPU).** The VM reaches it via the
-   Lima host-gateway address (`host.lima.internal:1234`). This requires
-   parameterizing the endpoint host in `llm-call.sh`/`orchestrate.sh`
-   (today they hardcode `http://localhost:$SANDBOX_LLM_PORT`) — e.g.
-   `SANDBOX_LLM_HOST`, default `localhost`, set to `host.lima.internal`
-   in the VM's environment.
+   Lima host-gateway address (`host.lima.internal:1234`). The endpoint is
+   resolved from explicit `SANDBOX_LLM_HOST`/`SANDBOX_LLM_PORT` values first,
+   then `~/.config/sw-dev-blueprint/models.env`, with `localhost:1234` as the
+   fallback (D-180). Lima sets `SANDBOX_LLM_HOST=host.lima.internal` in the
+   VM environment, so that per-run authority wins over a host-side default.
 5. **Cross-boundary model access = deliberate D-53 partial reversal.**
    D-53 moved LLM calls host-local precisely because cross-boundary port
    wiring caused the failures of the first three supervised runs.

@@ -73,11 +73,17 @@ mkdir -p ~/.config/sw-dev-blueprint
 cat > ~/.config/sw-dev-blueprint/models.env <<'EOF'
 SWBP_EM_MODEL=your-model-id-as-served
 SWBP_CODER_MODEL=your-model-id-as-served
+# Optional when the server is not at localhost:1234:
+# SANDBOX_LLM_HOST=host.lima.internal
+# SANDBOX_LLM_PORT=1234
 EOF
 ```
 
 Use the exact id `/v1/models` returned; the same model in both seats is fine
 to start. No mapping is a hard halt, never a silent substitution (D-53).
+The orchestrator resolves the endpoint here before its reachability probe;
+an explicitly exported host or port overrides the corresponding file value
+for that run (D-180).
 
 ## Step 3 — pre-warm the sandbox (one-time, ~10 min)
 

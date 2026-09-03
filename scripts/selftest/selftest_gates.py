@@ -4177,6 +4177,43 @@ def test_preflight_v51_fix_file_in_inventory_passes(tmp_path):
     assert r.returncode == 0, (r.stdout, r.stderr)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("no_edit_files", ["src/manager.py"]),
+    ("smoke_checks", {"src/manager.py": "true"}),
+])
+def test_preflight_rejects_carried_metadata_outside_new_inventory(
+        tmp_path, field, value):
+    """Vortex v27: D-136 carried unchanged scalar metadata from the prior
+    milestone after `files` narrowed. Freeze passed, then the plan gate rejected
+    the same membership mismatch one cycle later. The merged freeze artifact
+    must face that invariant before any plan call."""
+    repo = preflight_repo(tmp_path)
+    old = v51_new(["src/api/chat.py", "src/manager.py"])
+    old[field] = value
+    new = v51_new(["src/api/chat.py"])
+    new[field] = value  # byte-identical carry; only the inventory changed
+    r = run_preflight(repo, old, new)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "D-179" in r.stderr, r.stderr
+    assert "src/manager.py" in r.stderr, r.stderr
+    if field == "no_edit_files":
+        assert "not in the ERD inventory" in r.stderr, r.stderr
+    else:
+        assert "not in contracts.files" in r.stderr, r.stderr
+
+
+def test_preflight_allows_carried_metadata_inside_new_inventory(tmp_path):
+    """The new check rejects stale membership, not carried metadata itself."""
+    repo = preflight_repo(tmp_path)
+    old = v51_new(["src/api/chat.py"])
+    old["no_edit_files"] = ["src/api/chat.py"]
+    old["smoke_checks"] = {"src/api/chat.py": "true"}
+    new = json.loads(json.dumps(old))
+    new["erd_version"] = 3
+    r = run_preflight(repo, old, new)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
 def test_preflight_sibling_file_no_edit_declared_fails(tmp_path):
     """In the inventory but no_edit (D-65) is NOT implementable — the
     orchestrator never invokes the coder for no-edit files."""
@@ -4920,6 +4957,42 @@ def test_refreeze_diff_mode_runs_preflight(stageable_repo):
     assert r.returncode != 0, (r.stdout, r.stderr)
     combined = r.stdout + r.stderr
     assert "D-78" in combined, combined
+    assert "DIFF-SHA" not in combined, combined
+
+
+def test_refreeze_diff_rejects_merged_carried_metadata_outside_inventory(
+        stageable_repo):
+    """End-to-end D-179 pin: refreeze must validate the D-136 MERGED artifact.
+    The staged partial intentionally omits the scalar metadata, so this test
+    would pass if refreeze inspected only the raw delta instead of the carry."""
+    repo = stageable_repo
+    refreeze_scripts(repo)
+    approved = repo / "scripts" / ".approved"
+    standing = {
+        "erd_version": 1,
+        "files": ["src/app.py", "src/manager.py"],
+        "entry_points": [],
+        "routes": [],
+        "schemas": [],
+        "errors": [],
+        "ui": [],
+        "no_edit_files": ["src/manager.py"],
+        "smoke_checks": {"src/manager.py": "true"},
+    }
+    (approved / "contracts.json").write_text(json.dumps(standing))
+    staged = {
+        "erd_version": 2,
+        "files": ["src/app.py"],
+        "changed_files": ["src/app.py"],
+        "entry_points": [],
+    }
+    (approved / "incoming" / "contracts.json").write_text(json.dumps(staged))
+
+    r = _run_refreeze_diff(repo)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    combined = r.stdout + r.stderr
+    assert "D-179" in combined, combined
+    assert "src/manager.py" in combined, combined
     assert "DIFF-SHA" not in combined, combined
 
 
@@ -8672,6 +8745,62 @@ def _extract_shell_function(path, name):
     assert start is not None, f"{name} not found in {path}"
     end = next(i for i in range(start + 1, len(lines)) if lines[i] == "}")
     return "\n".join(lines[start:end + 1])
+
+
+@pytest.mark.parametrize("override_host,override_port,expected", [
+    (None, None, "seat-host.invalid\n5678\n"),
+    ("operator-host.invalid", None, "operator-host.invalid\n5678\n"),
+    (None, "6789", "seat-host.invalid\n6789\n"),
+    ("operator-host.invalid", "6789", "operator-host.invalid\n6789\n"),
+])
+def test_orchestrate_preflight_resolves_models_env_endpoint(
+        tmp_path, override_host, override_port, expected):
+    """D-180: the early /v1/models probe must target the configured seat
+    endpoint, with explicit per-run host/port overrides winning separately."""
+    config = tmp_path / ".config" / "sw-dev-blueprint"
+    config.mkdir(parents=True)
+    (config / "models.env").write_text(
+        "SANDBOX_LLM_HOST=seat-host.invalid\nSANDBOX_LLM_PORT=5678\n"
+    )
+    function = _extract_shell_function(ORCHESTRATE, "resolve_llm_endpoint")
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path)
+    for key, value in (
+        ("SANDBOX_LLM_HOST", override_host),
+        ("SANDBOX_LLM_PORT", override_port),
+    ):
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
+    r = subprocess.run(
+        ["bash", "-c", function + "\nresolve_llm_endpoint\n"
+         "printf '%s\\n%s\\n' \"$SANDBOX_LLM_HOST\" \"$SANDBOX_LLM_PORT\""],
+        env=env, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert r.stdout == expected
+
+    source = ORCHESTRATE.read_text()
+    start = source.index("# Fail fast on an unreachable local LLM")
+    preflight = source[start:source.index("check_ci_health", start)]
+    assert preflight.index("resolve_llm_endpoint") < preflight.index("curl -sf")
+
+
+def test_orchestrate_preflight_endpoint_defaults_without_models_env(tmp_path):
+    """The documented localhost:1234 fallback remains intact."""
+    function = _extract_shell_function(ORCHESTRATE, "resolve_llm_endpoint")
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path)
+    env.pop("SANDBOX_LLM_HOST", None)
+    env.pop("SANDBOX_LLM_PORT", None)
+    r = subprocess.run(
+        ["bash", "-c", function + "\nresolve_llm_endpoint\n"
+         "printf '%s\\n%s\\n' \"$SANDBOX_LLM_HOST\" \"$SANDBOX_LLM_PORT\""],
+        env=env, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert r.stdout == "localhost\n1234\n"
 
 
 def test_group2_bootstrap_trusts_exact_checkout_on_dubious_ownership(tmp_path):

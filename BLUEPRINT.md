@@ -637,13 +637,18 @@ the `opencode.json` agent mapping):
 ```bash
 SWBP_EM_MODEL=<id as served by the local endpoint>
 SWBP_CODER_MODEL=<id as served by the local endpoint>
+# Optional endpoint overrides (defaults: localhost:1234):
+# SANDBOX_LLM_HOST=host.lima.internal
+# SANDBOX_LLM_PORT=1234
 ```
 
 `scripts/llm-call.sh` reads this file (environment variables of the same
-name override it) and hard-halts if a role has no mapping — never a silent
-substitution. There is no model-naming collision to work around: the pipeline
-talks to LM Studio's `/v1/chat/completions` directly, with no intermediate
-provider catalog.
+name override it), and `scripts/orchestrate.sh` resolves the endpoint here
+before its reachability probe. Explicit per-run host and port values win
+independently (D-180). A missing role mapping still hard-halts — never a
+silent substitution. There is no model-naming collision to work around: the
+pipeline talks to LM Studio's `/v1/chat/completions` directly, with no
+intermediate provider catalog.
 
 `opencode.json` at the project root is unrelated to this — it only configures
 OpenCode if the CEO happens to use it as their conductor (see Component

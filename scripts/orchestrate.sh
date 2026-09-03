@@ -184,6 +184,31 @@ plane_entry_guard "$@"
 CONTEXT_BUDGET_TOOL="$PLANE_DIR/scripts/context-budget.py"
 COMPLETION_LEDGER_TOOL="$PLANE_DIR/scripts/completion-ledger.py"
 
+# D-180: resolve the endpoint from the same CEO-owned configuration as the
+# seat calls BEFORE the reachability probe runs.  Explicit per-run environment
+# values remain authoritative, independently for host and port.  Read the file
+# in a subshell so loading endpoint defaults cannot overwrite model-seat
+# overrides or any unrelated orchestrator setting in the parent shell.
+resolve_llm_endpoint() {
+  local cfg="$HOME/.config/sw-dev-blueprint/models.env"
+  local explicit_host="${SANDBOX_LLM_HOST:-}"
+  local explicit_port="${SANDBOX_LLM_PORT:-}"
+  local configured="" file_host="" file_port=""
+  if [ -f "$cfg" ]; then
+    configured="$(
+      unset SANDBOX_LLM_HOST SANDBOX_LLM_PORT
+      # shellcheck disable=SC1090
+      . "$cfg"
+      printf '%s\t%s' "${SANDBOX_LLM_HOST:-}" "${SANDBOX_LLM_PORT:-}"
+    )"
+    file_host="${configured%%$'\t'*}"
+    file_port="${configured#*$'\t'}"
+  fi
+  SANDBOX_LLM_HOST="${explicit_host:-${file_host:-localhost}}"
+  SANDBOX_LLM_PORT="${explicit_port:-${file_port:-1234}}"
+  export SANDBOX_LLM_HOST SANDBOX_LLM_PORT
+}
+
 # Wave 1 (D-107-class): the required plan/task keys, named verbatim in every
 # plan-emission prompt. The EM is stateless (D-53) and response_format is only
 # advisory when the server ignores it; naming keys inline stops the model
@@ -765,8 +790,7 @@ FROZEN_V=$(cat "$APPROVED/VERSION")
 # Fail fast on an unreachable local LLM (Hard Rule 4) rather than deep inside
 # the first EM call. Model calls happen directly against this endpoint now —
 # no attach protocol, no harness in between (D-53).
-: "${SANDBOX_LLM_HOST:=localhost}"
-: "${SANDBOX_LLM_PORT:=1234}"
+resolve_llm_endpoint
 curl -sf --max-time 5 -o /dev/null "http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models" \
   || die "no LLM reachable at http://$SANDBOX_LLM_HOST:$SANDBOX_LLM_PORT/v1/models — start it and retry (in the VM, set SANDBOX_LLM_HOST=host.lima.internal)"
 check_ci_health

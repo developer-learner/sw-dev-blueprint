@@ -460,6 +460,45 @@ def fingerprint(task):
     ).hexdigest()
 
 
+def _contract_inventory_membership_errors(contracts):
+    """Return carried metadata whose file is outside contracts.files.
+
+    `no_edit_files` and `smoke_checks` are accumulated scalar surfaces: the
+    staged contracts merge carries them forward when a delta omits them.  A
+    later milestone may replace `files` with a smaller inventory, leaving one
+    of those carried entries stranded.  The plan gate has always rejected that
+    state; D-179 shares the same check with the freeze preflight so the invalid
+    merged artifact is rejected before it costs a plan/refreeze cycle.
+
+    Shape validation belongs to contracts.schema.json.  This helper only
+    speaks when the relevant values have the expected container types.
+    """
+    raw_files = contracts.get("files", [])
+    if not isinstance(raw_files, list):
+        return []
+    files = {f for f in raw_files if isinstance(f, str)}
+    errs = []
+
+    no_edit = contracts.get("no_edit_files", [])
+    if isinstance(no_edit, list):
+        stray_no_edit = sorted(
+            f for f in no_edit if isinstance(f, str) and f not in files)
+        if stray_no_edit:
+            errs.append(
+                "contracts.no_edit_files entries not in the ERD inventory "
+                f"(files): {stray_no_edit}"
+            )
+
+    smoke_checks = contracts.get("smoke_checks", {})
+    if isinstance(smoke_checks, dict):
+        for sc_file in sorted(
+                f for f in smoke_checks if isinstance(f, str) and f not in files):
+            errs.append(
+                f"smoke_checks key '{sc_file}' is not in contracts.files"
+            )
+    return errs
+
+
 def validate():
     errs = []
     plan = load_json(PLAN, "plan")
@@ -498,6 +537,7 @@ def validate():
 
     delta_paths = active_delta_paths()
     inventory = active_inventory_files(delta_paths, contracts)
+    errs.extend(_contract_inventory_membership_errors(contracts))
     if not tasks:
         changed_contracts = delta_changed_contract_ids(delta_paths)
         runnable = set()
@@ -615,27 +655,11 @@ def validate():
     if extra_files:
         errs.append(f"tasks target files not in the ERD inventory: {extra_files}")
 
-    # D-65: no_edit_files must be inventory members — a no-edit declaration
-    # for a file outside the inventory is a spec typo the freeze should have
-    # caught; fail loudly here as the backstop.
-    standing_inventory = set(contracts.get("files", []))
-    stray_no_edit = sorted(
-        set(contracts.get("no_edit_files", [])) - standing_inventory)
-    if stray_no_edit:
-        errs.append(
-            f"contracts.no_edit_files entries not in the ERD inventory "
-            f"(files): {stray_no_edit}"
-        )
-
     # smoke_check executability — every value in contracts.smoke_checks must be
     # a real shell command, not prose. bash -n only checks syntax (prose is
     # syntactically valid), so we also verify the first token resolves to an
     # executable via `command -v`.
     for sc_file, sc_cmd in contracts.get("smoke_checks", {}).items():
-        if sc_file not in standing_inventory:
-            errs.append(
-                f"smoke_checks key '{sc_file}' is not in contracts.files"
-            )
         result = subprocess.run(
             ["bash", "-n", "-c", sc_cmd],
             capture_output=True, text=True
@@ -1435,6 +1459,10 @@ def spec_preflight(old_path, new_path):
     freeze (testchat v51/M28: ~75 minutes and two EM swaps downstream of a
     2-second check).
 
+    D-179 also applies the plan gate's standing membership invariant to the
+    complete merged contracts: carried smoke_checks/no_edit_files may not name
+    a file the new milestone removed from its inventory.
+
     Fail-closed on the provable classes, fail-open where the spec carries no
     signal (a brand-new route family names no natural implementing file)."""
     old = {}
@@ -1444,7 +1472,7 @@ def spec_preflight(old_path, new_path):
     files = set(new.get("files", []))
     editable = files - set(new.get("no_edit_files", []))
     editable_py = {f for f in editable if f.endswith(".py")}
-    errs = []
+    errs = _contract_inventory_membership_errors(new)
     checked = 0
 
     # D-86: changed_files is the TPM's scope declaration and reaches the coder
@@ -1680,9 +1708,9 @@ def spec_preflight(old_path, new_path):
 
     if errs:
         for e in errs:
-            print(f"SPEC PREFLIGHT FAIL (D-78): {e}", file=sys.stderr)
+            print(f"SPEC PREFLIGHT FAIL (D-78/D-179): {e}", file=sys.stderr)
         sys.exit(1)
-    print(f"spec preflight ok (D-78): {checked} new/changed contract(s) "
+    print(f"spec preflight ok (D-78/D-179): {checked} new/changed contract(s) "
           f"implementable by the inventory")
 
 

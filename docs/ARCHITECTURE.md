@@ -126,6 +126,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-60**: Task sizing governed by the coder's measured bare-completion capability
 - **D-66**: The EM seat is precision-transcription work; dense models preferred
 - **D-105**: Onboarding uses the exact `SWBP_<ROLE>_MODEL` runtime contract
+- **D-180**: Preflight resolves and exports the configured seat endpoint before probing
 
 ### Sandbox & untrusted-code execution
 
@@ -162,6 +163,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-104**: One executable artifact-path policy governs TPM pack, unpack, agent mode, and refreeze
 - **D-107**: Behavioral freezes require a fresh, coverage-checked `ERD-DELTA.md`
 - **D-109**: Refreeze approval hashes use timestamp-free deletion labels
+- **D-179**: Freeze preflight rejects carried smoke/no-edit metadata outside the new inventory
 
 ### Escalation ladder & failure paths
 

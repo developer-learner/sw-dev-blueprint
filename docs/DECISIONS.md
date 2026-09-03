@@ -21,6 +21,62 @@
 
 ## Decisions
 
+## D-180 — 2026-09-03 — LLM preflight resolves the configured seat endpoint
+
+**Decision:** Before probing `/v1/models`, `orchestrate.sh` resolves
+`SANDBOX_LLM_HOST` and `SANDBOX_LLM_PORT` from the CEO-owned
+`~/.config/sw-dev-blueprint/models.env`. Explicit environment values remain
+per-run overrides and win independently for host and port. The resolved pair
+is exported so every later `llm-call.sh` child uses the endpoint that passed
+preflight. With neither source configured, the documented `localhost:1234`
+fallback is unchanged.
+
+**Reason:** The preflight previously applied its defaults before any code read
+`models.env`, so an operator with a seat endpoint on a non-default port could
+pass real model calls through that configured port while the earlier probe
+failed against `:1234`. That was a false hard halt at the control-plane door,
+not an unavailable model. Resolving and exporting one endpoint makes the
+reachability verdict describe the calls the run will actually make.
+
+**Do not suggest:** Making `models.env` override an explicit per-run
+`SANDBOX_LLM_HOST` or `SANDBOX_LLM_PORT`; removing the `localhost:1234`
+fallback; probing every known server instead of the selected endpoint; or
+silently continuing when the resolved endpoint is unreachable.
+
+**Verified by:** Extracted-runtime tests covering file-only resolution, host-
+only and port-only overrides, both overrides together, the no-file fallback,
+and a source-order pin requiring resolution before the real curl probe.
+
+## D-179 — 2026-09-03 — Freeze preflight enforces carried metadata membership
+
+**Decision:** `validate-plan.py --spec-preflight`, which `refreeze.sh` runs on
+the complete D-136 merged contracts artifact, now rejects every
+`no_edit_files` entry and `smoke_checks` key outside the new `contracts.files`
+inventory. The plan gate and freeze preflight consume one shared membership
+checker, so they cannot disagree about this invariant. The check covers
+unchanged carried metadata as well as newly staged values and runs in
+`--diff` mode before a freeze can apply or an EM plan call can start.
+
+**Reason:** Vortex v27 narrowed its build inventory to `app.py` and `ui.py`,
+while the contracts merge legitimately carried the prior milestone's
+`manager.py` smoke/no-edit entries. Every existing freeze preflight passed
+because those scalar entries had not changed. The first plan call then hit the
+already-existing membership backstop and forced v28: a provable spec mismatch
+was detected one paid cycle too late. Moving the same invariant to the freeze
+door changes no policy; it only makes detection occur at the artifact handoff
+that creates the mismatch.
+
+**Do not suggest:** Checking only scalar entries explicitly present in the raw
+staged partial (omission means carry under D-136, so that recreates the defect);
+silently deleting stale entries during merge (the TPM owns the spec and must
+stage explicit empty `{}`/`[]` values); or weakening the downstream plan gate
+(it remains defense in depth and shares the same checker).
+
+**Verified by:** Focused spec-preflight tests for carried `no_edit_files` and
+`smoke_checks`, a green in-inventory companion, and an end-to-end
+`refreeze.sh --diff` fixture whose raw partial omits both stale fields while
+the merged artifact carries them.
+
 ## D-178 — 2026-09-02 — validate-plan.py node-id matching aligned to the D-116/D-124 family (shape-flipped pins)
 
 **Decision:** All six raw node-id match sites in `scripts/validate-plan.py` now match on the stable `_id_family` (module + bare test name, parametrization stripped) instead of the literal id, and a new `_family_mapping()` helper builds the family-keyed view of `contracts.test_mapping` with a collision guard. The six sites: (1) the pinned-owner auto-placement lookup, (2) the D-64 final-task sweep's pin-exemption check, (3) the `milestone_scope_ids` changed-tests∩current line, (4) the D-124 completeness repair, (5) the subtree re-plan `map_ids`, and (6) the subtree-merge carried-task test filter.
