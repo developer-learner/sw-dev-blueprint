@@ -302,6 +302,15 @@ specified or they drift. The system absorbs this structurally:
   Zero inference gaps — if executing the brief correctly requires the coder
   to infer intent, the decomposition is wrong (that is an EM defect, and the
   escalation ladder routes it there).
+- **Name the exact symbols to call, not described ones.** When a brief
+  requires calling a class-instance method, name the exact object already in
+  scope (`manager`, `lifecycle`), the exact method and argument
+  (`lifecycle.terminate(entry)`), and the exact import. Prose like "terminate
+  via the lifecycle" is not enough: a bare-completion local coder reaches for
+  the nearest module-level symbol instead (Vortex v27 — it grabbed
+  `_terminate_pid(pid)` over the `lifecycle.terminate(entry)` instance method,
+  burning strikes across two freezes). "Exact signatures" covers the call
+  site, not only the definition.
 - **End every brief with an explicit self-verify action** ("re-open `<file>`
   and confirm `<condition>`") — it reduces retries; Rule 5 still decides.
 
