@@ -40,6 +40,8 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, str, str, list[str]]:
     child = tmp_path / "child"
     paths = [
         ".github/workflows/check-drift.yml",
+        "BLUEPRINT.md",
+        "QUICKSTART.md",
         "scripts/git-provenance.sh",
         "scripts/link-template.sh",
         "scripts/phase-gate.sh",
@@ -48,13 +50,17 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, str, str, list[str]]:
         "scripts/update-template.sh",
     ]
     for rel in paths[:-2]:
-        src = PLANE.parent / rel if rel.startswith(".github") else PLANE / rel.removeprefix("scripts/")
+        if rel.startswith("scripts/"):
+            src = PLANE / rel.removeprefix("scripts/")
+        else:
+            src = PLANE.parent / rel
         dest = source / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
     shutil.copy2(PLANE / "update-template.sh", source / "scripts/update-template.sh")
     (source / "scripts/tool.sh").write_text("#!/bin/sh\necho v1\n")
     (source / "scripts/tool.sh").chmod(0o755)
+    (source / ".template-version").write_text("repo=fake/blueprint\nref=UNSTAMPED\n")
     _write_template_manifest(source, paths)
     _git(source, "init", "-q", "-b", "main")
     c1 = _commit(source, "v1")
@@ -217,6 +223,84 @@ def test_linked_gate_worktree_hook_env_queries_blueprint_store(tmp_path):
     )
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert "gate ok: manifest" in result.stdout
+
+
+def test_born_linked_seed(tmp_path):
+    """D-183: new-project.sh --linked creates a sibling child that is born in
+    the linked state — every plane path a symlink into the blueprint, the
+    child-owned files real, the manifests pinned, the gate green, and the
+    blueprint checkout untouched."""
+    source, _child, _c1, _c2, paths = _fixture(tmp_path)
+
+    # Child-owned seed files in the fake blueprint (the real blueprint has all
+    # of these; the fixture only needs what the assertions check).
+    (source / "CLAUDE.md").write_text("# [PROJECT_NAME] ops\n")
+    (source / "README.md").write_text("# [PROJECT_NAME]\n")
+    (source / ".gitignore").write_text(".venv/\n.env\n")
+    (source / ".gate-paths").write_text("\n")
+    (source / "opencode.json").write_text("{}\n")
+    (source / "Containerfile").write_text("FROM scratch\n")
+    (source / "requirements.txt").write_text("fastapi\n")
+    (source / ".dockerignore").write_text(".venv\n")
+    (source / ".env.example").write_text("KEY=\n")
+    (source / "CONVENTIONS.md").write_text("# conventions\n")
+    (source / ".github/workflows/ci.yml").write_text("name: ci\n")
+    _commit(source, "child-owned seed files")
+
+    env = dict(os.environ)
+    env.update({
+        "GIT_AUTHOR_NAME": "born-linked fixture",
+        "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "born-linked fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+    })
+    result = subprocess.run(
+        ["bash", str(PLANE / "new-project.sh"), "--linked", "bornchild",
+         "--from", str(source), "--skip-bootstrap"],
+        cwd=source, capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+    child = tmp_path / "bornchild"
+    # Every plane path is a symlink into the source; check-drift stays a file.
+    for rel in paths:
+        if rel == ".github/workflows/check-drift.yml":
+            assert (child / rel).is_file()
+            assert not (child / rel).is_symlink()
+        else:
+            assert (child / rel).is_symlink(), rel
+            assert (child / rel).resolve() == (source / rel).resolve(), rel
+    # Child-owned files are real (not symlinks into the blueprint).
+    for rel in ["CLAUDE.md", "README.md", ".gitignore",
+                "docs/DECISIONS.md", "tasks/CURRENT.md", "tasks/BACKLOG.md",
+                ".github/workflows/ci.yml"]:
+        assert (child / rel).is_file(), rel
+        assert not (child / rel).is_symlink(), rel
+    # AGENTS.md is a child-internal symlink to CLAUDE.md (not into the blueprint).
+    assert (child / "AGENTS.md").is_symlink()
+    assert (child / "AGENTS.md").resolve() == (child / "CLAUDE.md").resolve()
+    # The placeholder was renamed at seed time (no bootstrap in this mode).
+    claudemd = (child / "CLAUDE.md").read_text()
+    assert "[PROJECT_NAME]" not in claudemd
+    assert "bornchild" in claudemd
+    # Linked state: mode=linked, ref pinned to the source HEAD, no PENDING.
+    assert (child / ".template-link").read_text().startswith("mode=linked\n")
+    src_head = _git(source, "rev-parse", "HEAD")
+    assert f"ref={src_head}" in (child / ".template-version").read_text()
+    assert "PENDING" not in (child / "scripts/.manifest-project").read_text()
+    # History: seed commit then the template-link conversion.
+    log = _git(child, "log", "--format=%s")
+    assert "born-linked from sw-dev-blueprint" in log
+    assert "template-link" in log
+    # The blueprint checkout was never written through the links.
+    assert _git(source, "status", "--porcelain") == ""
+    # The gate is green in the born-linked child.
+    gate = subprocess.run(
+        ["bash", "scripts/phase-gate.sh", "manifest"], cwd=child,
+        capture_output=True, text=True,
+    )
+    assert gate.returncode == 0, gate.stdout
+    assert "gate ok: manifest" in gate.stdout
 
 
 def test_link_template_blocks_traversal_retired_path(tmp_path):

@@ -164,12 +164,20 @@ echo "   core.hooksPath = .githooks"
 # reconstructed later.
 echo "🧬 Stamping template birth SHA..."
 TEMPLATE_SLUG=$(grep '^repo=' .template-version | cut -d= -f2)
-BIRTH_SHA=$(gh api "repos/$TEMPLATE_SLUG/commits/HEAD" --jq .sha 2>/dev/null || true)
-if [ -n "$BIRTH_SHA" ]; then
-  "${SED_INPLACE[@]}" "s/^ref=.*/ref=$BIRTH_SHA/" .template-version
-  echo "   born from $TEMPLATE_SLUG @ ${BIRTH_SHA:0:12}"
+CURRENT_REF=$(grep '^ref=' .template-version | cut -d= -f2)
+if [ "$CURRENT_REF" != "UNSTAMPED" ]; then
+  # Born-linked children (D-183) are pre-stamped with the LOCAL blueprint HEAD
+  # at seed time — that local ref is the truth (the plane symlinks resolve
+  # into that checkout, and GitHub's HEAD may be behind it). Never demote it.
+  echo "   ref already stamped: ${CURRENT_REF:0:12} (born-linked — keeping)"
 else
-  echo "   ⚠️  could not reach GitHub — stamp later with: scripts/update-template.sh --stamp"
+  BIRTH_SHA=$(gh api "repos/$TEMPLATE_SLUG/commits/HEAD" --jq .sha 2>/dev/null || true)
+  if [ -n "$BIRTH_SHA" ]; then
+    "${SED_INPLACE[@]}" "s/^ref=.*/ref=$BIRTH_SHA/" .template-version
+    echo "   born from $TEMPLATE_SLUG @ ${BIRTH_SHA:0:12}"
+  else
+    echo "   ⚠️  could not reach GitHub — stamp later with: scripts/update-template.sh --stamp"
+  fi
 fi
 
 echo ""

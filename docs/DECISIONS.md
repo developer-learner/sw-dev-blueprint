@@ -21,6 +21,49 @@
 
 ## Decisions
 
+## D-183 — 2026-09-03 — Born-linked seeding: new children are born in the linked state
+
+**Decision:** `scripts/new-project.sh --linked <name>` (blueprint given by
+`--from`, defaulting to the script's own checkout) creates the child as a
+sibling of the blueprint checkout and converts it to the linked state in the
+same run: commit 1 seeds the child-owned files plus a copy-seeded plane
+skeleton (a valid D-34 state, so the commit is gate-consistent and the link
+step's explicit git-add pathspecs all resolve); commit 2 is the two-step
+`link-template.sh` dry-run → approve, replacing every plane file with a
+symlink into the blueprint; commit 3 is the bootstrap artifacts (venv, deps,
+hooks), skippable with `--skip-bootstrap` for fixtures/CI. The root docs
+`BLUEPRINT.md` and `QUICKSTART.md` join the plane manifest in this change, so
+they are linked (and governed) like every other plane file. `bootstrap.sh`
+'s birth-SHA stamp now refuses to overwrite an already-stamped ref: a
+born-linked child is pre-stamped with the LOCAL blueprint HEAD at seed time,
+and that local ref is the truth — the plane symlinks resolve into that
+checkout, and GitHub's HEAD may be behind it. The classic copy-seed flow
+(`new-project.sh <name>` from a template clone) is retained as the fallback
+for machines without a local blueprint checkout.
+
+**Alternatives considered:** (a) keep copy-seeding and rely on a later
+manual link — rejected: that is exactly the residue class dismantled in
+testchat/vortex on 2026-09-03 (stale `BLUEPRINT.md`/`QUICKSTART.md`/
+`REVIEW.md` copies no manifest governed); (b) seed without the plane
+skeleton and teach `link-template.sh` to tolerate missing old paths —
+rejected: it weakens the shared link machinery's explicit git-add pathspec
+list for every migration; (c) put `REVIEW.md` in the plane manifest —
+rejected: it is session input, untracked in the blueprint by design
+(gitignored), and its content churns per session.
+
+**Reason:** a child born copy-seeded carries plane copies forever unless
+someone remembers to link it; the copies are invisible to the manifest
+(ungoverned) and go stale on every blueprint change. Born-linked seeding
+makes the linked state the birth state — the residue class cannot exist, and
+the seed → link history is honest.
+
+**Do not suggest:** re-copying plane files into a child "to make them
+editable"; deleting the seed commit's plane skeleton (it is what makes the
+link step's pathspecs resolve and the seed commit gate-consistent);
+stamping a born-linked child's `.template-version` from `gh api` (the local
+HEAD is the pin the symlinks resolve against); adding `REVIEW.md` to the
+plane manifest.
+
 ## D-182 — 2026-09-03 — Briefs must name the exact call-site object/method/imports (Rule 8)
 
 **Decision:** Rule 8 (`BLUEPRINT.md`) and the EM plan prompt

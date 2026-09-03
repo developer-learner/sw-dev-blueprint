@@ -66,6 +66,21 @@ because the orchestrator refuses a dirty tree (pre-flight, fail-closed).
 (The durable path for real projects is GitHub's "Use this template" — see
 README "Starting a new project". Not needed today.)
 
+**Born-linked (local fleet, D-183):** if the blueprint is checked out next
+door, skip the clone-and-copy entirely — create the child already linked:
+
+```bash
+cd sw-dev-blueprint
+./scripts/new-project.sh --linked myproj
+```
+
+This seeds `../myproj` with the child-owned files only, then links every
+plane file (scripts, hooks, prompts, root docs) as a symlink into this
+checkout and pins `.template-version` to its HEAD. The child's plane can
+only change through this checkout's own commits — there is no copy to
+drift. Use the clone flow above only on machines without a local blueprint
+checkout.
+
 ## Step 2 — map the model seats
 
 ```bash
