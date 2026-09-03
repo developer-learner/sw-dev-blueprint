@@ -21,6 +21,66 @@
 
 ## Decisions
 
+## D-182 — 2026-09-03 — Briefs must name the exact call-site object/method/imports (Rule 8)
+
+**Decision:** Rule 8 (`BLUEPRINT.md`) and the EM plan prompt
+(`.opencode/prompts/em-plan.md`) now require that when a brief calls a
+class-instance method, it names the exact object already in scope, the exact
+method and argument (e.g. `lifecycle.terminate(entry)`), and the exact import.
+Describing the call ("terminate via the lifecycle") is not enough. "Exact
+signatures" covers the call site, not only the definition.
+
+**Alternatives considered:** A mechanical gate verifying that briefs name
+in-scope symbols (rejected: prose is not reliably parseable for object names;
+false-positive risk on legitimate prose); the guidance clause (chosen);
+status quo.
+
+**Reason:** Vortex v27 burned coder strikes across two freezes because the
+brief described the call instead of naming it: the bare-completion local coder
+grabbed the nearest module-level symbol (`_terminate_pid(pid)`) over the
+`lifecycle.terminate(entry)` instance method. The existing "exact signatures"
+requirement covered the definition, not the call site.
+
+**Do not suggest:** Building a mechanical call-site-naming gate (prose-parsing
+false positives); weakening the clause to "prefer naming the symbol"; or
+treating this as TPM-only (the EM writes briefs on full emission and follows
+the same rule).
+
+**Verified by:** Full selftest suite green (573); `doc-consistency.sh` rc=0;
+`.manifest-template` re-pinned in the same commit (em-plan.md).
+
+## D-181 — 2026-09-03 — Correction log moves out of CLAUDE.md's hot path
+
+**Decision:** The LLM Correction Log (~67 KB, ~80% of CLAUDE.md) moved
+verbatim to `docs/CORRECTION-LOG.md`. CLAUDE.md keeps the section header, a
+pointer, and the workflow instruction: add new rows to
+`docs/CORRECTION-LOG.md` (newest at top) and read it before any
+control-plane, gate, or document-layer change. The log is listed in the
+top-of-file session-start doc list, and the Documentation Impact Sweep
+checklist routes "major incident or lesson" to the new file. CLAUDE.md went
+84 KB → 17 KB.
+
+**Alternatives considered:** Keep the log in the hot path and accept the
+per-run context cost; distill only the meta-rules into CLAUDE.md and move the
+narrative out; move the whole log out with pointers (chosen).
+
+**Reason:** CLAUDE.md loads every session, so the 67 KB log was a per-run
+context cost of ~80% of the file, and at that size entries were skimmed rather
+than read. The guardrail value is the log being consulted when relevant —
+before control-plane/gate/doc-layer changes — and the three anchors
+(session-start doc list, section instruction, sweep checklist) preserve that
+behavior one hop away. The log is preserved verbatim; no history lost.
+
+**Do not suggest:** Moving the log back into CLAUDE.md "for safety" without
+evidence that agents are missing lessons (the fix for a missed lesson is a
+stronger pointer or trigger instruction, not 67 KB in every prompt); deleting
+or summarizing rows (the rows are the system's mistake memory); or treating
+`docs/CORRECTION-LOG.md` as optional reading before control-plane changes.
+
+**Verified by:** `doc-consistency.sh` rc=0; full selftest suite green (573);
+`.manifest-project` re-pinned in the same commit (CLAUDE.md + AGENTS.md
+symlink).
+
 ## D-180 — 2026-09-03 — LLM preflight resolves the configured seat endpoint
 
 **Decision:** Before probing `/v1/models`, `orchestrate.sh` resolves
