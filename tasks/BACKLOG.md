@@ -32,6 +32,13 @@
 **Done already (2026-09-04):** key initialized on the operator machine (fingerprint 346C7C0F2D471E68576CF9166E87DD78A1461240, ed25519 sign-only, expires 2028-09-03, pinned); pub anchor committed in all three repos (`scripts/.provenance/pub.asc`); `docs/PROVENANCE.md` public tier shipped (blueprint `3c0e2d5`); real-key end-to-end proof passed (broker signs, verifier gate validates signature + evidence against the real pub bundle, malformed commit correctly flagged).
 **Remaining:** one live orchestrate run on a child (broker trail signed, evidence committed, verifier report clean) → T1 gate flip in CI + pre-push (CI needs a committed public pin list — `scripts/.provenance/pinned-fingerprints` — the runner has no machine tier) → M2b close.
 
+### Fault-attribution provenance — durable post-ship trace
+**Priority:** P2
+**Why:** D-185 extends T7's immutable authorship evidence into an honest, queryable bug→task→tier→model trace after ship, with revisable shared-causality adjudications rather than permanent blame.
+**Rough size:** Medium (approximately 10–15 engineer-days hardened; 4–7 days for a milestone-only MVP)
+**Depends on:** T7 M2b for the trusted signed layer; a concrete deterministic, fail-closed redaction policy
+**Design:** `tasks/fault-attribution-provenance-design.md`
+
 ---
 
 ## Icebox (someday/maybe)

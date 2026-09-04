@@ -21,6 +21,64 @@
 
 ## Decisions
 
+## D-185 — 2026-09-04 — Fault-attribution provenance: immutable evidence, revisable adjudication
+
+**Decision:** Extend T7's authorship/integrity substrate with a separate
+post-ship fault-attribution capability:
+- Keep authorship/integrity and fault attribution as distinct claims sharing
+  one evidence substrate. A valid signature proves what the pipeline recorded;
+  it does not independently prove which model generated the bytes or that the
+  result is correct.
+- Make committed, content-addressed task evidence—not Git authorship—the
+  durable source of truth. Versioned per-task records add the produced diff,
+  exact model id/version and execution configuration to the existing
+  prompt/reply/meta evidence. Prompt capture is deterministically redacted and
+  fails closed before commit.
+- Preserve `.swbp-evidence/` as permanently immutable. Revisable fault verdicts
+  live as separate signed, immutable events under
+  `.swbp-adjudications/<case>/<event>.json`; each references original evidence
+  by hash, may supersede a prior event, and records adjudicator, taxonomy
+  version, primary and contributing tiers, confidence, and evidence refs. The
+  current verdict is computed by folding un-superseded events, never by
+  rewriting a stored fact.
+- Add an explicit failure-evidence commit at halt because failed attempts and
+  diagnoses currently have no successful task commit to carry them.
+- Provide a backward trace from buggy content to task, tier(s), model(s), and
+  adjudication history. It reports exact/partial/unknown confidence and never
+  invents provenance after substantial edits or refactors. Exact matching
+  ships first; fuzzy matching waits for usage evidence.
+- Offer a lightweight ad-hoc-fix capture command, but allow uncaptured direct
+  commits and report them as `unknown/unattributed`. Verification remains
+  range-bounded; full-history scans are audits, not a per-operation tax.
+
+**Alternatives considered:** Git author/committer fields as the durable source
+(lost under re-commit, squash, and cherry-pick); a mutable `verdicts[]` inside
+`.swbp-evidence/` (contradicts D-184's later-touch tamper rule); one permanent
+culprit per bug (cannot represent correction or shared causality); automatic
+fuzzy attribution in the first cut (risks confident false matches before exact
+lookup is proven); forcing every direct fix through the milestone pipeline
+(operational cost would drive bypasses).
+
+**Reason:** The pipeline already computes a useful coder/EM/TPM fault taxonomy
+and live diagnosis, but only for failures caught during a run, and those
+records are local and disposable. T7's durable record keeps prompt/reply/meta
+but not the produced diff or post-ship adjudication. A green-but-wrong bug
+therefore needs a later judgment path grounded in immutable evidence. The
+separate event layer preserves D-184's tamper guarantee while allowing honest
+correction and shared causality. The normal successful-milestone cost stays
+small: no additional LLM call, seconds of capture/verification, and only
+diff/metadata storage beyond T7's existing evidence.
+
+**Do not suggest:** appending verdicts to or otherwise modifying existing
+`.swbp-evidence/`; describing attribution as singular, infallible, or
+permanently settled; saying a pipeline signature independently proves model
+authorship; auto-blaming a tier when a green-but-wrong bug ships; guessing when
+the trace confidence is unknown; rescanning all history on every operation; or
+prohibiting uncaptured emergency fixes rather than marking them unattributed.
+
+**Design:** `tasks/fault-attribution-provenance-design.md`. Implementation is
+queued in `tasks/BACKLOG.md` and is not yet scheduled.
+
 ## D-184 — 2026-09-03 — T7 M2a: GPG-signed provenance — trust anchor, durable evidence, verifier
 
 **Decision:** The M1 broker (D-174) is now signed and third-party
