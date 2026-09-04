@@ -24,7 +24,11 @@
 
 ## Up Next
 
-(quiet — nothing queued; the 2026-09-03 sweep closed the last two items, see Completed)
+### T7 M2b — clean adoption cycle + T1 gate flip + public tier
+**Priority:** P1
+**Why:** M2a (D-184) shipped the machinery; the gate flip needs one live adoption run on a child (machine slot) so `docs/PROVENANCE.md` (public tier) describes observed behavior, not intent.
+**Rough size:** Small (one live run + flip + doc)
+**Depends on:** machine slot; M2a (done — D-184)
 
 ---
 
@@ -40,6 +44,7 @@
 
 | Task | Completed | Notes |
 |------|-----------|-------|
+| T7 M2a — GPG-signed provenance: trust anchor, durable evidence, verifier | 2026-09-03 | D-184: broker signs with a dedicated passphrase-less Ed25519 sign-only key (`git-provenance.sh init\|active\|rotate\|revoke\|retire`, homedir `~/.swbp/provenance/gnupg`, pin + revocation lists, revocation beats pinning); `Swbp-Call-Id:` trailer correlates commit↔LLM-call meta sidecar; prompt/reply/meta committed in-tree at `.swbp-evidence/<run>/<entry>/` (5 MB fail-closed guard); `scripts/check-provenance.py` report mode (advisory, exit 0) + `--gate` (M2b) verifies signature/pin/revocation/hole/trailers/evidence-hash/tamper per in-scope commit; blueprint CI advisory job; 10 blind selftests (`selftest_provenance_m2.py`). Suite 583 passed + 1 skip (machine-tier, M2b). Gate flip stays CEO-gated behind one live adoption run (M2b, Up Next). |
 | Born-linked seeding: new children are born in the linked state (#8 seed-path half) | 2026-09-03 | D-183 (`a87f014`): `new-project.sh --linked <name> [--from <blueprint>]` seeds the child-owned files as a sibling of the blueprint checkout and converts to the linked state in the same run (seed commit → two-step `[template-link]` → bootstrap). `BLUEPRINT.md`/`QUICKSTART.md` join the plane manifest (linked and governed); bootstrap's birth-SHA stamp no longer demotes a linked child's local-HEAD pin. Selftest `test_born_linked_seed` + a real smoke child verified: 82/82 plane paths correct (81 symlinks + the check-drift exception), gate green, blueprint untouched, zero copy-seeded residue. The doc-layer half of #8 fell out of the 2026-09-03 child dismantling (root docs became symlinks there). |
 | Escalation-ladder validation: first organic end-to-end run | 2026-09-03 | **CEO call: validated.** The v115 run (testchat T8 build, 2026-09-02, plane `6132185`) exercised the full ladder organically on two tasks: T1/T3 each struck twice (`MAX_TASK_STRIKES=2`, 8 coder calls) → schema-valid `brief_wrong` diagnoses with `verdict`+`reason`+`revised_brief` (`.em-archive/2026-09-02_{012954,013427}_diagnosis`) → in-run brief revisions (prompt-diff proven: the rewritten brief fixed exactly the diagnosed BLE001/S110 defect) → `caps-exhausted` TPM bundles → batch halt → v116 brief-only refreeze (`641aa8d`) → v119 success (`aa3deea`); D-69 budget contained the total (≈7 min ≪ 1200 s). What the run exposed was brief defects (lint awareness, router-gate consistency), not machinery defects — the ladder caught, diagnosed, revised, and escalated exactly as designed. |
 | Trim CLAUDE.md / split the heavy log out of the hot path | 2026-09-03 | D-181: the 67 KB LLM Correction Log (~80% of the file) moved verbatim to `docs/CORRECTION-LOG.md`; CLAUDE.md 84 KB → 17 KB. Three anchors preserve the guardrail: session-start doc list, the read-before-control-plane/gate/doc-layer-change instruction, and the Documentation Impact Sweep routing. |

@@ -223,3 +223,4 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-168**: Runs execute from an immutable snapshot of the child's pinned plane ref, never from moving symlink targets
 - **D-172**: Engineering principles delivered as role-shaped guidance per channel — `docs/ENGINEERING-CONSTITUTION.md` is the canonical source
 - **D-174**: The trusted commit broker — model-specific Git provenance (author/committer split, `Swbp-*` trailers), unsigned
+- **D-184**: T7 M2a — GPG-signed provenance: dedicated sign-only key (pin/rotate/revoke, `~/.swbp/provenance`), signed broker commits, `Swbp-Call-Id`, in-tree evidence (`.swbp-evidence/`), report/gate verifier (`check-provenance.py`), CI advisory job

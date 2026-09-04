@@ -1573,7 +1573,13 @@ ensure_plan() {
         # trailers bind the archived prompt/reply bytes by sha256. B3 runs
         # (mechanical plan, no EM call) have no archive entry: the broker
         # omits the hash trailers when the files are absent.
+        # T7 M2 (D-184): Swbp-Call-Id from the sidecar (the provider's own
+        # receipt, never fabricated) + durable evidence committed atomically
+        # (entry: plan-<emit>, the EM emit number that produced this plan).
         SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/em-last.meta" 2>/dev/null | head -1)" \
+        SWBP_PROV_CALL_ID="$(sed -n 's/^call_id=//p' "$LOG_DIR/em-last.meta" 2>/dev/null | head -1)" \
+        SWBP_PROV_META_FILE="$LOG_DIR/em-last.meta" \
+        SWBP_PROV_ENTRY="plan-$(( $(plan_revisions_used) + 1 ))" \
         SWBP_PROV_PROMPT_FILE="${LAST_ARCHIVE_ENTRY:-}/prompt.txt" \
         SWBP_PROV_REPLY_FILE="${LAST_ARCHIVE_ENTRY:-}/reply.json" \
           swbp_commit em "[plan] validated against spec v$FROZEN_V" tasks/plan.json
@@ -2263,7 +2269,12 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
       # T7 M1 (D-174): broker commit — author is the observed coder model,
       # trailers bind the prompt/reply bytes (scratch copies; the durable
       # archive holds identical bytes) by sha256.
+      # T7 M2 (D-184): Swbp-Call-Id from the sidecar + durable evidence
+      # committed atomically (entry: <task>-a<attempt>).
       SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/$id-a$((strikes + 1)).meta" 2>/dev/null | head -1)" \
+      SWBP_PROV_CALL_ID="$(sed -n 's/^call_id=//p' "$LOG_DIR/$id-a$((strikes + 1)).meta" 2>/dev/null | head -1)" \
+      SWBP_PROV_META_FILE="$LOG_DIR/$id-a$((strikes + 1)).meta" \
+      SWBP_PROV_ENTRY="$id-a$((strikes + 1))" \
       SWBP_PROV_TASK="$id" \
       SWBP_PROV_PROMPT_FILE="$LOG_DIR/$id-a$((strikes + 1)).prompt" \
       SWBP_PROV_REPLY_FILE="$LOG_DIR/$id-a$((strikes + 1)).raw" \

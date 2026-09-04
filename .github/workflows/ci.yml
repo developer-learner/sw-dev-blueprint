@@ -59,6 +59,22 @@ jobs:
         # milestone-trim/context-budget/mypy-cache suites were dark this way).
         run: pytest scripts/selftest/selftest_*.py -q
 
+  # T7 M2 (D-184): provenance verification — ADVISORY in M2a (report mode
+  # always exits 0; the table is the evidence). The M2b flip, after one
+  # clean adoption cycle, adds --gate (T1 tier) and the pre-push hook.
+  # fetch-depth 50 matches the verifier's default range (HEAD~50..HEAD).
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 50
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Provenance report (advisory — M2a)
+        run: python3 scripts/check-provenance.py "HEAD~50..HEAD"
+
   test:
     runs-on: ubuntu-latest
     # NOTE: the skeleton guard is a STEP, not a job-level `if` — hashFiles()

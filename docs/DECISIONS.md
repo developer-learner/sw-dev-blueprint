@@ -21,6 +21,55 @@
 
 ## Decisions
 
+## D-184 — 2026-09-03 — T7 M2a: GPG-signed provenance — trust anchor, durable evidence, verifier
+
+**Decision:** The M1 broker (D-174) is now signed and third-party
+verifiable:
+- **Key management** (`git-provenance.sh init|active|rotate|revoke|retire`):
+  passphrase-less Ed25519 sign-only keys, 2-year expiry, dedicated homedir
+  `~/.swbp/provenance/gnupg`; private-key backup `provenance-key.gpg` (600);
+  pin file `pinned-fingerprints`; revocation list `revoked-fingerprints`
+  (revocation beats pinning).
+- **Broker signing**: `swbp_commit` signs with the active (or first) key via
+  `git commit -S` + a loopback `gpg.program` wrapper; no key → unsigned
+  (M1 behavior — no regression).
+- **`Swbp-Call-Id:` trailer**: correlates a commit to the LLM call's meta
+  sidecar (`llm-call.sh`'s `call_id=`).
+- **Durable evidence**: prompt/reply/meta staged into the repo at
+  `.swbp-evidence/<run>/<entry>/` and committed WITH the broker commit
+  (5 MB fail-closed size guard before any staging).
+- **Verifier** (`scripts/check-provenance.py`): report mode (default, exit 0
+  — advisory in M2a) and `--gate` (M2b). Per in-scope commit: signature valid
+  against `scripts/.provenance/pub.asc`, fingerprint pinned and not revoked,
+  no hole (pipeline subject without Swbp-Role), trailers well-formed, evidence
+  hashes recompute from the commit's own tree, no later commit touches the
+  evidence. In-scope boundary = first signed broker commit (inclusive);
+  earlier = pre-m2; non-pipeline commits out of scope.
+- **CI advisory job** (blueprint `ci.yml` `provenance`): report mode over
+  `HEAD~50..HEAD`, always exit 0 in M2a.
+- **10 blind selftests** (`selftest_provenance_m2.py`): verifies / wrong-key /
+  revoked / tampered-evidence / hole / rotation-overlap / Call-Id
+  present-omitted / size-guard / report-mode-exit0 / machine-tier (skips
+  until M2b).
+
+**Alternatives considered:** per-branch commit GPG keys (key churn, no
+rotation story); signed tags instead of signed commits (tags repoint, the
+commit is the unit of trust); evidence in a separate repo (must be in the
+tree the signature covers); verifier as pre-push hook only (must run in CI
+and on demand; pre-push is bypassable by design).
+
+**Reason:** M1 proved the broker is the single commit path; M2 makes the
+provenance *verifiable without trusting the machine* — the signature binds
+the commit to a pinned key, the in-tree evidence binds the commit to the
+actual LLM I/O, and the verifier recomputes both.
+
+**Do not suggest:** putting the private key in any repo (the `pub.asc`
+bundle is the only key material that lives in a repo); making the verifier
+a hard gate before the M2b adoption cycle (the T1 gate flip is a CEO call
+after one live run); signing non-broker commits (the broker is the only
+signer by design — the hole check exists to catch anything else); storing
+evidence outside the commit (breaks the signature's coverage).
+
 ## D-183 — 2026-09-03 — Born-linked seeding: new children are born in the linked state
 
 **Decision:** `scripts/new-project.sh --linked <name>` (blueprint given by
