@@ -24,11 +24,13 @@
 
 ## Up Next
 
-### T7 M2b — clean adoption cycle + T1 gate flip + public tier
+### T7 M2b — clean adoption cycle + T1 gate flip
 **Priority:** P1
-**Why:** M2a (D-184) shipped the machinery; the gate flip needs one live adoption run on a child (machine slot) so `docs/PROVENANCE.md` (public tier) describes observed behavior, not intent.
-**Rough size:** Small (one live run + flip + doc)
-**Depends on:** machine slot; M2a (done — D-184)
+**Why:** M2a (D-184) shipped the machinery; the gate flip needs one live adoption run on a child (machine slot) so the gate first bites on the run that proves it.
+**Rough size:** Small (one live run + flip)
+**Depends on:** machine slot (LM Studio up + run window)
+**Done already (2026-09-04):** key initialized on the operator machine (fingerprint 346C7C0F2D471E68576CF9166E87DD78A1461240, ed25519 sign-only, expires 2028-09-03, pinned); pub anchor committed in all three repos (`scripts/.provenance/pub.asc`); `docs/PROVENANCE.md` public tier shipped (blueprint `3c0e2d5`); real-key end-to-end proof passed (broker signs, verifier gate validates signature + evidence against the real pub bundle, malformed commit correctly flagged).
+**Remaining:** one live orchestrate run on a child (broker trail signed, evidence committed, verifier report clean) → T1 gate flip in CI + pre-push (CI needs a committed public pin list — `scripts/.provenance/pinned-fingerprints` — the runner has no machine tier) → M2b close.
 
 ---
 
