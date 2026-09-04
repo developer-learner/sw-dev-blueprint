@@ -77,7 +77,8 @@ def _gpg(home, *args):
 def _fpr(gpg_home, uid=None):
     args = ["--list-keys", "--with-colons"] + ([uid] if uid else [])
     out = _gpg(gpg_home, *args).stdout
-    fprs = [l.split(":")[9] for l in out.splitlines() if l.startswith("fpr:")]
+    fprs = [line.split(":")[9] for line in out.splitlines()
+            if line.startswith("fpr:")]
     return fprs[0] if fprs else None
 
 
@@ -131,8 +132,8 @@ class Fixture:
 
     def revoke(self, fpr, marker="revoked"):
         if self.pinned.exists():
-            lines = [l for l in self.pinned.read_text().splitlines()
-                     if not l.startswith(fpr)]
+            lines = [line for line in self.pinned.read_text().splitlines()
+                     if not line.startswith(fpr)]
             self.pinned.write_text("\n".join(lines) + "\n")
         with open(self.revoked, "a") as f:
             f.write("%s  # %s\n" % (fpr, marker))
