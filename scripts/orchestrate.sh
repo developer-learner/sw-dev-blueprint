@@ -573,6 +573,67 @@ record_exit() {
 }
 trap 'record_exit' EXIT
 
+# M2b criterion 4: finalize a validated milestone in a RECOVERABLE order —
+# persist durable results, THEN commit the [success] evidence, THEN remove the
+# runtime checkpoint. The prior code deleted $STATE_DIR and set SUCCESS_RECORDED
+# before a `... || true`-swallowed commit, so a commit failure (signing under
+# active provenance, git identity, a hook) still exited 0 with the checkpoint
+# gone. Now a commit failure is surfaced (exit 3, checkpoint kept) while the
+# already-persisted results stand. Validation truth is unchanged: the
+# measurement row records fault_role=none — finalization is a separate axis and
+# is never attributed as a feature fault. Reads globals COMPLETION_LEDGER,
+# FLAKE_LEDGER, STATE_DIR, FROZEN_V, SWBP_PLANE_SHA, METRICS_REPORT_TOOL; calls
+# exit (extracted verbatim by selftest_provenance_m2's finalize_success cases).
+finalize_success() {
+  FAULT_ROLE="none"
+  record_measurement 0 "" ""
+  git add tasks/CURRENT.md "$COMPLETION_LEDGER"
+  [ ! -f "$FLAKE_LEDGER" ] || git add "$FLAKE_LEDGER"
+  # bare (not local): the P3-5 span below is extracted and run at top level by
+  # selftest_gates' metrics-guard test, where `local` outside a function errs.
+  # P3-5: the metrics row must bind to THIS milestone's [success] commit —
+  # a subject-only `git log -1` check would pass when the PREVIOUS milestone
+  # already carries a `[success] spec vN` subject and today's commit did not
+  # land. Capture the pre-commit SHA and require: HEAD advanced AND the new
+  # subject is EXACTLY `[success] spec v$FROZEN_V`. Under M2b criterion 4 a
+  # failed commit exits 3 below (never `|| true`-swallowed), so this guard runs
+  # only on the success path; it stays report-only (D-126) — a metrics failure
+  # must never fail a validated run.
+  pre_success_sha=""
+  pre_success_sha=$(git rev-parse HEAD 2>/dev/null || true)
+  # D-168: the success evidence names the exact plane that produced it.
+  success_subject="[success] spec v$FROZEN_V"
+  if [ -n "${SWBP_PLANE_SHA:-}" ]; then
+    success_subject="$success_subject (plane ${SWBP_PLANE_SHA:0:12})"
+  fi
+  # M2b criterion 4: persist -> commit (checked, never swallowed) -> teardown.
+  # A failed [success] commit surfaces (exit 3, checkpoint kept) instead of
+  # exiting 0 with the runtime state already deleted.
+  if ! git diff --cached --quiet; then
+    if ! swbp_commit pipeline "$success_subject"; then
+      echo "orchestrate: validation PASSED for v$FROZEN_V but FINALIZATION FAILED — the [success] commit did not land (signing/identity/hook). Durable results were persisted (completion ledger, measurement, evidence); runtime state kept at $STATE_DIR for recovery. Re-run finalization or commit the staged changes manually." >&2
+      SUCCESS_RECORDED=1
+      exit 3
+    fi
+  fi
+  SUCCESS_RECORDED=1
+  rm -rf "$STATE_DIR"
+  post_success_sha=""
+  post_success_sha=$(git rev-parse HEAD 2>/dev/null || true)
+  recorded_subject=""
+  recorded_subject=$(git log -1 --format=%s 2>/dev/null || true)
+  if [ -n "$pre_success_sha" ] && [ -n "$post_success_sha" ] \
+     && [ "$post_success_sha" != "$pre_success_sha" ] \
+     && [ "$recorded_subject" = "$success_subject" ]; then
+    if ! python3 "$METRICS_REPORT_TOOL" --milestone HEAD --feature "v$FROZEN_V"; then
+      echo "orchestrate: metrics row NOT recorded for v$FROZEN_V (non-fatal report; see error above)" >&2
+    fi
+  else
+    echo "orchestrate: [success] commit produced no new HEAD for v$FROZEN_V (nothing staged) — metrics row SKIPPED (report-only, never fails a run)" >&2
+  fi
+  exit 0
+}
+
 check_budget() {  # check_budget <checkpoint> — between-phase gate, fail-closed
   [ "$SWBP_RUN_BUDGET" -gt 0 ] || return 0
   local e; e=$(run_elapsed)
@@ -2601,51 +2662,12 @@ if [ "$TESTS_RC" -eq 0 ]; then
 
   $_verdict_note. Feature built and validated.${FLAKE_NOTE}
 EOF
-  # D-126 ordering: persist this successful run while timings.tsv still
-  # exists, before teardown and before metrics-report reads the durable sink.
-  # The EXIT trap observes SUCCESS_RECORDED and does not duplicate the row.
-  FAULT_ROLE="none"
-  record_measurement 0 "" ""
-  SUCCESS_RECORDED=1
-  rm -rf "$STATE_DIR"
-  git add tasks/CURRENT.md "$COMPLETION_LEDGER"
-  [ ! -f "$FLAKE_LEDGER" ] || git add "$FLAKE_LEDGER"
-  # P3-5: the metrics row must bind to THIS milestone's [success] commit —
-  # a bare `--milestone HEAD` can bind a STALE ref if the guarded commit
-  # above fails (git identity, pre-commit hook, anything else, all muffled
-  # by the `|| true`): HEAD would still point at the previous milestone's
-  # commit whose subject may already match `[success] spec vN`. Capture the
-  # pre-commit SHA and require: HEAD advanced AND the new subject is EXACTLY
-  # `[success] spec v$FROZEN_V`; otherwise warn loudly and skip the row.
-  pre_success_sha=""
-  pre_success_sha=$(git rev-parse HEAD 2>/dev/null || true)
-  # D-168: the success evidence names the exact plane that produced it.
-  success_subject="[success] spec v$FROZEN_V"
-  if [ -n "${SWBP_PLANE_SHA:-}" ]; then
-    success_subject="$success_subject (plane ${SWBP_PLANE_SHA:0:12})"
-  fi
-  git diff --cached --quiet \
-    || swbp_commit pipeline "$success_subject" 2>/dev/null || true
-  post_success_sha=""
-  post_success_sha=$(git rev-parse HEAD 2>/dev/null || true)
-  recorded_subject=""
-  recorded_subject=$(git log -1 --format=%s 2>/dev/null || true)
-  if [ -n "$pre_success_sha" ] && [ -n "$post_success_sha" ] \
-     && [ "$post_success_sha" != "$pre_success_sha" ] \
-     && [ "$recorded_subject" = "$success_subject" ]; then
-    # Metrics row (D-126): computed from DURABLE sources that survive the
-    # rm -rf above (..measurement/, .em-archive/, the committed flake ledger).
-    # A report — a failure here must never fail the run, but it must be VISIBLE:
-    # the int("v99") crash sat hidden for weeks behind `2>/dev/null || true`
-    # (correction log 2026-07-16: an `|| true` swallows EVERY failure mode). Keep
-    # it non-gating, but surface the tool's error and a warning instead.
-    if ! python3 "$METRICS_REPORT_TOOL" --milestone HEAD --feature "v$FROZEN_V"; then
-      echo "orchestrate: metrics row NOT recorded for v$FROZEN_V (non-fatal report; see error above)" >&2
-    fi
-  else
-    echo "orchestrate: [success] commit did not land for v$FROZEN_V (HEAD ${pre_success_sha:-none} -> ${post_success_sha:-none}, subject '$success_subject') — metrics row SKIPPED (report-only, never fails a run)" >&2
-  fi
-  exit 0
+  # D-126 ordering + M2b criterion 4: persist -> commit -> teardown, so a
+  # failed [success] commit surfaces (nonzero exit, checkpoint kept) instead of
+  # being swallowed. The completion ledger and CURRENT.md are already written
+  # above; finalize_success records the measurement row, commits the [success]
+  # evidence, then removes $STATE_DIR (see its definition near the EXIT trap).
+  finalize_success
 fi
 
 # tasks green but the verdict red = SPEC DRIFT: routes EM -> TPM, never coder retries (D-28/D-112)
