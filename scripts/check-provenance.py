@@ -61,6 +61,10 @@ import sys
 import tempfile
 
 ROLES = {"em", "coder", "tpm", "pipeline", "human"}
+# M2b criterion 3: roles whose commits MUST carry prompt+reply evidence and a
+# real run id. human/tpm/pipeline are exempt (no model call to evidence).
+REQUIRED_EVIDENCE_ROLES = {"em", "coder"}
+EVIDENCE_SCHEMA = "1"
 PIPELINE_SUBJECTS = (
     "[plan]", "[task ", "[success]", "[refreeze v", "[template-",
     "chore: bootstrap from sw-dev-blueprint template",
@@ -284,6 +288,23 @@ def check_commit(repo, sha, gpg, pinned, revoked, all_shas):
     # evidence
     p_sha = trailers.get("Swbp-Prompt-SHA256", "")
     r_sha = trailers.get("Swbp-Reply-SHA256", "")
+
+    # evidence required by role (M2b criterion 3): a model commit that carries
+    # no evidence trailers used to pass — the block below only fired when a
+    # trailer was already present. Require the trailers, a real run, and the
+    # pinned schema for model roles; exempt human/tpm/pipeline.
+    if role in REQUIRED_EVIDENCE_ROLES:
+        if run == "n/a" or not run:
+            failures.append("role %s requires a real Swbp-Run "
+                            "(model commits must be evidenced)" % role)
+        if not p_sha or not r_sha:
+            failures.append("role %s requires prompt+reply evidence trailers "
+                            "(Swbp-Prompt-SHA256 / Swbp-Reply-SHA256)" % role)
+        schema = trailers.get("Swbp-Evidence-Schema", "")
+        if schema != EVIDENCE_SCHEMA:
+            failures.append("role %s: Swbp-Evidence-Schema must be %s (got %r)"
+                            % (role, EVIDENCE_SCHEMA, schema))
+
     if p_sha or r_sha:
         if run == "n/a" or not run:
             failures.append("evidence trailers present but Swbp-Run is n/a")

@@ -179,6 +179,22 @@ swbp_commit() {
   # these bytes. Size guard first — fail closed, nothing staged.
   local evidence_files=()
   local pf="${SWBP_PROV_PROMPT_FILE:-}" rf="${SWBP_PROV_REPLY_FILE:-}"
+  # T7 M2b (criterion 3): when a model role DECLARES an evidence capture
+  # (SWBP_PROV_ENTRY set — as both orchestrate model-call sites always do), the
+  # capture must succeed: refuse rather than silently skip when the run is n/a
+  # or the prompt/reply files are missing. The blanket "every model commit must
+  # be evidenced" policy is enforced authoritatively by the verifier gate on
+  # committed history; this is the fail-closed capture guard, and it leaves the
+  # D-184 best-effort broker contract (no entry declared -> trailer omitted)
+  # intact. Non-model roles (pipeline/human/tpm) are exempt.
+  case "$role" in
+    em|coder)
+      if [ -n "${SWBP_PROV_ENTRY:-}" ] && [ "$run_id" != "n/a" ] \
+         && { [ -z "$pf" ] || [ ! -f "$pf" ] || [ -z "$rf" ] || [ ! -f "$rf" ]; }; then
+        echo "swbp_commit: role=$role declared evidence entry ${SWBP_PROV_ENTRY} for run ${run_id} but the prompt/reply files are missing (pf=${pf:-<unset>} rf=${rf:-<unset>}) — refusing (fail-closed)" >&2
+        return 1
+      fi ;;
+  esac
   if [ -n "${SWBP_PROV_ENTRY:-}" ] && [ "$run_id" != "n/a" ] \
      && [ -n "$pf" ] && [ -f "$pf" ] && [ -n "$rf" ] && [ -f "$rf" ]; then
     local f sz
@@ -232,6 +248,12 @@ Swbp-Reply-SHA256: $(sha256sum "$SWBP_PROV_REPLY_FILE" | awk '{print $1}')"
   if [ -n "${SWBP_PROV_CALL_ID:-}" ]; then
     trailers="$trailers
 Swbp-Call-Id: $SWBP_PROV_CALL_ID"
+  fi
+  # T7 M2b (criterion 3): stamp the evidence schema version whenever evidence
+  # is actually committed in-tree — the verifier pins it for model roles.
+  if [ ${#evidence_files[@]} -gt 0 ]; then
+    trailers="$trailers
+Swbp-Evidence-Schema: 1"
   fi
 
   # --- T7 M2 (D-184): signing. Dedicated homedir (the key never touches
