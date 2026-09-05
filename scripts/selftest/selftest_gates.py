@@ -2901,11 +2901,11 @@ def test_metrics_guard_binds_to_this_runs_success_commit(tmp_path):
     """P3-5: `--milestone HEAD` must bind to the commit THIS run made. A
     subject-only `git log -1 --format=%s` check passes when the PREVIOUS
     milestone already carries a `[success] spec vN` subject and today's
-    guarded commit silently failed (identity, hook abort — all muffled by
-    the `|| true`). The guard requires the pre-commit SHA to advance AND the
-    new subject to be exact. Arm A: the commit lands -> row recorded. Arm B:
-    a failing pre-commit hook aborts the commit -> HEAD unchanged -> loud
-    SKIPPED warning, no row, still exit 0."""
+    commit did not land. The guard requires the pre-commit SHA to advance AND
+    the new subject to be exact. Arm A: the commit lands -> row recorded.
+    Arm B (M2b criterion 4): a failing pre-commit hook aborts the [success]
+    commit -> finalize_success exits 3 (validated-but-unfinalized) before the
+    metrics guard, HEAD unchanged, no row bound to the stale HEAD."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
     guard = re.search(
         r"^  # P3-5: the metrics row must bind to THIS milestone's \[success\] commit.*?"
@@ -2977,9 +2977,10 @@ __GUARD_BLOCK__
     assert head == "[success] spec v106", "arm A must advance HEAD"
 
     r = run_arm("b", hook_aborts=True)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "metrics row SKIPPED" in r.stderr, r.stderr
-    assert "HEAD " in r.stderr and "->" in r.stderr, r.stderr
+    # M2b criterion 4: a failed [success] commit is no longer swallowed — it
+    # exits 3 before the metrics guard, so no row binds to the stale HEAD.
+    assert r.returncode == 3, (r.stdout, r.stderr)
+    assert "FINALIZATION FAILED" in r.stderr, r.stderr
     assert not (tmp_path / "b" / ".measurement" / "metrics.tsv").exists(), \
         "a failed [success] commit must not produce a row bound to a stale HEAD"
     head = subprocess.run(
@@ -6059,7 +6060,10 @@ def test_orchestrator_orders_completion_restore_and_record_safely():
     restore = source.index('"$COMPLETION_LEDGER_TOOL" restore', plan)
     delta_reset = source.index('if [ "$SPEC_ADVANCED" = "1" ]', restore)
     record = source.index('"$COMPLETION_LEDGER_TOOL" record', delta_reset)
-    cleanup = source.index('rm -rf "$STATE_DIR"', record)
+    # M2b criterion 4: runtime teardown (rm -rf "$STATE_DIR") moved into
+    # finalize_success; the completion-ledger record must still precede the
+    # call that triggers teardown.
+    cleanup = source.index('finalize_success', record)
     assert plan < restore < delta_reset < record < cleanup
     restore_guard = source[source.rfind("if ", plan, restore):restore]
     assert "SWBP_REBUILD_FROM_SCRATCH" in restore_guard
@@ -6469,7 +6473,9 @@ def test_verdict_banners_are_scope_aware():
     only the on-demand --full-suite mode keeps the old claim."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
     banner_start = source.rindex('if [ "$TESTS_RC" -eq 0 ]; then')
-    banner = source[banner_start:source.index('rm -rf "$STATE_DIR"')]
+    # M2b criterion 4: teardown moved into finalize_success (called at the end
+    # of this block); slice the banner region up to that call.
+    banner = source[banner_start:source.index('finalize_success', banner_start)]
     assert '"  ALL FROZEN TESTS PASS — feature done"' in banner
     assert '"  ALL DELTA-MAPPED TESTS PASS — feature done"' in banner
     assert '"  PER-TASK ACCEPTANCE PASSED — feature done"' in banner
