@@ -495,3 +495,106 @@ def test_12_unsigned_pre_activation_commit_still_passes(fx):
     assert g.returncode == 0, g.stdout
     assert "gate ok: provenance" in g.stdout
     assert "pre-m2: 1" in g.stdout
+
+
+def test_13_coder_commit_without_evidence_fails_gate(fx):
+    """Criterion 3: an in-scope coder commit carrying no evidence trailers
+    must FAIL — previously it passed because the evidence block only ran
+    when a trailer was already present."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    # in-scope coder commit, valid run, but NO evidence/schema trailers
+    fx.unsigned_commit("[task T2] attempt 1", {
+        "Swbp-Role": "coder",
+        "Swbp-Model": "fixture-model",
+        "Swbp-Run": fx.run_id,
+        "Swbp-Plane": "n/a",
+    })
+    g = fx.verifier(gate=True)
+    assert g.returncode == 1, g.stdout
+    assert "requires prompt+reply evidence trailers" in g.stdout
+
+
+def test_14_coder_commit_run_na_fails_gate(fx):
+    """Criterion 3: a model role with Swbp-Run n/a is a bypass (evidence is
+    keyed to the run) and must fail."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    fx.unsigned_commit("[task T2] attempt 1", {
+        "Swbp-Role": "coder",
+        "Swbp-Model": "fixture-model",
+        "Swbp-Run": "n/a",
+        "Swbp-Plane": "n/a",
+    })
+    g = fx.verifier(gate=True)
+    assert g.returncode == 1, g.stdout
+    assert "requires a real Swbp-Run" in g.stdout
+
+
+def test_15_evidence_schema_mismatch_fails_gate(fx):
+    """Criterion 3: evidence trailers present but the schema version missing
+    or wrong must fail — pins the stored-byte contract by version."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    fx.unsigned_commit("[task T2] attempt 1", {
+        "Swbp-Role": "coder",
+        "Swbp-Model": "fixture-model",
+        "Swbp-Run": fx.run_id,
+        "Swbp-Plane": "n/a",
+        "Swbp-Prompt-SHA256": "0" * 64,
+        "Swbp-Reply-SHA256": "0" * 64,
+    })
+    g = fx.verifier(gate=True)
+    assert g.returncode == 1, g.stdout
+    assert "Swbp-Evidence-Schema must be 1" in g.stdout
+
+
+def test_16_pipeline_commit_exempt_from_evidence(fx):
+    """Criterion 3: non-model roles (the [success] pipeline commit) carry no
+    evidence and must still pass."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    # signed boundary
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    # a signed pipeline commit with no evidence env — exempt
+    (fx.repo / "README.md").write_text("# fixture v2\n")
+    r2 = fx.broker("pipeline", "[success] spec v1", files=["README.md"])
+    assert r2.returncode == 0, r2.stderr
+    g = fx.verifier(gate=True)
+    assert g.returncode == 0, g.stdout
+    assert "gate ok: provenance" in g.stdout
+
+
+def test_17_broker_refuses_model_commit_without_evidence_files(fx):
+    """Criterion 3 (broker side): swbp_commit fails closed for a model role
+    when the prompt/reply files are absent — it must not silently skip
+    capture and produce an unverifiable commit."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    before = int(_git(fx.repo, "rev-list", "--count", "HEAD").stdout.strip())
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=["SWBP_RUN_ID=%s" % fx.run_id, "SWBP_PROV_ENTRY=T1-a1"])
+    assert r.returncode != 0, "broker must refuse a model commit with no evidence"
+    assert "fail-closed" in r.stderr
+    after = int(_git(fx.repo, "rev-list", "--count", "HEAD").stdout.strip())
+    assert after == before, "no commit may be created"
