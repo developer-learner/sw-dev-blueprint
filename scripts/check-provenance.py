@@ -248,6 +248,8 @@ def check_commit(repo, sha, gpg, pinned, revoked, all_shas):
     msg_bytes, sig = split_signature(obj)
     if sig is None:
         row["sig"] = "missing"
+        failures.append("commit is unsigned (no OpenPGP signature; "
+                        "signing is required after provenance activation)")
     else:
         status, fpr = gpg.verify(msg_bytes, sig)
         if status == "valid":

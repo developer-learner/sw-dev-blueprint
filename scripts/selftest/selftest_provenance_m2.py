@@ -181,6 +181,23 @@ class Fixture:
         _git(self.repo, "add", file)
         _git(self.repo, "commit", "-q", "-m", subject)
 
+    def unsigned_commit(self, subject, trailers, file=None, content=None):
+        """A pipeline-style commit that carries valid trailers but is NOT
+        signed — models the unsigned-commit bypass (criterion 1). The
+        trailer block is the last paragraph so parse_trailers picks it up;
+        no -S, so the object has no OpenPGP signature."""
+        if file is None:
+            n = len(list(self.repo.glob("unsigned-*.txt")))
+            file = "unsigned-%d.txt" % n
+        if content is None:
+            content = ("unsigned change %s\n" % subject).encode()
+        p = self.repo / file
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(content)
+        _git(self.repo, "add", file)
+        block = "\n".join("%s: %s" % (k, v) for k, v in trailers.items())
+        _git(self.repo, "commit", "-q", "-m", subject, "-m", block)
+
     def verifier(self, *extra, gate=False):
         args = [str(VERIFIER), "HEAD~20..HEAD",
                 "--pinned", str(self.pinned),
@@ -427,3 +444,54 @@ def test_10_machine_public_tier_agree():
         if fpr_re.match(tok):
             mach.add(tok.upper())
     assert pub == mach, "machine tier and public tier fingerprint lists disagree"
+
+
+def test_11_unsigned_inscope_commit_fails_gate(fx):
+    """Criterion 1: an in-scope pipeline commit with valid trailers but no
+    signature must FAIL the gate. Reproduces the bypass where a missing
+    signature recorded sig=missing and appended no failure."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    # signed broker commit first — establishes the in-scope boundary
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    # then an UNSIGNED commit after the boundary, trailers otherwise valid
+    fx.unsigned_commit("[task T2] attempt 1", {
+        "Swbp-Role": "coder",
+        "Swbp-Model": "fixture-model",
+        "Swbp-Run": fx.run_id,
+        "Swbp-Plane": "n/a",
+    })
+    g = fx.verifier(gate=True)
+    assert g.returncode == 1, g.stdout
+    assert "unsigned" in g.stdout
+    # it must fail for the SIGNATURE, not misclassify as the M1 hole
+    assert "no Swbp-Role" not in g.stdout
+
+
+def test_12_unsigned_pre_activation_commit_still_passes(fx):
+    """Criterion 1 regression guard: an unsigned pipeline commit BEFORE the
+    activation boundary is grandfathered (pre-m2) and must NOT fail the
+    gate — the new failure is scoped to in-boundary commits only."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    # unsigned pipeline commit FIRST (before any signed broker commit)
+    fx.unsigned_commit("[task T0] attempt 1", {
+        "Swbp-Role": "coder",
+        "Swbp-Model": "fixture-model",
+        "Swbp-Run": fx.run_id,
+        "Swbp-Plane": "n/a",
+    })
+    # then the signed broker commit that establishes the boundary
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    g = fx.verifier(gate=True)
+    assert g.returncode == 0, g.stdout
+    assert "gate ok: provenance" in g.stdout
+    assert "pre-m2: 1" in g.stdout
