@@ -428,9 +428,12 @@ _swbp_prov_activate() {
   if [ -f "$anchor_file" ]; then
     local prev
     prev="$(sed -n 's/^commit=//p' "$anchor_file" | head -1 | tr -d '[:space:]')"
-    if [ -n "$prev" ] && [ "$prev" != "$target_sha" ] \
-       && ! git merge-base --is-ancestor "$prev" "$target_sha" 2>/dev/null; then
-      echo "git-provenance: refusing to move the activation boundary backward (current $prev is not an ancestor of $target_sha); activation is monotonic" >&2
+    # review P1: the boundary is IMMUTABLE once set. Moving it backward or
+    # forward both weaken enforcement (forward grandfathers intervening
+    # violations), so refuse any change to a different commit; re-activating at
+    # the same commit is an idempotent no-op.
+    if [ -n "$prev" ] && [ "$prev" != "$target_sha" ]; then
+      echo "git-provenance: activation boundary is already set to $prev and is immutable — refusing to move it to $target_sha (enforcement does not retreat, and a forward move would grandfather intervening violations)" >&2
       return 1
     fi
   fi
