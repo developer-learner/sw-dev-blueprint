@@ -705,9 +705,11 @@ def test_21_pre_activation_advisory_passes(fx):
     assert "gate ok: provenance" in g.stdout
 
 
-def test_22_activate_is_monotonic(fx):
-    """Criterion 2: the activate subcommand moves the boundary forward only —
-    a descendant target is accepted, an ancestor is refused."""
+def test_22_activate_is_immutable_once_set(fx):
+    """Criterion 2 (review P1): the boundary is immutable once set — a move to
+    any different commit (forward OR backward) is refused, since a forward move
+    would grandfather intervening violations; re-activating at the same commit
+    is idempotent."""
     fpr = fx.gen_key()
     fx.pin(fpr)
     fx.set_active(fpr)
@@ -715,15 +717,95 @@ def test_22_activate_is_monotonic(fx):
     fx.plain_commit("work 1")
     c1 = _git(fx.repo, "rev-parse", "HEAD").stdout.strip()
     anchor = fx.repo / "scripts" / ".provenance" / "activation"
-    r1 = fx.cli("activate")  # activate at c1 (HEAD)
+    r1 = fx.cli("activate")  # first activation at c1 (HEAD)
     assert r1.returncode == 0, r1.stderr
+    assert c1 in anchor.read_text()
+    r_same = fx.cli("activate", c1)  # idempotent re-activation
+    assert r_same.returncode == 0, r_same.stderr
     assert c1 in anchor.read_text()
     fx.plain_commit("work 2")
     c2 = _git(fx.repo, "rev-parse", "HEAD").stdout.strip()
-    r2 = fx.cli("activate", c2)  # forward move — allowed
-    assert r2.returncode == 0, r2.stderr
-    assert c2 in anchor.read_text()
+    r2 = fx.cli("activate", c2)  # forward move — refused (immutable)
+    assert r2.returncode != 0, r2.stdout
+    assert "immutable" in r2.stderr
+    assert c1 in anchor.read_text()  # unchanged
     r3 = fx.cli("activate", seed)  # backward move — refused
     assert r3.returncode != 0, r3.stdout
-    assert "backward" in r3.stderr
-    assert c2 in anchor.read_text()  # unchanged
+    assert "immutable" in r3.stderr
+    assert c1 in anchor.read_text()  # unchanged
+
+
+def test_23_forward_activation_cannot_erase_enforcement(fx):
+    """Criterion 2 (review P1): advancing the activation boundary past an
+    existing violation must NOT grandfather it. Enforcement, once active from a
+    commit, never retreats to a later one — the verifier uses the EARLIEST
+    recorded boundary, so moving the anchor forward cannot un-gate history."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    fx.activate()  # original boundary at seed
+    # an unsigned in-scope pipeline commit — a violation the gate must reject
+    fx.unsigned_commit("[task T1] attempt 1", {
+        "Swbp-Role": "coder",
+        "Swbp-Model": "fixture-model",
+        "Swbp-Run": fx.run_id,
+        "Swbp-Plane": "n/a",
+    })
+    viol = _git(fx.repo, "rev-parse", "HEAD").stdout.strip()
+    g1 = fx.verifier(gate=True)
+    assert g1.returncode == 1, "the unsigned in-scope commit must be rejected"
+    # advance activation to (past) the violation — must not erase enforcement
+    fx.activate(commit=viol)
+    g2 = fx.verifier(gate=True)
+    assert g2.returncode == 1, \
+        "advancing activation must NOT grandfather the earlier violation"
+    assert "unsigned" in g2.stdout
+
+
+def test_24_narrow_range_still_catches_evidence_tamper(fx):
+    """Criterion 3 (review P1): a commit that modifies committed evidence must
+    be caught even when the original evidence-producing commit is OUTSIDE the
+    inspected range — tamper detection inspects evidence-path changes in every
+    incoming commit, not only relative to in-range evidence commits."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    fx.activate()
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    # an ordinary later commit overwrites the committed evidence
+    fx.plain_commit("innocuous",
+                    file=".swbp-evidence/%s/T1-a1/prompt.txt" % fx.run_id,
+                    content=b"TAMPERED")
+    # inspect ONLY the tampering commit — the evidence commit is out of range
+    g = fx.verifier(gate=True, rng="HEAD~1..HEAD")
+    assert g.returncode == 1, \
+        "evidence tamper must be caught even with the evidence commit out of range"
+    assert "tamper" in g.stdout.lower()
+
+
+def test_25_merge_commit_evidence_tamper_is_caught(fx):
+    """Criterion 3 (review P1): tamper introduced through a MERGE commit is
+    caught — the per-commit check diffs against every parent."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    fx.activate()
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    ev = ".swbp-evidence/%s/T1-a1/prompt.txt" % fx.run_id
+    # a side branch overwrites the committed evidence, then merges back
+    _git(fx.repo, "checkout", "-q", "-b", "side")
+    (fx.repo / ev).write_bytes(b"TAMPERED VIA MERGE")
+    _git(fx.repo, "add", ev)
+    _git(fx.repo, "commit", "-q", "-m", "side change")
+    _git(fx.repo, "checkout", "-q", "main")
+    _git(fx.repo, "merge", "--no-ff", "-m", "merge side", "side")
+    g = fx.verifier(gate=True)
+    assert g.returncode == 1, g.stdout
+    assert "tamper" in g.stdout.lower()

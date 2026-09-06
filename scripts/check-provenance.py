@@ -106,19 +106,58 @@ def is_pipeline_subject(subject):
     return any(subject.startswith(p) for p in PIPELINE_SUBJECTS)
 
 
-def read_activation_commit(repo, tip_sha):
-    """M2b criterion 2: the activation-boundary commit recorded in
-    scripts/.provenance/activation, read from tip_sha's committed TREE (not the
-    working dir) so a dirty checkout cannot move it and an unsigned commit that
-    deletes the anchor is caught as 'missing' below. Returns the SHA or None."""
+def activation_boundaries(repo, tip_sha):
+    """M2b criterion 2: every distinct activation boundary that
+    scripts/.provenance/activation has named across tip_sha's history, oldest
+    commit first. Read from committed trees (not the working dir) so a dirty
+    checkout cannot move the boundary. The FIRST entry is the original boundary;
+    later entries are attempts to move it (review P1: enforcement never retreats,
+    so a forward move must not un-gate — the verifier uses the earliest and
+    flags any change)."""
     try:
-        content = git(repo, "show", "%s:scripts/.provenance/activation" % tip_sha)
+        commits = git(repo, "log", "--format=%H", "--reverse", tip_sha,
+                      "--", "scripts/.provenance/activation").split()
     except RuntimeError:
-        return None
-    for line in content.splitlines():
-        if line.startswith("commit="):
-            return line.split("=", 1)[1].strip()
-    return None
+        return []
+    out = []
+    for c in commits:
+        try:
+            content = git(repo, "show",
+                          "%s:scripts/.provenance/activation" % c)
+        except RuntimeError:
+            continue
+        for line in content.splitlines():
+            if line.startswith("commit="):
+                b = line.split("=", 1)[1].strip()
+                if b and (not out or out[-1] != b):
+                    out.append(b)
+                break
+    return out
+
+
+def commit_tampers_evidence(repo, sha):
+    """M2b criterion 3 (review P1): evidence records are append-only. Return the
+    existing .swbp-evidence/ paths this commit MODIFIES, DELETES or RENAMES
+    (relative to each parent) — additions are legitimate new evidence, but any
+    change to a record already in the parent tree is tampering, regardless of
+    whether the record's original commit is in the inspected range. Covers
+    merges by diffing against every parent."""
+    try:
+        parents = git(repo, "rev-list", "--parents", "-n", "1", sha).split()[1:]
+    except RuntimeError:
+        return []
+    tampered = set()
+    for p in parents:
+        try:
+            out = git(repo, "diff-tree", "--no-commit-id", "-r",
+                      "--name-status", "-M", p, sha, "--", ".swbp-evidence/")
+        except RuntimeError:
+            continue
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if parts and parts[0] and parts[0][0] in ("M", "D", "R"):
+                tampered.add(parts[-1])
+    return sorted(tampered)
 
 
 def commit_exists(repo, sha):
@@ -435,13 +474,24 @@ def main():
     # still gates the anchor's descendants, and a live-but-unanchored history
     # fails explicitly rather than silently downgrading to pre-m2.
     tip = shas[-1] if shas else None
-    anchor = read_activation_commit(repo, tip) if tip else None
+    boundaries = activation_boundaries(repo, tip) if tip else []
+    anchor = boundaries[0] if boundaries else None  # earliest = the real boundary
     provenance_live = bool(pinned) or has_signed_pipeline_commit(repo, shas)
     hard_failures = []
     anchor_usable = False
     if anchor is not None:
         if commit_exists(repo, anchor):
             anchor_usable = True
+            # review P1: enforcement never retreats — a later activation that
+            # names a different boundary (a forward move to un-gate history) is
+            # refused; the earliest boundary above still governs scope.
+            moved = [b for b in boundaries[1:] if b != anchor]
+            if moved:
+                hard_failures.append(
+                    "activation boundary was changed after it was first set "
+                    "(original %s; later named %s) — enforcement does not "
+                    "retreat; refusing"
+                    % (anchor[:10], ", ".join(b[:10] for b in moved)))
         else:
             hard_failures.append(
                 "activation anchor %s (scripts/.provenance/activation) is not "
@@ -482,6 +532,19 @@ def main():
         if is_pipe and in_scope and failures:
             gate_failures.append("%s %s: %s" % (sha[:10], row["subject"][:40],
                                                 "; ".join(failures)))
+        # review P1: evidence records are append-only. Any commit that modifies
+        # or deletes a committed record is tamper — checked on EVERY incoming
+        # commit (regardless of scope, or whether the record's original commit
+        # is in range) once provenance is live.
+        if provenance_live:
+            tampered = commit_tampers_evidence(repo, sha)
+            if tampered:
+                if row["evidence"] in ("-", "n/a"):
+                    row["evidence"] = "tamper"
+                gate_failures.append(
+                    "%s %s: evidence tamper — modifies/deletes committed "
+                    "record(s): %s" % (sha[:10], row["subject"][:40],
+                                       ", ".join(tampered)))
 
     gpg.close()
 
