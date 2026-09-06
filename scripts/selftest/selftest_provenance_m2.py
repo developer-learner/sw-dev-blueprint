@@ -809,3 +809,24 @@ def test_25_merge_commit_evidence_tamper_is_caught(fx):
     g = fx.verifier(gate=True)
     assert g.returncode == 1, g.stdout
     assert "tamper" in g.stdout.lower()
+
+
+def test_26_evidence_typechange_tamper_is_caught(fx):
+    """Criterion 3 (review P1): replacing a committed evidence file with a
+    symlink (git reports type change 'T', not M/D/R) is tampering too."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    fx.activate()
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    ev = fx.repo / ".swbp-evidence" / fx.run_id / "T1-a1" / "prompt.txt"
+    ev.unlink()
+    ev.symlink_to("x")  # replace the record file with a symlink -> git 'T'
+    _git(fx.repo, "add", str(ev))
+    _git(fx.repo, "commit", "-q", "-m", "swap evidence for a symlink")
+    g = fx.verifier(gate=True, rng="HEAD~1..HEAD")
+    assert g.returncode == 1, g.stdout
+    assert "tamper" in g.stdout.lower()
