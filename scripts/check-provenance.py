@@ -106,6 +106,63 @@ def is_pipeline_subject(subject):
     return any(subject.startswith(p) for p in PIPELINE_SUBJECTS)
 
 
+def read_activation_commit(repo, tip_sha):
+    """M2b criterion 2: the activation-boundary commit recorded in
+    scripts/.provenance/activation, read from tip_sha's committed TREE (not the
+    working dir) so a dirty checkout cannot move it and an unsigned commit that
+    deletes the anchor is caught as 'missing' below. Returns the SHA or None."""
+    try:
+        content = git(repo, "show", "%s:scripts/.provenance/activation" % tip_sha)
+    except RuntimeError:
+        return None
+    for line in content.splitlines():
+        if line.startswith("commit="):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def commit_exists(repo, sha):
+    r = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-e", sha + "^{commit}"],
+        capture_output=True)
+    return r.returncode == 0
+
+
+def is_ancestor(repo, anc, desc):
+    """True if anc == desc or anc is an ancestor of desc. Raises when git
+    cannot determine it (e.g. a commit truncated out of a shallow clone) so the
+    caller fails explicit rather than silently classifying the commit."""
+    if anc == desc:
+        return True
+    r = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", anc, desc],
+        capture_output=True)
+    if r.returncode == 0:
+        return True
+    if r.returncode == 1:
+        return False
+    raise RuntimeError(
+        "cannot determine ancestry %s..%s: %s"
+        % (anc[:10], desc[:10], r.stderr.decode("utf-8", "replace").strip()))
+
+
+def has_signed_pipeline_commit(repo, shas):
+    """True if any inspected commit is a pipeline commit carrying a signature —
+    a signal that provenance is live, so an absent activation anchor is a hard
+    failure rather than a silent pre-activation pass."""
+    for sha in shas:
+        try:
+            msg = commit_message(repo, sha)
+            subject = msg.splitlines()[0] if msg.splitlines() else ""
+            if parse_trailers(msg).get("Swbp-Role") or is_pipeline_subject(subject):
+                _, sig = split_signature(commit_object(repo, sha))
+                if sig is not None:
+                    return True
+        except RuntimeError:
+            continue
+    return False
+
+
 def split_signature(obj):
     """Return (message_bytes, signature_bytes) or (obj, None) if unsigned.
 
@@ -370,18 +427,33 @@ def main():
     revoked = read_fpr_list(args.revoked)
     gpg = GpgVerifier(pub)
 
-    # in-scope boundary: first SIGNED broker commit (inclusive)
-    boundary = None
-    for i, sha in enumerate(shas):
-        try:
-            trailers = parse_trailers(commit_message(repo, sha))
-            if trailers.get("Swbp-Role"):
-                _, sig = split_signature(commit_object(repo, sha))
-                if sig is not None:
-                    boundary = i
-                    break
-        except RuntimeError:
-            continue
+    # M2b criterion 2: the in-scope boundary is a DURABLE anchor, not a scan of
+    # whatever window the caller passed. scripts/.provenance/activation names
+    # the commit at/after which every in-scope pipeline commit must be signed;
+    # a commit is in scope iff it is (a descendant of) that anchor. This cannot
+    # be recomputed away by narrowing --range: a window that excludes the anchor
+    # still gates the anchor's descendants, and a live-but-unanchored history
+    # fails explicitly rather than silently downgrading to pre-m2.
+    tip = shas[-1] if shas else None
+    anchor = read_activation_commit(repo, tip) if tip else None
+    provenance_live = bool(pinned) or has_signed_pipeline_commit(repo, shas)
+    hard_failures = []
+    anchor_usable = False
+    if anchor is not None:
+        if commit_exists(repo, anchor):
+            anchor_usable = True
+        else:
+            hard_failures.append(
+                "activation anchor %s (scripts/.provenance/activation) is not "
+                "reachable in the inspected history — required activation "
+                "history unavailable (shallow clone?); deepen and re-run"
+                % anchor[:10])
+    elif provenance_live:
+        hard_failures.append(
+            "provenance is active (pinned keys and/or signed pipeline commits "
+            "present) but no activation anchor is recorded in "
+            "scripts/.provenance/activation — cannot establish the in-scope "
+            "boundary; record one with 'git-provenance.sh activate'")
 
     rows, gate_failures = [], []
     for i, sha in enumerate(shas):
@@ -395,10 +467,19 @@ def main():
             if args.gate:
                 gate_failures.append("%s: %s" % (sha[:10], e))
             continue
-        row["scope"] = "in" if (is_pipe and boundary is not None and i >= boundary) \
+        # exclusive: gating applies to STRICT descendants of the anchor. You
+        # activate at the current tip; future pipeline commits must be signed,
+        # while the anchor commit itself and its ancestors are grandfathered.
+        in_scope = False
+        if is_pipe and anchor_usable and sha != anchor:
+            try:
+                in_scope = is_ancestor(repo, anchor, sha)
+            except RuntimeError as e:
+                hard_failures.append("%s: %s" % (sha[:10], e))
+        row["scope"] = "in" if (is_pipe and in_scope) \
             else ("pre-m2" if is_pipe else "out")
         rows.append(row)
-        if is_pipe and boundary is not None and i >= boundary and failures:
+        if is_pipe and in_scope and failures:
             gate_failures.append("%s %s: %s" % (sha[:10], row["subject"][:40],
                                                 "; ".join(failures)))
 
@@ -407,6 +488,10 @@ def main():
     # report (always printed; report mode exits 0)
     if not rows:
         print("check-provenance: no commits in range %s" % args.range)
+        if args.gate and hard_failures:
+            for f in hard_failures:
+                print("  - %s" % f)
+            return 1
         return 0
     w = {"sha": 10, "scope": 7, "role": 9, "model": 28, "run": 26,
          "sig": 10, "evidence": 9}
@@ -423,13 +508,25 @@ def main():
              sum(1 for r in rows if r["scope"] == "pre-m2"),
              "GATE" if args.gate else "report"))
     if args.gate:
-        if gate_failures:
-            print("\nGATE FAILURES (%d):" % len(gate_failures))
-            for f in gate_failures:
-                print("  - %s" % f)
+        if hard_failures or gate_failures:
+            if hard_failures:
+                print("\nGATE HARD FAILURES (%d) — activation boundary:"
+                      % len(hard_failures))
+                for f in hard_failures:
+                    print("  - %s" % f)
+            if gate_failures:
+                print("\nGATE FAILURES (%d):" % len(gate_failures))
+                for f in gate_failures:
+                    print("  - %s" % f)
             return 1
         print("gate ok: provenance")
         return 0
+    if hard_failures:
+        print("\n(advisory) %d activation-boundary problem(s) — report only in "
+              "M2a; the M2b gate flip makes these a release failure"
+              % len(hard_failures))
+        for f in hard_failures:
+            print("  - %s" % f)
     if gate_failures:
         print("\n(advisory) %d in-scope failure(s) — report only in M2a; "
               "the M2b gate flip makes these a release failure" % len(gate_failures))

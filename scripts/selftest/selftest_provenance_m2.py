@@ -160,11 +160,12 @@ class Fixture:
                               env=e, capture_output=True, text=True)
 
     def cli(self, *args):
-        """Run the REAL key-management CLI under the fake HOME."""
+        """Run the REAL key-management CLI under the fake HOME, in the repo
+        (the 'activate' subcommand resolves HEAD and writes into the tree)."""
         e = dict(os.environ)
         e["HOME"] = str(self.home)
         return subprocess.run(["bash", BROKER, *args], env=e,
-                              capture_output=True, text=True)
+                              cwd=str(self.repo), capture_output=True, text=True)
 
     def plain_commit(self, subject, file=None, content=None):
         """A NON-broker commit (the hole / the tamperer). Always commits a
@@ -198,8 +199,40 @@ class Fixture:
         block = "\n".join("%s: %s" % (k, v) for k, v in trailers.items())
         _git(self.repo, "commit", "-q", "-m", subject, "-m", block)
 
-    def verifier(self, *extra, gate=False):
-        args = [str(VERIFIER), "HEAD~20..HEAD",
+    def activate(self, commit=None):
+        """M2b criterion 2: record scripts/.provenance/activation naming
+        `commit` (default: current HEAD) and commit it out-of-scope. In-scope =
+        STRICT descendants of the named commit; the anchor commit and its
+        ancestors are grandfathered. Returns the target sha."""
+        if commit is None:
+            commit = _git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        fpr = ""
+        if self.pinned.exists():
+            for line in self.pinned.read_text().splitlines():
+                tok = line.split()[0] if line.split() else ""
+                if len(tok) == 40:
+                    fpr = tok
+                    break
+        anchor = self.repo / "scripts" / ".provenance" / "activation"
+        anchor.write_text("commit=%s\nfingerprint=%s\nactivated=2026-09-05T00:00:00Z\n"
+                          % (commit, fpr or "none"))
+        _git(self.repo, "add", "scripts/.provenance/activation")
+        _git(self.repo, "commit", "-q", "-m", "provenance: activate")
+        return commit
+
+    def verifier(self, *extra, gate=False, rng="HEAD~20..HEAD",
+                 auto_anchor=True):
+        # M2b criterion 2: the verifier needs a durable activation anchor.
+        # Unless a test set one (via activate()), auto-anchor at the root commit
+        # so every subsequent fixture commit is in-scope — the case most gate
+        # tests want. Tests exercising a missing anchor pass auto_anchor=False;
+        # tests exercising pre-activation history call activate() themselves.
+        anchor_file = self.repo / "scripts" / ".provenance" / "activation"
+        if auto_anchor and not anchor_file.exists():
+            root = _git(self.repo, "rev-list", "--max-parents=0",
+                        "HEAD").stdout.split()[0]
+            self.activate(commit=root)
+        args = [str(VERIFIER), rng,
                 "--pinned", str(self.pinned),
                 "--revoked", str(self.revoked),
                 "--pub", str(self.pub),
@@ -473,21 +506,24 @@ def test_11_unsigned_inscope_commit_fails_gate(fx):
 
 
 def test_12_unsigned_pre_activation_commit_still_passes(fx):
-    """Criterion 1 regression guard: an unsigned pipeline commit BEFORE the
-    activation boundary is grandfathered (pre-m2) and must NOT fail the
-    gate — the new failure is scoped to in-boundary commits only."""
+    """Criterion 1/2 regression guard: an unsigned pipeline commit BEFORE the
+    activation boundary is grandfathered (pre-m2) and must NOT fail the gate —
+    the failure is scoped to strict descendants of the anchor only."""
     fpr = fx.gen_key()
     fx.pin(fpr)
     fx.export_pub()
     fx.make_evidence_src()
-    # unsigned pipeline commit FIRST (before any signed broker commit)
+    # unsigned pipeline commit FIRST — this is pre-activation history
     fx.unsigned_commit("[task T0] attempt 1", {
         "Swbp-Role": "coder",
         "Swbp-Model": "fixture-model",
         "Swbp-Run": fx.run_id,
         "Swbp-Plane": "n/a",
     })
-    # then the signed broker commit that establishes the boundary
+    # activate AFTER it: the anchor is the unsigned commit, so it and its
+    # ancestors are grandfathered; only strict descendants are in-scope
+    fx.activate()
+    # then a signed broker commit (a strict descendant) — in-scope, valid
     r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
                   env=fx.task_env("T1-a1"))
     assert r.returncode == 0, r.stderr
@@ -598,3 +634,96 @@ def test_17_broker_refuses_model_commit_without_evidence_files(fx):
     assert "fail-closed" in r.stderr
     after = int(_git(fx.repo, "rev-list", "--count", "HEAD").stdout.strip())
     assert after == before, "no commit may be created"
+
+
+def test_18_narrow_window_cannot_downgrade_a_descendant(fx):
+    """Criterion 2: a window that excludes the anchor must still gate the
+    anchor's descendants — the boundary is durable, not window-derived."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    fx.activate()  # anchor at the current tip (seed)
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    # an unsigned in-scope commit at the tip
+    fx.unsigned_commit("[task T2] attempt 1", {
+        "Swbp-Role": "coder",
+        "Swbp-Model": "fixture-model",
+        "Swbp-Run": fx.run_id,
+        "Swbp-Plane": "n/a",
+    })
+    # inspect ONLY the last commit — a window that excludes the anchor commit
+    g = fx.verifier(gate=True, rng="HEAD~1..HEAD")
+    assert g.returncode == 1, g.stdout
+    assert "unsigned" in g.stdout
+
+
+def test_19_missing_anchor_with_signed_history_fails(fx):
+    """Criterion 2: provenance is live (pins + a signed pipeline commit) but no
+    activation anchor is recorded — the gate must fail explicitly, not pass."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    g = fx.verifier(gate=True, auto_anchor=False)  # no anchor recorded
+    assert g.returncode == 1, g.stdout
+    assert "no activation anchor" in g.stdout
+
+
+def test_20_unreachable_anchor_fails(fx):
+    """Criterion 2: the anchor names a commit not in the inspected history
+    (e.g. a shallow clone truncated below it) — fail explicit, never pass."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.export_pub()
+    fx.make_evidence_src()
+    r = fx.broker("coder", "[task T1] attempt 1", files=["README.md"],
+                  env=fx.task_env("T1-a1"))
+    assert r.returncode == 0, r.stderr
+    fx.activate(commit="0" * 40)  # anchor points at a commit git cannot read
+    g = fx.verifier(gate=True)
+    assert g.returncode == 1, g.stdout
+    assert "deepen" in g.stdout
+
+
+def test_21_pre_activation_advisory_passes(fx):
+    """Criterion 2 regression guard: with no pins and no anchor (provenance not
+    yet live), unsigned pipeline commits are pre-m2 and the gate passes."""
+    fx.unsigned_commit("[task T1] attempt 1", {
+        "Swbp-Role": "coder",
+        "Swbp-Model": "fixture-model",
+        "Swbp-Run": fx.run_id,
+        "Swbp-Plane": "n/a",
+    })
+    g = fx.verifier(gate=True, auto_anchor=False)
+    assert g.returncode == 0, g.stdout
+    assert "gate ok: provenance" in g.stdout
+
+
+def test_22_activate_is_monotonic(fx):
+    """Criterion 2: the activate subcommand moves the boundary forward only —
+    a descendant target is accepted, an ancestor is refused."""
+    fpr = fx.gen_key()
+    fx.pin(fpr)
+    fx.set_active(fpr)
+    seed = _git(fx.repo, "rev-list", "--max-parents=0", "HEAD").stdout.strip()
+    fx.plain_commit("work 1")
+    c1 = _git(fx.repo, "rev-parse", "HEAD").stdout.strip()
+    anchor = fx.repo / "scripts" / ".provenance" / "activation"
+    r1 = fx.cli("activate")  # activate at c1 (HEAD)
+    assert r1.returncode == 0, r1.stderr
+    assert c1 in anchor.read_text()
+    fx.plain_commit("work 2")
+    c2 = _git(fx.repo, "rev-parse", "HEAD").stdout.strip()
+    r2 = fx.cli("activate", c2)  # forward move — allowed
+    assert r2.returncode == 0, r2.stderr
+    assert c2 in anchor.read_text()
+    r3 = fx.cli("activate", seed)  # backward move — refused
+    assert r3.returncode != 0, r3.stdout
+    assert "backward" in r3.stderr
+    assert c2 in anchor.read_text()  # unchanged

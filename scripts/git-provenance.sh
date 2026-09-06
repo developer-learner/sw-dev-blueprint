@@ -402,6 +402,48 @@ _swbp_prov_active() {
     | awk -F: -v f="$fpr" '$1=="pub" && index($10,f)==1 {print "uid: swbp-provenance@swbp.invalid"; print "expires: " ($7 ? $7 : "never"); print "algo: " $4}'
 }
 
+# _swbp_prov_activate [<commit>] — M2b criterion 2: record the DURABLE
+# activation boundary in scripts/.provenance/activation (committed in-tree; the
+# verifier reads it from the inspected tip, so it cannot be recomputed away by
+# narrowing the checked range). Default target: HEAD. Monotonic — refuses to
+# move the boundary backward (the new target must be the current one or a
+# descendant). Stages the file; the operator commits it.
+_swbp_prov_activate() {
+  command -v git >/dev/null 2>&1 || { echo "git-provenance: git not found" >&2; return 1; }
+  git rev-parse --git-dir >/dev/null 2>&1 \
+    || { echo "git-provenance: not a git repo — run from the project root" >&2; return 1; }
+  local target target_sha
+  target="${1:-HEAD}"
+  target_sha="$(git rev-parse --verify "${target}^{commit}" 2>/dev/null)" \
+    || { echo "git-provenance: cannot resolve commit '$target'" >&2; return 1; }
+  local base fpr=""
+  base="$(_swbp_prov_base)"
+  if [ -f "$base/active" ]; then
+    fpr="$(head -1 "$base/active" 2>/dev/null | tr -d '[:space:]')"
+  fi
+  if [ -z "$fpr" ] && _swbp_prov_has_key; then
+    fpr="$(gpg --homedir "$(_swbp_prov_gpg_home)" --batch --list-keys --with-colons 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}')"
+  fi
+  local anchor_file="scripts/.provenance/activation"
+  if [ -f "$anchor_file" ]; then
+    local prev
+    prev="$(sed -n 's/^commit=//p' "$anchor_file" | head -1 | tr -d '[:space:]')"
+    if [ -n "$prev" ] && [ "$prev" != "$target_sha" ] \
+       && ! git merge-base --is-ancestor "$prev" "$target_sha" 2>/dev/null; then
+      echo "git-provenance: refusing to move the activation boundary backward (current $prev is not an ancestor of $target_sha); activation is monotonic" >&2
+      return 1
+    fi
+  fi
+  mkdir -p "$(dirname "$anchor_file")"
+  {
+    printf 'commit=%s\n' "$target_sha"
+    printf 'fingerprint=%s\n' "${fpr:-none}"
+    printf 'activated=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$anchor_file"
+  git add "$anchor_file" || return 1
+  echo "git-provenance: activation boundary set to $target_sha in $anchor_file (staged). Commit it; the verifier gates strict descendants of this commit." >&2
+}
+
 _swbp_prov_rotate() {
   _swbp_prov_has_key || { echo "git-provenance: no existing key to rotate" >&2; return 1; }
   local base old_fpr new_fpr
@@ -445,9 +487,10 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "${1:-}" in
     init)   _swbp_prov_init; exit $? ;;
     active) _swbp_prov_active; exit $? ;;
+    activate) shift; _swbp_prov_activate "${1:-}"; exit $? ;;
     rotate) _swbp_prov_rotate; exit $? ;;
     revoke) shift; _swbp_prov_revoke "${1:-}" "revoked"; exit $? ;;
     retire) shift; _swbp_prov_revoke "${1:-}" "retired"; exit $? ;;
-    *) echo "usage: git-provenance.sh {init|rotate|revoke <fpr>|retire <fpr>|active}" >&2; exit 2 ;;
+    *) echo "usage: git-provenance.sh {init|rotate|revoke <fpr>|retire <fpr>|active|activate [<commit>]}" >&2; exit 2 ;;
   esac
 fi
