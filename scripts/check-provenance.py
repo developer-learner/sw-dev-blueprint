@@ -155,7 +155,9 @@ def commit_tampers_evidence(repo, sha):
             continue
         for line in out.splitlines():
             parts = line.split("\t")
-            if parts and parts[0] and parts[0][0] in ("M", "D", "R"):
+            # M modify, D delete, R rename, T type-change (e.g. file -> symlink);
+            # only A (add) is a legitimate new record.
+            if parts and parts[0] and parts[0][0] in ("M", "D", "R", "T"):
                 tampered.add(parts[-1])
     return sorted(tampered)
 
