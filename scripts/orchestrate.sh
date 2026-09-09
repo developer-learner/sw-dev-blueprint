@@ -2377,7 +2377,15 @@ The previous attempt failed with: $last_fail. Fix the cause, do not just retry t
     if [ "$pass" != "1" ]; then
       :  # lint evidence set above; skip tests — the retry re-runs them
     elif [ "${#mapped[@]}" -gt 0 ]; then
-      MYPY_TASK_FILE="$file" run_tests "${mapped[@]}"
+      # Task-scoped mypy applies only to a Python task file; a JS/HTML/CSS
+      # coder file has no mypy target, so run its mapped tests WITHOUT
+      # MYPY_TASK_FILE (the type gate then skips mypy instead of dying on a
+      # non-.py target). Polyglot projects — a Python API + a JS frontend —
+      # otherwise halt the moment the DAG's final task is a frontend file.
+      case "$file" in
+        *.py) MYPY_TASK_FILE="$file" run_tests "${mapped[@]}" ;;
+        *)    run_tests "${mapped[@]}" ;;
+      esac
       [ "$TESTS_RC" -eq 0 ] || { pass=0; }
       evidence="mapped tests failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
     else
