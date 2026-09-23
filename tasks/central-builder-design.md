@@ -1,4 +1,4 @@
-# Central builder — design (D-186, PROPOSED)
+# Central builder — design (D-186, APPROVED)
 
 Status: **APPROVED by the CEO 2026-09-22.**
 
