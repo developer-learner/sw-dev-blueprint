@@ -100,7 +100,14 @@ fi
 if [ -f "$APP/.swbp" ]; then
   # Builder-targeted app: its commits gate through the pinned snapshot's
   # hooks. Untracked config — nothing lands in the app's history.
-  git -C "$APP" config core.hooksPath "$ROOT/.githooks"
+  # A linked worktree shares .git/config with its main checkout — writing
+  # there would re-point the MAIN checkout's hooks too. Scope it per worktree.
+  if [ "$(git -C "$APP" rev-parse --git-dir)" != "$(git -C "$APP" rev-parse --git-common-dir)" ]; then
+    git -C "$APP" config extensions.worktreeConfig true
+    git -C "$APP" config --worktree core.hooksPath "$ROOT/.githooks"
+  else
+    git -C "$APP" config core.hooksPath "$ROOT/.githooks"
+  fi
 fi
 if [ "$CMD" = orchestrate ]; then
   # orchestrate's own guard records this, but it returns early under a

@@ -772,3 +772,26 @@ def test_new_project_targeted_is_born_without_a_plane(tmp_path):
     gate = subprocess.run(["bash", str(PLANE / "scripts" / "phase-gate.sh"), "manifest",
                            "HEAD"], cwd=app, capture_output=True, text=True)
     assert gate.returncode == 0, gate.stdout
+
+
+def test_swbp_in_a_worktree_leaves_the_main_checkouts_hooks_alone(tmp_path):
+    builder, _old, new = _builder_repo(tmp_path)
+    main = _swbp_app(tmp_path, new)
+    env = {**os.environ, **IDENT, "XDG_CACHE_HOME": str(tmp_path / "cache")}
+    subprocess.run(["git", "-C", str(main), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(main), "-c", "core.hooksPath=/dev/null",
+                    "commit", "-qm", "seed"], check=True, env=env)
+    subprocess.run(["git", "-C", str(main), "config", "core.hooksPath", ".githooks"],
+                   check=True)
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "-C", str(main), "worktree", "add", "-q", "-b", "side", str(wt)],
+                   check=True, env=env)
+    r = _run_swbp(builder, tmp_path, "tpm-view", "--app", str(wt))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+    def hp(repo):
+        return subprocess.run(["git", "-C", str(repo), "config", "core.hooksPath"],
+                              capture_output=True, text=True).stdout.strip()
+
+    assert hp(main) == ".githooks"
+    assert hp(wt).endswith(f"swbp-plane/{new}/.githooks")
