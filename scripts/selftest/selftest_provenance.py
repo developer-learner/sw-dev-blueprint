@@ -251,7 +251,11 @@ def test_source_shape_all_pipeline_sites_route_through_broker():
     # provider-returned model: meta sidecar at BOTH model call sites, and
     # the coder prompt is byte-captured (it was not archived before)
     assert orch.count("SWBP_LLM_META_OUT=") >= 2
-    assert 'tee "$LOG_DIR/$id-a$attempt.prompt"' in orch
+    # byte-captured to the attempt's prompt file, which is also the exact
+    # request body (parallel coder calls, 2026-09-23: a prefetched reply is
+    # reused only when this file matches its prompt byte-for-byte)
+    assert '> "$LOG_DIR/$id-a$attempt.prompt"' in orch
+    assert '< "$LOG_DIR/$id-a$attempt.prompt"' in orch
     assert "$FROZEN_V.$id.$coder_revs.$attempt.prompt" in orch
 
     # refreeze: the freeze commit

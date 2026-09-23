@@ -96,7 +96,13 @@ extract() {
     || { echo "drive-coder: could not extract $1() from orchestrate.sh" >&2; exit 65; }
   printf '%s\n' "$body"
 }
+# Parallel coder calls (2026-09-23): run_coder builds its prompt through
+# coder_instr and checks prefetch_take; with no prefetch dir the take is a
+# no-op and the call is made exactly as before.
+PREFETCH_DIR="$STATE_DIR/prefetch"
 eval "$(extract build_context)"
+eval "$(extract coder_instr)"
+eval "$(extract prefetch_take)"
 eval "$(extract run_coder)"
 
 # The call site, shaped like orchestrate.sh's: run_coder as an if-condition

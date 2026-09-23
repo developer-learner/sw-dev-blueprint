@@ -2274,7 +2274,7 @@ def test_coder_context_never_ships_contracts():
     context is brief + existing file, never the frozen contracts."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
     assert re.search(
-        r'\{ printf \'%s\\n\' "\$instr"; build_context "\$existing"; \} \\',
+        r'\{ printf \'%s\\n\' "\$instr"; build_context "\$existing"; \} (\\|> "\$LOG_DIR)',
         source,
     ), "run_coder context must be brief + existing file only"
     assert '"ERD:$APPROVED/ERD.md"' not in source

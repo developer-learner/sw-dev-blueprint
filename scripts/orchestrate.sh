@@ -300,6 +300,15 @@ SWBP_RUN_BUDGET="${SWBP_RUN_BUDGET:-1200}"
 # 4096, and the correct next step for a persistent budget bind is a seat
 # or prompt fix, not raising the default silently.
 SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-4096}"
+# Parallel coder calls (2026-09-23): how many coder requests may be in flight
+# at once. 1 = strictly sequential (the pre-2026-09-23 behavior). Only the
+# model CALL overlaps: every reply is still applied, gated, tested and
+# committed one task at a time in topological order, and a prefetched reply
+# is used only when the prompt the loop builds at consume time is
+# byte-identical to the one that produced it. Set >1 only against a server
+# that batches concurrent requests (Splash, LM Studio --parallel, mtplx
+# --max-batch); a non-batching server (oMLX) gets slower, not faster.
+SWBP_PARALLEL_CODERS="${SWBP_PARALLEL_CODERS:-1}"
 RUN_T0=$(date +%s)
 
 # Operate on the CHILD tree, not $0's directory. Under a D-168 plane snapshot
@@ -331,6 +340,7 @@ STATE_DIR=".pipeline-state"
 TASK_STATE="$STATE_DIR/tasks"
 BRIEF_DIR="$STATE_DIR/briefs"
 LOG_DIR="$STATE_DIR/logs"
+PREFETCH_DIR="$STATE_DIR/prefetch"
 ESC_DIR="$STATE_DIR/escalations"
 COMPLETION_LEDGER=".pipeline-completions.json"
 COMPLETION_LEDGER_TOOL="$PLANE_DIR/scripts/completion-ledger.py"
@@ -509,6 +519,9 @@ guard_task_state() {
 # timings.tsv gets one row per phase boundary; the budget halt prints it, and
 # post-run tuning reads it — no historical run had per-phase numbers, so every
 # "where did 45 minutes go" was guesswork.
+case "$SWBP_PARALLEL_CODERS" in
+  ''|*[!0-9]*|0) die "SWBP_PARALLEL_CODERS must be a positive integer, got '$SWBP_PARALLEL_CODERS'" ;;
+esac
 case "$SWBP_RUN_BUDGET" in
   ''|*[!0-9]*) die "SWBP_RUN_BUDGET must be a non-negative integer (seconds), got '$SWBP_RUN_BUDGET'" ;;
 esac
@@ -548,6 +561,7 @@ record_measurement() {  # record_measurement <rc> <phase> <task>
 # unaccounted wall-clock window.
 record_exit() {
   local rc=$?
+  prefetch_reap 2>/dev/null || true  # no parallel coder call outlives the run
   local phase task last_ts
   phase=$( [ -f "$STATE_DIR/phase" ] && cat "$STATE_DIR/phase" 2>/dev/null || echo "" )
   task=$( [ -f "$STATE_DIR/task_target" ] && cat "$STATE_DIR/task_target" 2>/dev/null || echo "" )
@@ -1153,19 +1167,164 @@ em_call() {
 # D-38), shell extracts and writes exactly the named file. A response that
 # omits the block or names a different path is a coder FAILURE (evidence for
 # retry/consult), never written to disk.
-run_coder() {
-  local id="$1" file="$2" brief="$3" attempt="$4"
-  local phase_start; phase_start=$(git rev-parse HEAD)
-  write_state phase task
-  write_state task_target "$file"
-  mark "coder $id attempt $attempt start ($file)"
+# task_attempt_brief <id> <file> [quiet] — the exact brief the DAG loop hands
+# the coder for this task's NEXT attempt (S3 stale-brief rule + the one-file
+# rider + the prior failure). Shared with prefetch_launch; see coder_instr.
+task_attempt_brief() {
+  local id="$1" file="$2" quiet="${3:-}" brief bv last_fail attempt_brief
+  # S3 (2026-08-06): a brief revision outlives the spec version that shaped
+  # it if a re-freeze lands between consult and re-attempt (M33: a stale v74
+  # brief chased the v77 oracle — ~25 min + 4 coder calls for done work).
+  # Briefs are stamped with the FROZEN_V at write time; a missing or stale
+  # stamp means UNKNOWN, so the override is ignored and the brief is
+  # re-derived from the current (plan-gated) spec instead.
+  brief=$(cat "$BRIEF_DIR/$id" 2>/dev/null || true)
+  if [ -n "$brief" ]; then
+    bv=$(cat "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true)
+    if [ "$bv" != "$FROZEN_V" ]; then
+      [ -n "$quiet" ] || echo "brief for $id is stale (spec v${bv:-<unknown>} vs frozen v$FROZEN_V) — re-deriving from the current plan" >&2
+      brief=""
+    fi
+  fi
+  [ -n "$brief" ] || brief=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field brief)
+  attempt_brief="$brief
+
+Write EXACTLY one file: $file — the gate rejects any other change, including new files. Before finishing, re-open $file and confirm it satisfies every acceptance condition in this brief."
+  last_fail=$(cat "$TASK_STATE/$id.lastfail" 2>/dev/null || true)
+  [ -n "$last_fail" ] && attempt_brief="$attempt_brief
+
+The previous attempt failed with: $last_fail. Fix the cause, do not just retry the same content. NOTE: the file may already contain a previous attempt's partial work — read its CURRENT state, find the SMALLEST remaining delta that satisfies the brief, and emit only that; if the file already satisfies the brief, reply === NO CHANGES ===. Do not re-describe or re-apply work that is already present."
+  printf '%s' "$attempt_brief"
+}
+
+# task_no_edit <id> <file> — prints "1 <reason>" when the coder must never
+# be invoked for this task (D-65 frozen no_edit_files, or the inverted
+# delta-scoped default), else "0". Shared with prefetch_launch.
+task_no_edit() {
+  local id="$1" file="$2" no_edit
+  # D-65: files the frozen spec declares unchanged never reach the coder.
+  # "Change nothing" is a negative constraint a local model cannot reliably
+  # obey (testchat M16: one no-edit coder call damaged index.html, another
+  # added redundant code — both briefs said NO EDIT NEEDED). The declaration
+  # lives in frozen contracts.no_edit_files (human-approved at refreeze), so
+  # the skipped file's provenance is the spec, not luck. Acceptance
+  # (mapped tests + smoke_check) still runs in full.
+  no_edit=$(python3 -c "import json,sys; c=json.load(open('scripts/.approved/contracts.json')); print(1 if sys.argv[1] in c.get('no_edit_files', []) else 0)" "$file")
+  if [ "$no_edit" = "1" ]; then
+    printf '1 frozen contracts.no_edit_files'
+    return 0
+  fi
+  # Inverted default (see the delta-scoped block above): an EXISTING file the
+  # current delta does not touch never reaches the coder, whatever the
+  # hand-maintained list says. A file that does not exist yet stays editable
+  # so it can be created.
+  if [ "$DELTA_SCOPED" = "1" ] && [ -e "$file" ]; then
+    case "$AFFECTED_IDS" in
+      *" $id "*) ;;
+      *) printf '1 not touched by delta v%s' "$FROZEN_V"; return 0 ;;
+    esac
+  fi
+  printf '0'
+}
+
+# prefetch_launch <next-id> — parallel coder calls (2026-09-23). Start the
+# model call for every OTHER task that is ready now (pending, all deps done,
+# first attempt, coder needed), up to SWBP_PARALLEL_CODERS in flight counting
+# the sequential call about to run. Each call runs in the background into
+# $PREFETCH_DIR/<id>/ and touches nothing else: no working-tree write, no
+# state change, no commit. The DAG loop still processes tasks one at a time;
+# run_coder consumes a prefetched reply only when its own freshly built prompt
+# is byte-identical (prefetch_take) — otherwise the reply is discarded and the
+# call is made normally, so a prefetch can save time but never change what a
+# task is judged on.
+prefetch_launch() {
+  [ "$SWBP_PARALLEL_CODERS" -gt 1 ] || return 0
+  mkdir -p "$PREFETCH_DIR"
+  local next="$1" inflight=0 slots d cand cfile deps_ok dep ne ob
+  for d in "$PREFETCH_DIR"/*/; do
+    [ -d "$d" ] && [ ! -f "$d/rc" ] && inflight=$((inflight + 1))
+  done
+  slots=$((SWBP_PARALLEL_CODERS - 1 - inflight))
+  for cand in $TOPO; do
+    [ "$slots" -gt 0 ] || break
+    [ "$cand" = "$next" ] && continue
+    [ "$(tstat "$cand")" = "pending" ] || continue
+    [ "$(counter "$cand" strikes)" = "0" ] || continue
+    [ -d "$PREFETCH_DIR/$cand" ] && continue
+    deps_ok=1
+    for dep in $(python3 $PLANE_DIR/scripts/validate-plan.py --task "$cand" --field depends_on); do
+      [ "$(tstat "$dep")" = "done" ] || { deps_ok=0; break; }
+    done
+    [ "$deps_ok" = "1" ] || continue
+    cfile=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$cand" --field file)
+    ne=$(task_no_edit "$cand" "$cfile")
+    [ "${ne%% *}" = "1" ] && continue
+    d="$PREFETCH_DIR/$cand"
+    mkdir -p "$d"
+    ob=""
+    [ -f "$cfile" ] && ob="$SWBP_CODER_EDIT_MAX_OUTPUT"
+    { printf '%s\n' "$(coder_instr "$cfile" "$(task_attempt_brief "$cand" "$cfile" quiet)")"
+      [ -f "$cfile" ] && build_context "existing:$cfile"; } > "$d/prompt"
+    (
+      trap - EXIT
+      rc=0
+      SWBP_MAX_OUTPUT="$ob" SWBP_LLM_META_OUT="$d/meta" \
+        timeout "$AGENT_TIMEOUT" $PLANE_DIR/scripts/llm-call.sh coder "$PLANE_DIR/.opencode/prompts/coder.md" \
+          --max-time "$AGENT_TIMEOUT" < "$d/prompt" > "$d/raw" 2> "$d/log" || rc=$?
+      printf '%s\n' "$rc" > "$d/rc"
+    ) &
+    printf '%s\n' "$!" > "$d/pid"
+    mark "coder $cand prefetch start ($cfile)"
+    echo "  parallel: coder call for $cand ($cfile) started alongside"
+    slots=$((slots - 1))
+  done
+}
+
+# prefetch_take <id> <attempt> — move a finished, successful prefetched reply
+# into the attempt's log slot when its prompt is byte-identical to the one
+# run_coder just wrote. Waits for an in-flight prefetch of the same task
+# (bounded by the call's own timeout). Any mismatch or failure discards it.
+prefetch_take() {
+  local id="$1" attempt="$2" d="$PREFETCH_DIR/$1" pid
+  [ "$attempt" = "1" ] && [ -d "$d" ] || return 1
+  pid=$(cat "$d/pid" 2>/dev/null || true)
+  while [ ! -f "$d/rc" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+  done
+  if [ "$(cat "$d/rc" 2>/dev/null || echo x)" = "0" ] \
+     && cmp -s "$d/prompt" "$LOG_DIR/$id-a$attempt.prompt"; then
+    cp "$d/raw" "$LOG_DIR/$id-a$attempt.raw"
+    cp "$d/log" "$LOG_DIR/$id-a$attempt.log"
+    cp "$d/meta" "$LOG_DIR/$id-a$attempt.meta" 2>/dev/null || : > "$LOG_DIR/$id-a$attempt.meta"
+    rm -rf "$d"
+    return 0
+  fi
+  rm -rf "$d"
+  return 1
+}
+
+# prefetch_reap — at run exit, stop any prefetch still in flight so no
+# orphaned model call outlives the run.
+prefetch_reap() {
+  local d pid
+  for d in "$PREFETCH_DIR"/*/; do
+    [ -d "$d" ] || continue
+    pid=$(cat "$d/pid" 2>/dev/null || true)
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  done
+  rm -rf "$PREFETCH_DIR"
+}
+
+# coder_instr <file> <brief> — the coder instruction text for one call. Shared
+# by run_coder and prefetch_launch so a prefetched prompt is byte-identical to
+# the one the sequential loop would build for the same task state.
+coder_instr() {
+  local file="$1" brief="$2"
   # D-59: existing files are EDITED via anchored blocks, never retyped —
   # full-file regeneration made local coders silently delete working logic
   # (testchat M5..M7). New files still arrive as one sentinel-wrapped file.
-  local instr existing=""
   if [ -f "$file" ]; then
-    existing="existing:$file"
-    instr="$brief
+    printf '%s' "$brief
 
 Reply with ONLY edit blocks in this exact format, nothing else:
 <<<<<<< SEARCH
@@ -1183,7 +1342,7 @@ Rules:
 - Your reply's VERY FIRST line must be '<<<<<<< SEARCH' (or the NO CHANGES line). Do not analyze, plan, or explain anything — every design decision is already made in the brief. Prose before the blocks burns your output budget and truncates the edit mid-block.
 - Every block must be COMPLETE working code — never a stub, placeholder, or '...' body. If the brief needs a new function, write its full body in the block."
   else
-    instr="$brief
+    printf '%s' "$brief
 
 Reply with ONLY this, nothing before or after it:
 === FILE: $file ===
@@ -1193,6 +1352,17 @@ Your reply's VERY FIRST line must be the === FILE: line. Do not analyze,
 plan, or explain anything — every design decision is already made in the
 brief; transcribe it into working code immediately."
   fi
+}
+
+run_coder() {
+  local id="$1" file="$2" brief="$3" attempt="$4"
+  local phase_start; phase_start=$(git rev-parse HEAD)
+  write_state phase task
+  write_state task_target "$file"
+  mark "coder $id attempt $attempt start ($file)"
+  local instr existing=""
+  [ -f "$file" ] && existing="existing:$file"
+  instr=$(coder_instr "$file" "$brief")
   # Edit-mode replies are small by design (a few anchored blocks); cap them
   # at half the create-mode budget so a runaway attempt fails in half the
   # wall-clock time (testchat M17). Create mode keeps the full default.
@@ -1204,13 +1374,18 @@ brief; transcribe it into working code immediately."
   # T7 M1 (D-174): the coder prompt was never byte-archived before — tee it
   # alongside the reply so the [task] trailer's Prompt-SHA256 is computable
   # and re-verifiable against the durable archive.
-  { printf '%s\n' "$instr"; build_context "$existing"; } \
-    | tee "$LOG_DIR/$id-a$attempt.prompt" \
-    | SWBP_MAX_OUTPUT="$out_budget" SWBP_LLM_META_OUT="$LOG_DIR/$id-a$attempt.meta" \
+  { printf '%s\n' "$instr"; build_context "$existing"; } > "$LOG_DIR/$id-a$attempt.prompt"
+  if prefetch_take "$id" "$attempt"; then
+    mark "coder $id attempt $attempt: prefetched reply reused (identical prompt)"
+    echo "  coder reply for $id arrived from a parallel prefetch (identical prompt)"
+  else
+    SWBP_MAX_OUTPUT="$out_budget" SWBP_LLM_META_OUT="$LOG_DIR/$id-a$attempt.meta" \
       timeout "$AGENT_TIMEOUT" $PLANE_DIR/scripts/llm-call.sh coder "$PLANE_DIR/.opencode/prompts/coder.md" \
         --max-time "$AGENT_TIMEOUT" \
-    > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
-    || { CODER_EVIDENCE="coder call failed: $(tail -3 "$LOG_DIR/$id-a$attempt.log" | tr '\n' ' ')"; write_state phase ""; return 1; }
+      < "$LOG_DIR/$id-a$attempt.prompt" \
+      > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
+      || { CODER_EVIDENCE="coder call failed: $(tail -3 "$LOG_DIR/$id-a$attempt.log" | tr '\n' ' ')"; write_state phase ""; return 1; }
+  fi
   # Coder-evidence archive (Phase 6, D-115; P3-1): the flat log name above is a
   # per-run scratchpad — a brief_wrong revision resets the strike counter, so
   # a same-slot retry would silently overwrite the prior brief's only
@@ -2267,21 +2442,6 @@ while :; do
     [ -n "$line" ] && mapped+=("$line")
   done <<< "$mapped_out"
   smoke=$(python3 -c "import json,sys; cs=json.load(open('scripts/.approved/contracts.json')).get('smoke_checks',{}); print(cs.get(sys.argv[1],''))" "$file")
-  # S3 (2026-08-06): a brief revision outlives the spec version that shaped
-  # it if a re-freeze lands between consult and re-attempt (M33: a stale v74
-  # brief chased the v77 oracle — ~25 min + 4 coder calls for done work).
-  # Briefs are stamped with the FROZEN_V at write time; a missing or stale
-  # stamp means UNKNOWN, so the override is ignored and the brief is
-  # re-derived from the current (plan-gated) spec instead.
-  brief=$(cat "$BRIEF_DIR/$id" 2>/dev/null || true)
-  if [ -n "$brief" ]; then
-    bv=$(cat "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true)
-    if [ "$bv" != "$FROZEN_V" ]; then
-      echo "brief for $id is stale (spec v${bv:-<unknown>} vs frozen v$FROZEN_V) — re-deriving from the current plan"
-      brief=""
-    fi
-  fi
-  [ -n "$brief" ] || brief=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field brief)
   strikes=$(counter "$id" strikes)
   echo "--- Task $id -> $file (strike $((strikes + 1))/$MAX_TASK_STRIKES) ---"
 
@@ -2295,33 +2455,12 @@ while :; do
     git rev-parse HEAD > "$TASK_STATE/$id.lintbase" 2>/dev/null || : > "$TASK_STATE/$id.lintbase"
   fi
 
-  attempt_brief="$brief
+  attempt_brief=$(task_attempt_brief "$id" "$file")
+  prefetch_launch "$id"
 
-Write EXACTLY one file: $file — the gate rejects any other change, including new files. Before finishing, re-open $file and confirm it satisfies every acceptance condition in this brief."
-  last_fail=$(cat "$TASK_STATE/$id.lastfail" 2>/dev/null || true)
-  [ -n "$last_fail" ] && attempt_brief="$attempt_brief
-
-The previous attempt failed with: $last_fail. Fix the cause, do not just retry the same content. NOTE: the file may already contain a previous attempt's partial work — read its CURRENT state, find the SMALLEST remaining delta that satisfies the brief, and emit only that; if the file already satisfies the brief, reply === NO CHANGES ===. Do not re-describe or re-apply work that is already present."
-
-  # D-65: files the frozen spec declares unchanged never reach the coder.
-  # "Change nothing" is a negative constraint a local model cannot reliably
-  # obey (testchat M16: one no-edit coder call damaged index.html, another
-  # added redundant code — both briefs said NO EDIT NEEDED). The declaration
-  # lives in frozen contracts.no_edit_files (human-approved at refreeze), so
-  # the skipped file's provenance is the spec, not luck. Acceptance below
-  # (mapped tests + smoke_check) still runs in full.
-  no_edit=$(python3 -c "import json,sys; c=json.load(open('scripts/.approved/contracts.json')); print(1 if sys.argv[1] in c.get('no_edit_files', []) else 0)" "$file")
-  no_edit_reason="frozen contracts.no_edit_files"
-  # Inverted default (see the delta-scoped block above): an EXISTING file the
-  # current delta does not touch never reaches the coder, whatever the
-  # hand-maintained list says. A file that does not exist yet stays editable
-  # so it can be created.
-  if [ "$no_edit" != "1" ] && [ "$DELTA_SCOPED" = "1" ] && [ -e "$file" ]; then
-    case "$AFFECTED_IDS" in
-      *" $id "*) ;;
-      *) no_edit=1; no_edit_reason="not touched by delta v$FROZEN_V" ;;
-    esac
-  fi
+  ne=$(task_no_edit "$id" "$file")
+  no_edit="${ne%% *}"
+  no_edit_reason="${ne#* }"
 
   # acceptance = projection of the frozen oracle (D-28) + optional smoke.
   # A coder call can now fail before any file exists (bad/missing sentinel

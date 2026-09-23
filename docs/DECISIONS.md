@@ -21,6 +21,43 @@
 
 ## Decisions
 
+## D-187 — 2026-09-23 — Parallel coder calls: overlap the model call, never the judgment
+
+**Decision:** When several plan tasks are ready at once (pending, all
+dependencies done, first attempt, coder needed), the orchestrator starts their
+coder calls together, up to `SWBP_PARALLEL_CODERS` in flight (default 1 =
+sequential, the prior behavior). Each extra call runs in the background into
+`.pipeline-state/prefetch/<id>/` and touches nothing else. The DAG loop is
+unchanged: tasks are still applied, gated, linted, tested and committed one at
+a time in topological order. `run_coder` reuses a prefetched reply only when
+the prompt it builds at consume time is byte-identical to the prefetched one;
+any difference (a revised brief, a retry carrying failure feedback, a changed
+file) discards the reply and makes the call normally. Retried tasks and
+no-edit files are never prefetched; leftover calls are killed at run exit.
+The instruction text, attempt brief and no-edit rule are single shared
+functions (`coder_instr`, `task_attempt_brief`, `task_no_edit`) so the two
+paths cannot drift.
+
+**Alternatives considered:** (a) Concurrent task execution in separate
+worktrees — rejected: every lane gate assumes one file changes at a time in
+one tree; parallel apply/test/commit would weaken INV-2 for a gain the model
+call alone captures. (b) Enabling by default — rejected: a non-batching
+server (oMLX measured 37.8 → 29 tok/s at C=4) gets slower; the operator sets
+it per seat. (c) Trusting a prefetched reply without prompt comparison —
+rejected: identical-prompt reuse is what makes a prefetch unable to change
+what a task is judged on.
+
+**Reason:** The coder call is the slow step and batching servers serve
+concurrent requests at little per-request cost (Splash measured 111 tok/s at
+C=1, 171 at C=2, 232 at C=4). Before this, one milestone could only ever
+reach C=1; parallelism required separate apps.
+
+**Do not suggest:** Parallel apply/commit; reusing a prefetched reply whose
+prompt differs; prefetching a retry or a no-edit file; defaulting
+`SWBP_PARALLEL_CODERS` above 1 without knowing the seat batches.
+
+---
+
 ## D-186 — 2026-09-22 — Central builder: apps are built from outside, never host the plane
 
 **Status:** APPROVED by the CEO 2026-09-22. Design and stages:
