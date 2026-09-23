@@ -40,11 +40,24 @@
 #   bundle carries the FULL contract bodies of exactly those files (plus the
 #   conservative unpinned carries, D-120). Optional leading --clipboard.
 set -euo pipefail
+# D-186 stage A: plane files resolve from the plane root (where this script
+# really lives, symlinks walked), app files from the working directory. In
+# every current mode both roots hold identical bytes; the split is what lets
+# the builder run against an app that carries no plane.
+_plane_self="$0"
+while [ -L "$_plane_self" ]; do
+  _plane_link="$(readlink "$_plane_self")"
+  case $_plane_link in
+    /*) _plane_self="$_plane_link" ;;
+    *) _plane_self="$(dirname "$_plane_self")/$_plane_link" ;;
+  esac
+done
+PLANE_DIR="${SWBP_PLANE_SNAPSHOT:-$(cd "$(dirname "$_plane_self")/.." && pwd -P)}"
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
 APPROVED="scripts/.approved"
-BUDGET_TOOL="scripts/context-budget.py"
-ALLOWED_ARTIFACTS=$(python3 scripts/spec_artifacts.py describe) || {
+BUDGET_TOOL="$PLANE_DIR/scripts/context-budget.py"
+ALLOWED_ARTIFACTS=$(python3 $PLANE_DIR/scripts/spec_artifacts.py describe) || {
   echo "tpm-pack: shared spec-artifact policy unavailable" >&2
   exit 1
 }
@@ -190,13 +203,13 @@ HDR
   fi
   rm -f "$role_slice"
   schema_slice="$(mktemp "${TMPDIR:-/tmp}/schema-slice.XXXXXX")"
-  if [ -f scripts/schemas/contracts.schema.json ] \
+  if [ -f $PLANE_DIR/scripts/schemas/contracts.schema.json ] \
     && python3 -c 'import json, sys; json.load(open(sys.argv[1])); json.dump(json.load(open(sys.argv[1])), sys.stdout, separators=(",", ":"), ensure_ascii=False)' \
-      scripts/schemas/contracts.schema.json > "$schema_slice" 2>/dev/null \
-    && accept_slice schema-slice "$schema_slice" scripts/schemas/contracts.schema.json; then
+      $PLANE_DIR/scripts/schemas/contracts.schema.json > "$schema_slice" 2>/dev/null \
+    && accept_slice schema-slice "$schema_slice" $PLANE_DIR/scripts/schemas/contracts.schema.json; then
     emit "$schema_slice" "scripts/schemas/contracts.schema.json (minified, review 2026-08-13)"
   else
-    [ -f scripts/schemas/contracts.schema.json ] && emit scripts/schemas/contracts.schema.json
+    [ -f $PLANE_DIR/scripts/schemas/contracts.schema.json ] && emit $PLANE_DIR/scripts/schemas/contracts.schema.json scripts/schemas/contracts.schema.json
     echo "tpm-pack: schema minification unavailable — shipped the full schema" >&2
   fi
   rm -f "$schema_slice"
@@ -214,7 +227,7 @@ HDR
       # full standing ERD loudly (stderr — the bundle stays clean).
       summary="$(mktemp "${TMPDIR:-/tmp}/standing-summary.XXXXXX")"
       if [ -f "$APPROVED/ERD.md" ] \
-        && python3 scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
+        && python3 $PLANE_DIR/scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
         && accept_slice standing-summary "$summary" "$APPROVED/ERD.md"; then
         emit "$summary" "standing-summary.md (generated from ERD.md — standing rules + per-file map, D-117)"
       else
@@ -240,7 +253,7 @@ HDR
       # artifact remains the loud fallback if generation fails.
       summary="$(mktemp "${TMPDIR:-/tmp}/standing-summary.XXXXXX")"
       if [ -f "$APPROVED/ERD.md" ] \
-        && python3 scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
+        && python3 $PLANE_DIR/scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
         && accept_slice standing-summary "$summary" "$APPROVED/ERD.md"; then
         emit "$summary" "standing-summary.md (generated from ERD.md — standing rules + per-file map, D-117)"
       else
@@ -251,7 +264,7 @@ HDR
     fi
     contracts_slice="$(mktemp "${TMPDIR:-/tmp}/contracts-delta.XXXXXX")"
     if [ -f "$APPROVED/contracts.json" ] \
-      && python3 scripts/contracts-delta.py --index "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null \
+      && python3 $PLANE_DIR/scripts/contracts-delta.py --index "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null \
       && accept_slice interface-index "$contracts_slice" "$APPROVED/contracts.json"; then
       active_inv="$(python3 - "$APPROVED" <<'PY'
 """D-140 informational line: the EXECUTOR's active build inventory for the
@@ -335,7 +348,7 @@ you named.
 HDR
   slice="$(mktemp "${TMPDIR:-/tmp}/contracts-bodies.XXXXXX")"
   if SWBP_CONTRACT_FILES="$*" \
-    python3 scripts/contracts-delta.py "$APPROVED/contracts.json" > "$slice" 2>/dev/null \
+    python3 $PLANE_DIR/scripts/contracts-delta.py "$APPROVED/contracts.json" > "$slice" 2>/dev/null \
     && accept_slice contracts-body-slice "$slice" "$APPROVED/contracts.json"; then
     emit "$slice" "$APPROVED/contracts.json — full bodies for: $*"
   else

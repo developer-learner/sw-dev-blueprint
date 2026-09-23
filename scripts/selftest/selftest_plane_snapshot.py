@@ -19,6 +19,7 @@ itself (drive-coder exercises orchestrate's execution path separately).
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -389,3 +390,80 @@ def test_whole_entrypoint_nondryrun_crosses_reexec_into_preflight(tmp_path):
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ---------------------------------------------------------------------------
+# D-186 stage A — two roots: plane files from the plane, app files from cwd.
+#
+# The central builder runs against an app that carries no plane. Stage A makes
+# every entry script resolve its own helpers (tools, prompts, schemas, settings)
+# from the plane root — where the script really lives, symlinks walked — and
+# only app artifacts (spec, tests, tasks, state) from the working directory.
+#
+# Behavioral proof: an app whose ONLY plane file is the entry-script symlink
+# still runs. Before stage A, tpm-view.sh died opening the app's
+# scripts/spec_artifacts.py. The static guard keeps a cwd-relative plane call
+# from creeping back into the converted scripts.
+# ---------------------------------------------------------------------------
+
+PLANE = Path(__file__).resolve().parents[2]
+SPEC = PLANE / "examples" / "minimal-spec"
+
+CONVERTED = [
+    "scripts/orchestrate.sh",
+    "scripts/refreeze.sh",
+    "scripts/tpm-pack.sh",
+    "scripts/tpm-agent.sh",
+    "scripts/tpm-view.sh",
+    "scripts/em-bench.sh",
+]
+
+# A plane path used as a command/argument without going through $PLANE_DIR.
+CWD_PLANE_CALL = re.compile(
+    r"(?:(?:python3|bash|source)\s+|^\s*|&&\s+|\|\s+|timeout\s+\S+\s+)"
+    r"scripts/[\w.-]+\.(?:py|sh)\b"
+    r"|(?<![\w/}])\.opencode/prompts/"
+    r"|(?<![\w/}])scripts/schemas/"
+)
+
+
+def _plane_less_app(tmp_path: Path) -> Path:
+    app = tmp_path / "app"
+    approved = app / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    for name in ("PRD.md", "ERD.md", "contracts.json"):
+        shutil.copy(SPEC / name, approved / name)
+    shutil.copytree(SPEC / "tests", app / "tests")
+    subprocess.run(["git", "init", "-q", str(app)], check=True)
+    (app / "scripts" / "tpm-view.sh").symlink_to(PLANE / "scripts" / "tpm-view.sh")
+    return app
+
+
+def test_entry_script_runs_in_an_app_that_carries_no_plane(tmp_path):
+    app = _plane_less_app(tmp_path)
+    r = subprocess.run(
+        ["bash", "scripts/tpm-view.sh"], cwd=app, capture_output=True, text=True
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    view = app / ".tpm" / "view"
+    assert (view / "contracts.json").is_file()
+    assert (view / "tests").is_dir()
+    # the app itself gained no plane files
+    assert sorted(p.name for p in (app / "scripts").iterdir()) == [
+        ".approved",
+        "tpm-view.sh",
+    ]
+
+
+def test_converted_scripts_make_no_cwd_relative_plane_calls():
+    offenders = []
+    for rel in CONVERTED:
+        for n, line in enumerate((PLANE / rel).read_text().splitlines(), 1):
+            code = line.strip()
+            if not code or code.startswith("#"):
+                continue
+            if re.search(r"\b(echo|die|printf|emit)\b", code):
+                continue  # messages and bundle labels name paths, they don't read them
+            if CWD_PLANE_CALL.search(line):
+                offenders.append(f"{rel}:{n}: {code}")
+    assert not offenders, "\n".join(offenders)

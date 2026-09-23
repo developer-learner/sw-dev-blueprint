@@ -257,7 +257,7 @@ def test_source_shape_all_pipeline_sites_route_through_broker():
     # refreeze: the freeze commit
     assert 'swbp_commit tpm "[refreeze' in refreeze
     assert 'git commit -m "[refreeze' not in refreeze
-    assert "source scripts/git-provenance.sh" in refreeze
+    assert "source $PLANE_DIR/scripts/git-provenance.sh" in refreeze
 
     # update-template: all four template commit sites
     assert update.count("swbp_commit human") >= 4

@@ -45,7 +45,7 @@ _spec = importlib.util.spec_from_file_location("catch_ledger", _CL_PATH)
 catch_ledger = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(catch_ledger)
 
-DEFAULT_INVENTORY = Path("scripts/gate-inventory.tsv")
+DEFAULT_INVENTORY = Path(__file__).resolve().parent / "gate-inventory.tsv"
 DEFAULT_LEDGER = Path(".catch-ledger.json")
 
 TIERED_KINDS = {"hard", "soft", "advisory"}

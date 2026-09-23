@@ -8709,7 +8709,8 @@ def test_group2_tpm_agent_view_mode_uses_view_settings_file(tmp_path):
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
     recorded = args_out.read_text()
-    assert "../../scripts/tpm-view-settings.json" in recorded, recorded
+    # D-186 stage A: resolved from the plane root (absolute), not cwd-relative
+    assert "/scripts/tpm-view-settings.json" in recorded, recorded
     assert "scripts/tpm-agent-settings.json" not in recorded, recorded
 
 

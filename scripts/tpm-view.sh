@@ -25,6 +25,19 @@
 #     cd .tpm/view && claude --settings ../../scripts/tpm-view-settings.json)
 #   or one step: scripts/tpm-agent.sh --view
 set -euo pipefail
+# D-186 stage A: plane files resolve from the plane root (where this script
+# really lives, symlinks walked), app files from the working directory. In
+# every current mode both roots hold identical bytes; the split is what lets
+# the builder run against an app that carries no plane.
+_plane_self="$0"
+while [ -L "$_plane_self" ]; do
+  _plane_link="$(readlink "$_plane_self")"
+  case $_plane_link in
+    /*) _plane_self="$_plane_link" ;;
+    *) _plane_self="$(dirname "$_plane_self")/$_plane_link" ;;
+  esac
+done
+PLANE_DIR="${SWBP_PLANE_SNAPSHOT:-$(cd "$(dirname "$_plane_self")/.." && pwd -P)}"
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
 APPROVED="scripts/.approved"
@@ -78,7 +91,7 @@ fi
 # 5. The write lane: outbox symlink -> .tpm/outbox (refreeze's pickup).
 ln -s ../outbox "$VIEW/outbox"
 
-ALLOWED=$(python3 scripts/spec_artifacts.py describe) || {
+ALLOWED=$(python3 $PLANE_DIR/scripts/spec_artifacts.py describe) || {
   echo "tpm-view: shared spec-artifact policy unavailable" >&2
   exit 1
 }
@@ -86,4 +99,4 @@ echo "tpm-view: materialized view at .tpm/view/ — src/ absent by construction"
 echo "  spec artifacts (policy): $ALLOWED"
 echo "  frozen tests: $(find "$VIEW/tests" -type f 2>/dev/null | wc -l | tr -d ' ') file(s)"
 echo "  escalations: $(ls "$VIEW/escalations" 2>/dev/null | wc -l | tr -d ' ') file(s)"
-echo "  launch: cd .tpm/view && claude --settings ../../scripts/tpm-view-settings.json"
+echo "  launch: cd .tpm/view && claude --settings $PLANE_DIR/scripts/tpm-view-settings.json"

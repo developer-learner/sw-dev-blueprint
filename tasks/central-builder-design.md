@@ -85,7 +85,7 @@ through the builder or be flagged. No constraint is relaxed by this design.
 
 | Stage | Change | Old path still works? |
 |---|---|---|
-| A | two-root split; `PLANE_DIR` threaded through all scripts; linked children still run via symlink + `PLANE_DIR` = snapshot | yes |
+| A ✅ 2026-09-22 | two-root split; `PLANE_DIR` threaded through all scripts; linked children still run via symlink + `PLANE_DIR` = snapshot | yes |
 | B | `scripts/swbp --app` launcher; generalize `plane_entry_guard` to all entries; untracked hooksPath setup | yes |
 | C | app pre-push template + `swbp-guard.yml` (report-first) | yes |
 | D | migrate **vortex**: delete links/manifests/pin/drift workflow, add `.swbp`; run its next real feature end-to-end via `swbp` (TPM→EM→coder) | vortex no, others yes |

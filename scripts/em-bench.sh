@@ -24,9 +24,22 @@
 # Requires: a running LLM server, models.env configured for the em role.
 set -euo pipefail
 
+# D-186 stage A: plane files resolve from the plane root (where this script
+# really lives, symlinks walked), app files from the working directory. In
+# every current mode both roots hold identical bytes; the split is what lets
+# the builder run against an app that carries no plane.
+_plane_self="$0"
+while [ -L "$_plane_self" ]; do
+  _plane_link="$(readlink "$_plane_self")"
+  case $_plane_link in
+    /*) _plane_self="$_plane_link" ;;
+    *) _plane_self="$(dirname "$_plane_self")/$_plane_link" ;;
+  esac
+done
+PLANE_DIR="${SWBP_PLANE_SNAPSHOT:-$(cd "$(dirname "$_plane_self")/.." && pwd -P)}"
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 
-BRIEF=".opencode/prompts/em.md"
+BRIEF="$PLANE_DIR/.opencode/prompts/em.md"
 ALL=0
 ENTRIES=()
 
@@ -40,7 +53,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -f "$BRIEF" ] || { echo "em-bench: brief not found: $BRIEF" >&2; exit 1; }
-[ -x scripts/llm-call.sh ] || { echo "em-bench: scripts/llm-call.sh missing" >&2; exit 1; }
+[ -x $PLANE_DIR/scripts/llm-call.sh ] || { echo "em-bench: $PLANE_DIR/scripts/llm-call.sh missing" >&2; exit 1; }
 
 # A diagnosis entry is replayable if it succeeded (verdict=) or failed in a
 # way the bench can score a fix for (invalid_json / schema_invalid).
@@ -79,8 +92,8 @@ for ENTRY in "${ENTRIES[@]}"; do
   mkdir -p "$replay_dir"
   cp "$BRIEF" "$replay_dir/brief-used.md"
 
-  if ! timeout 300 scripts/llm-call.sh em "$BRIEF" \
-        --schema scripts/schemas/diagnosis.schema.json --max-time 300 \
+  if ! timeout 300 $PLANE_DIR/scripts/llm-call.sh em "$BRIEF" \
+        --schema $PLANE_DIR/scripts/schemas/diagnosis.schema.json --max-time 300 \
       < "$ENTRY/prompt.txt" \
       > "$replay_dir/reply.json" 2> "$replay_dir/stderr.log"; then
     echo "  RESULT: call_failed"
@@ -90,8 +103,8 @@ for ENTRY in "${ENTRIES[@]}"; do
 
   # Stamp task_id the way the orchestrator does (D-71: it is never the
   # model's to echo), then validate. Any failure from here scores the reply.
-  if replay_verdict=$(python3 - "$replay_dir" "${task_id:-BENCH}" <<'PYEOF'
-import json, subprocess, sys
+  if replay_verdict=$(PLANE_DIR="$PLANE_DIR" python3 - "$replay_dir" "${task_id:-BENCH}" <<'PYEOF'
+import json, os, subprocess, sys
 rd, tid = sys.argv[1], sys.argv[2]
 try:
     d = json.load(open(f"{rd}/reply.json"))
@@ -101,7 +114,7 @@ if isinstance(d, dict):
     d["task_id"] = tid
 json.dump(d, open(f"{rd}/reply-stamped.json", "w"), indent=2)
 r = subprocess.run(
-    [sys.executable, "scripts/validate-plan.py", "--diagnosis", f"{rd}/reply-stamped.json"],
+    [sys.executable, os.environ["PLANE_DIR"] + "/scripts/validate-plan.py", "--diagnosis", f"{rd}/reply-stamped.json"],
     capture_output=True, text=True)
 if r.returncode != 0:
     sys.exit(1)

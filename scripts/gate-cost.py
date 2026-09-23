@@ -26,7 +26,7 @@ import sys
 import time
 from pathlib import Path
 
-DEFAULT_INVENTORY = Path("scripts/gate-inventory.tsv")
+DEFAULT_INVENTORY = Path(__file__).resolve().parent / "gate-inventory.tsv"
 
 
 def read_inventory(path: Path) -> list[list[str]]:

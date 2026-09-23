@@ -49,10 +49,23 @@
 #                                              on apply as part of the delta
 set -euo pipefail
 
+# D-186 stage A: plane files resolve from the plane root (where this script
+# really lives, symlinks walked), app files from the working directory. In
+# every current mode both roots hold identical bytes; the split is what lets
+# the builder run against an app that carries no plane.
+_plane_self="$0"
+while [ -L "$_plane_self" ]; do
+  _plane_link="$(readlink "$_plane_self")"
+  case $_plane_link in
+    /*) _plane_self="$_plane_link" ;;
+    *) _plane_self="$(dirname "$_plane_self")/$_plane_link" ;;
+  esac
+done
+PLANE_DIR="${SWBP_PLANE_SNAPSHOT:-$(cd "$(dirname "$_plane_self")/.." && pwd -P)}"
 cd "$(cd "$(dirname "$0")/.." && pwd -P)"
 # T7 M1 (D-174): provenance broker — the freeze commit carries
 # Swbp-Role: tpm (model = SWBP_TPM_MODEL when set, else "human").
-source scripts/git-provenance.sh
+source $PLANE_DIR/scripts/git-provenance.sh
 APPROVED="scripts/.approved"
 
 MODE="auto"
@@ -112,7 +125,7 @@ mkdir -p "$APPROVED" tests
 # ledger. The record is best-effort and must never mask the gate's verdict —
 # the die is the gate, the ledger is the witness.
 record_catch() {
-  python3 scripts/catch-ledger.py record --gate "$1" --spec-version "$NEW" \
+  python3 $PLANE_DIR/scripts/catch-ledger.py record --gate "$1" --spec-version "$NEW" \
     >/dev/null 2>&1 || true
 }
 
@@ -130,10 +143,10 @@ fi
 # --- Validate staging contents: only known artifact paths ---
 # D-104: refreeze and both TPM shuttle directions consume one policy; adding
 # an artifact at one boundary cannot silently leave another boundary stale.
-if ! ALLOWED_ARTIFACTS=$(python3 scripts/spec_artifacts.py describe); then
+if ! ALLOWED_ARTIFACTS=$(python3 $PLANE_DIR/scripts/spec_artifacts.py describe); then
   die "shared spec-artifact policy could not be read"
 fi
-if ! BAD=$(python3 scripts/spec_artifacts.py invalid-under "$IN"); then
+if ! BAD=$(python3 $PLANE_DIR/scripts/spec_artifacts.py invalid-under "$IN"); then
   die "shared spec-artifact policy could not validate staging"
 fi
 if [ -n "$BAD" ]; then
@@ -142,7 +155,7 @@ $BAD"
 fi
 
 CHANGED_DOCS=""
-for f in $(python3 scripts/spec_artifacts.py documents); do
+for f in $(python3 $PLANE_DIR/scripts/spec_artifacts.py documents); do
   [ -f "$IN/$f" ] && CHANGED_DOCS="$CHANGED_DOCS $f"
 done
 # Whole-suite TPM returns are common. Presence in staging does not make a
@@ -285,12 +298,12 @@ MERGED_CONTRACTS="$IN/contracts.json"
 if [ -f "$IN/contracts.json" ] && [ "$V" -gt 0 ] && [ -f "$APPROVED/contracts.json" ]; then
   mkdir -p .pipeline-state
   MERGED_CONTRACTS=".pipeline-state/refreeze-merged-contracts.json"
-  python3 scripts/contracts-merge.py "$APPROVED/contracts.json" "$IN/contracts.json" \
+  python3 $PLANE_DIR/scripts/contracts-merge.py "$APPROVED/contracts.json" "$IN/contracts.json" \
     > "$MERGED_CONTRACTS" \
     || die "staged contracts merge rejected (D-136/D-137) — see the id named above; the TPM stages only changed/new entries or explicit removals onto the standing contracts.json"
 fi
 
-if ! SPEC_DELTA_KIND=$(python3 scripts/check-spec-delta.py \
+if ! SPEC_DELTA_KIND=$(python3 $PLANE_DIR/scripts/check-spec-delta.py \
   --staging "$IN" --approved "$APPROVED" --repo . --current-version "$V" \
   --contracts "$MERGED_CONTRACTS"); then
   record_catch check-spec-delta
@@ -316,7 +329,7 @@ for _s5f in PRD.md ERD-DELTA.md; do
   [ -f "$IN/$_s5f" ] && S5_FILES="$S5_FILES $IN/$_s5f"
 done
 if [ -n "$S5_FILES" ]; then
-  python3 scripts/check-ac-postconditions.py $S5_FILES \
+  python3 $PLANE_DIR/scripts/check-ac-postconditions.py $S5_FILES \
     || { record_catch check-ac-postconditions; die "S5 rejected: state-changing AC(s) without 'such that' post-condition clause — every AC that spawns/terminates/kills/unloads/evicts/deletes/releases/clears/cancels MUST name an observable check"; }
 fi
 
@@ -328,7 +341,7 @@ fi
 # ERD-DELTA (D-107), which keeps the id. Runs only over an existing PRD (v>1);
 # fires in --diff too, so the CEO never previews a lossy PRD.
 if [ -f "$IN/PRD.md" ] && [ -f "$APPROVED/PRD.md" ]; then
-  python3 scripts/check-prd-additive.py "$APPROVED/PRD.md" "$IN/PRD.md" \
+  python3 $PLANE_DIR/scripts/check-prd-additive.py "$APPROVED/PRD.md" "$IN/PRD.md" \
     || { record_catch check-prd-additive; die "PRD additive guard rejected the delta (D-136) — a staged PRD must carry the standing product capsule and every historical AC id; record supersessions in ERD-DELTA.md, do not delete the criterion"; }
 fi
 
@@ -413,7 +426,7 @@ mkdir -p "$PREVIEW/tests"
 while IFS= read -r f; do [ -n "$f" ] || continue; rm -f "$PREVIEW/$f"; done <<< "$REMOVED_FILES"   # preview reflects the post-delta suite
 INV4_CONTRACTS="$APPROVED/contracts.json"
 [ -f "$IN/contracts.json" ] && INV4_CONTRACTS="$MERGED_CONTRACTS"
-python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
+python3 $PLANE_DIR/scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "$INV4_CONTRACTS" \
   || { record_catch check-test-surface; die "INV-4 rejected the delta — fix the tests or lock the surface in contracts.json, then restage"; }
 
 # --- S6: reverse-direction test lint (live tests vs NEW ACs) ------------
@@ -427,7 +440,7 @@ python3 scripts/check-test-surface.py --tests-dir "$PREVIEW/tests" --contracts "
 # A legacy whole-world mock in an UNtouched carried test is grandfathered —
 # a hard halt on old content would freeze the pipeline (9 such patterns
 # exist in testchat's live suite as of this writing).
-python3 scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
+python3 $PLANE_DIR/scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
   --staging "$IN" --approved "$APPROVED" --repo-tests tests \
   || { record_catch check-test-direction; die "S6 rejected the delta (reverse-direction lint) — see findings above; restage a URL-scoped test or re-attribute the AC"; }
 
@@ -445,7 +458,7 @@ python3 scripts/check-test-direction.py --tests-dir "$PREVIEW/tests" \
 # v27 passed the freeze with stale manager.py entries and failed only after the
 # first plan call; this check rejects that merged state before the cycle starts.
 if [ -f "$IN/contracts.json" ]; then
-  python3 scripts/validate-plan.py --spec-preflight "$APPROVED/contracts.json" "$MERGED_CONTRACTS" \
+  python3 $PLANE_DIR/scripts/validate-plan.py --spec-preflight "$APPROVED/contracts.json" "$MERGED_CONTRACTS" \
     || { record_catch validate-plan; die "spec preflight rejected the delta (D-78/D-179) — repair the named inventory mismatch or implementing-file gap and restage"; }
 fi
 
@@ -463,7 +476,7 @@ fi
 PIN_GATE_ARGS=(--old-root . --new-root "$IN")
 [ -f "$IN/contracts.json" ] && PIN_GATE_ARGS+=(--test-mapping "$IN/contracts.json")
 [ -f "$IN/ERD-DELTA.md" ] && PIN_GATE_ARGS+=(--erd-delta "$IN/ERD-DELTA.md")
-if ! python3 scripts/refreeze_delta.py pin-gate "${PIN_GATE_ARGS[@]}" \
+if ! python3 $PLANE_DIR/scripts/refreeze_delta.py pin-gate "${PIN_GATE_ARGS[@]}" \
     $CHANGED_TEST_FILES; then
   record_catch refreeze_delta-pin-gate
   die "owning-file pin gate rejected the delta — every added or modified test function must name its owner file in contracts.test_mapping (or the ERD-DELTA '## Test-to-file mapping' section); see the listing above and restage"
@@ -568,7 +581,7 @@ print('\n'.join(f for f in c.get('files', []) if pathlib.Path(f).is_file()))" 2>
 if [ -n "$SWEEP_FILES" ]; then
   SWEEP_ARGS=()
   while IFS= read -r _f; do [ -n "$_f" ] && SWEEP_ARGS+=("$_f"); done <<< "$SWEEP_FILES"
-  if ! SWEEP_OUT=$(python3 scripts/check-swallowed-errors.py "${SWEEP_ARGS[@]}"); then
+  if ! SWEEP_OUT=$(python3 $PLANE_DIR/scripts/check-swallowed-errors.py "${SWEEP_ARGS[@]}"); then
     echo ""
     echo "  WARNING (D-80): pre-existing D-68 debt in this delta's inventory —"
     echo "  each file's first pipeline edit will FAIL the swallowed-error gate"
@@ -789,7 +802,7 @@ echo "  AST: $AST_COUNT node-ids"
 COLLECT_OUT=".pipeline-state/refreeze-collect.out"
 COLLECT_ERR=".pipeline-state/refreeze-collect.err"
 COLLECT_VIA="sandbox"
-scripts/sandbox-run.sh -- pytest tests/ --collect-only -q -p no:cacheprovider \
+$PLANE_DIR/scripts/sandbox-run.sh -- pytest tests/ --collect-only -q -p no:cacheprovider \
   >"$COLLECT_OUT" 2>"$COLLECT_ERR" || true
 PYTEST_NODEIDS=$(grep '::' "$COLLECT_OUT" || true)
 PYTEST_COUNT=$(printf '%s\n' "$PYTEST_NODEIDS" | grep -c '::' || true)
@@ -821,7 +834,7 @@ CONTRACTS_STAGED=0
 case " $CHANGED_DOCS " in *" contracts.json "*) CONTRACTS_STAGED=1 ;; esac
 # Delta computation (incl. the D-116 relabel guard) lives in refreeze_delta.py
 # so it has a real producer test; the state files above are its inputs.
-python3 scripts/refreeze_delta.py "$NEW" "$APPROVED/test-nodeids" "$CONTRACTS_STAGED"
+python3 $PLANE_DIR/scripts/refreeze_delta.py "$NEW" "$APPROVED/test-nodeids" "$CONTRACTS_STAGED"
 rm -rf "$TMP/old-tests"
 rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-removed-files" "$TMP/refreeze-changed-contracts"
 
@@ -850,7 +863,7 @@ if [ -n "$RED_IDS" ]; then
   RED_ARGS=()
   while IFS= read -r _t; do [ -n "$_t" ] && RED_ARGS+=("$_t"); done <<< "$RED_IDS"
   rm -f .cache/redcheck-report.json
-  scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
+  $PLANE_DIR/scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
     --json-report-file=.cache/redcheck-report.json "${RED_ARGS[@]}" >/dev/null 2>&1 || true
   if ! python3 -c 'import json; json.load(open(".cache/redcheck-report.json"))' 2>/dev/null; then
     die "red-before-green sandbox produced no readable report — run refreeze inside the Linux dev VM; staged tests are never executed on the host"
@@ -919,7 +932,7 @@ PYEOF
     SMOKE_RED_FAIL=0
     while IFS=$'\t' read -r _f _cmd; do
       [ -n "$_f" ] || continue
-      if [ -n "$_cmd" ] && scripts/sandbox-run.sh -- sh -c "$_cmd" >/dev/null 2>&1; then
+      if [ -n "$_cmd" ] && $PLANE_DIR/scripts/sandbox-run.sh -- sh -c "$_cmd" >/dev/null 2>&1; then
         echo "  NOT RED: smoke check for $_f PASSES on the current tree — it gates nothing:"
         echo "    $_cmd"
         SMOKE_RED_FAIL=1
@@ -941,7 +954,7 @@ fi
 
 # --- Re-freeze: hash-pin every frozen artifact, bump VERSION ---
 {
-  for f in $(python3 scripts/spec_artifacts.py documents) test-nodeids; do
+  for f in $(python3 $PLANE_DIR/scripts/spec_artifacts.py documents) test-nodeids; do
     [ -f "$APPROVED/$f" ] && sha256sum "$APPROVED/$f"
   done
   # D-140: an active milestone may span skipped freezes. Keep every immutable

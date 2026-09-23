@@ -100,7 +100,7 @@ def test_all_context_surfaces_are_wired_to_the_budget_tool() -> None:
     pack = (SCRIPTS / "tpm-pack.sh").read_text()
     for invocation in (
         'accept_slice role-slice "$role_slice" docs/TPM-ROLE.md',
-        'accept_slice schema-slice "$schema_slice" scripts/schemas/contracts.schema.json',
+        'accept_slice schema-slice "$schema_slice" $PLANE_DIR/scripts/schemas/contracts.schema.json',
         'accept_slice standing-summary "$summary" "$APPROVED/ERD.md"',
         'accept_slice erd-delta-slice "$delta_slice" "$APPROVED/ERD-DELTA.md"',
         'accept_slice interface-index "$contracts_slice" "$APPROVED/contracts.json"',
