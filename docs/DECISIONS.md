@@ -21,6 +21,47 @@
 
 ## Decisions
 
+## D-186 — 2026-09-22 — Central builder: apps are built from outside, never host the plane
+
+**Status:** PROPOSED — awaiting CEO approval (Rule 3). Design and stages:
+`tasks/central-builder-design.md`. On approval, supersedes D-35 (linked
+distribution) and D-183 (born-linked seeding); amends D-33/D-34 (retired for
+children at stage F) and D-30 (hooks move to untracked `core.hooksPath`).
+
+**Decision:** Complete the 2026-08-24 "template at seed, builder for life"
+direction at the packaging level. The builder runs *against* an app
+(`scripts/swbp <cmd> --app <path>`), generalizing D-168's existing snapshot
+exec (`~/.cache/swbp-plane/<sha>`, cwd = app) from orchestrate to every
+entry point. Apps keep product code, `tests/`, the frozen spec, their own
+adaptations, and one `.swbp` file (`ref=<builder sha>`). They lose every plane
+symlink, both manifests, `.template-version`, `.template-link`,
+`check-drift.yml`, and tracked hooks. Enforcement: run-time lanes and the
+frozen manifest unchanged; local hooks via untracked `core.hooksPath`; app
+pre-push runs the app's own suite; an app CI guard requires builder trailers
+(D-174) and, after M2b, provenance signatures (D-184) on `tests/` and
+`scripts/.approved/` — report-first, then failing.
+
+**Alternatives considered:** (a) Keep D-35 linked mode — centralizes storage,
+not execution: children still run whatever the shared checkout has checked
+out, and still need pin + manifests + drift CI + CI-side reconstruction of
+`../sw-dev-blueprint`. (b) Run the migration as a pipeline milestone —
+rejected: the pipeline would rebuild itself mid-run, the work is edits to
+2,700-line scripts (no D-60 fit), and the blueprint has no frozen spec of its
+own. (c) Package/registry distribution (D-35 alt c) — still installs the plane
+into the app. (d) Submodule — same hosting, worse UX.
+
+**Reason:** Hosting is what forces the sync layer (D-33/34/35/183, the
+"shared checkout on main" rule, the release-gate ≠ CI gap). Execution from
+outside already works for milestones (D-168); finishing it removes the layer
+instead of maintaining it.
+
+**Do not suggest:** Re-adding plane files or symlinks to an app "for
+convenience"; running stage F before every child has a green real milestone
+under `swbp`; flipping `swbp-guard` to failing before one clean report-first
+milestone.
+
+---
+
 ## D-185 — 2026-09-04 — Fault-attribution provenance: immutable evidence, revisable adjudication
 
 **Decision:** Extend T7's authorship/integrity substrate with a separate
