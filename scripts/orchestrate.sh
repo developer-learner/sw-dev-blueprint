@@ -308,7 +308,11 @@ SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-4096}"
 # byte-identical to the one that produced it. Set >1 only against a server
 # that batches concurrent requests (Splash, LM Studio --parallel, mtplx
 # --max-batch); a non-batching server (oMLX) gets slower, not faster.
-SWBP_PARALLEL_CODERS="${SWBP_PARALLEL_CODERS:-1}"
+# Resolved when the task phase starts (resolve_parallel_coders): a value on the
+# run wins, else the coder model's `parallel_coders` in model-profiles.toml,
+# else 1. Hard cap SWBP_PARALLEL_CODERS_MAX (8).
+SWBP_PARALLEL_CODERS="${SWBP_PARALLEL_CODERS:-}"
+SWBP_PARALLEL_CODERS_MAX=8
 RUN_T0=$(date +%s)
 
 # Operate on the CHILD tree, not $0's directory. Under a D-168 plane snapshot
@@ -519,9 +523,6 @@ guard_task_state() {
 # timings.tsv gets one row per phase boundary; the budget halt prints it, and
 # post-run tuning reads it — no historical run had per-phase numbers, so every
 # "where did 45 minutes go" was guesswork.
-case "$SWBP_PARALLEL_CODERS" in
-  ''|*[!0-9]*|0) die "SWBP_PARALLEL_CODERS must be a positive integer, got '$SWBP_PARALLEL_CODERS'" ;;
-esac
 case "$SWBP_RUN_BUDGET" in
   ''|*[!0-9]*) die "SWBP_RUN_BUDGET must be a non-negative integer (seconds), got '$SWBP_RUN_BUDGET'" ;;
 esac
@@ -1225,6 +1226,55 @@ task_no_edit() {
     esac
   fi
   printf '0'
+}
+
+# resolve_parallel_coders — prints the run's coder fan-out ceiling (D-187
+# amend). Precedence: an explicit SWBP_PARALLEL_CODERS on the run; else the
+# coder model's `parallel_coders` in model-profiles.toml (the same profile
+# file llm-call.sh reads, looked up by the same model id: SWBP_CODER_MODEL
+# from the environment, else from models.env); else 1. Any value outside
+# 1..SWBP_PARALLEL_CODERS_MAX fails the run with a named message rather than
+# being clamped silently.
+resolve_parallel_coders() {
+  local value="${SWBP_PARALLEL_CODERS:-}" source="SWBP_PARALLEL_CODERS"
+  if [ -z "$value" ]; then
+    value=$(python3 - <<'PY'
+import os, re
+try:
+    import tomllib
+except ImportError:  # Python < 3.11: no profile lookup, the default applies
+    raise SystemExit(0)
+cfg = os.path.expanduser("~/.config/sw-dev-blueprint")
+model = os.environ.get("SWBP_CODER_MODEL", "")
+if not model:
+    try:
+        for line in open(os.path.join(cfg, "models.env")):
+            m = re.match(r"\s*(?:export\s+)?SWBP_CODER_MODEL=(.*)$", line)
+            if m:
+                model = m.group(1).strip().strip("'\"")
+    except OSError:
+        pass
+try:
+    with open(os.path.join(cfg, "model-profiles.toml"), "rb") as fh:
+        profile = tomllib.load(fh).get(model, {})
+except (OSError, tomllib.TOMLDecodeError):
+    profile = {}
+print(profile.get("parallel_coders", ""))
+PY
+)
+    source="model-profiles.toml parallel_coders"
+    [ -n "$value" ] || { printf '1\n'; return 0; }
+  fi
+  case "$value" in
+    ''|*[!0-9]*|0)
+      echo "FAIL: $source must be a whole number from 1 to $SWBP_PARALLEL_CODERS_MAX, got '$value'" >&2
+      return 1 ;;
+  esac
+  if [ "$value" -gt "$SWBP_PARALLEL_CODERS_MAX" ]; then
+    echo "FAIL: $source is $value — the maximum is $SWBP_PARALLEL_CODERS_MAX parallel coder calls" >&2
+    return 1
+  fi
+  printf '%s\n' "$value"
 }
 
 # prefetch_launch <next-id> — parallel coder calls (2026-09-23). Start the
@@ -2398,6 +2448,10 @@ write_state spec_version "$FROZEN_V"
 # and genuinely new files get written, and it keeps an initial build (whose
 # delta touches nothing on disk) working unchanged.
 echo "=== Phase: task DAG ==="
+SWBP_PARALLEL_CODERS=$(resolve_parallel_coders) || die "coder fan-out setting rejected (see above)"
+if [ "$SWBP_PARALLEL_CODERS" -gt 1 ]; then
+  echo "  parallel coder calls: up to $SWBP_PARALLEL_CODERS at once (D-187)"
+fi
 while :; do
   TOPO=$(python3 $PLANE_DIR/scripts/validate-plan.py --topo) || die "plan invalidated mid-run"
 

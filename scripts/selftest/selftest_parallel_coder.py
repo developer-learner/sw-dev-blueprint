@@ -15,7 +15,9 @@ SWBP_PARALLEL_CODERS=1 (the default) never prefetches; no-edit files and
 retried tasks are never prefetched.
 """
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -172,6 +174,87 @@ def test_orchestrate_wires_prefetch_into_the_dag_loop_and_exit():
     src = (REPO / "scripts" / "orchestrate.sh").read_text()
     loop = src[src.index('echo "=== Phase: task DAG ==="'):]
     assert 'attempt_brief=$(task_attempt_brief "$id" "$file")\n  prefetch_launch "$id"' in loop
-    assert 'SWBP_PARALLEL_CODERS="${SWBP_PARALLEL_CODERS:-1}"' in src
+    assert 'SWBP_PARALLEL_CODERS="${SWBP_PARALLEL_CODERS:-}"' in src
+    assert "SWBP_PARALLEL_CODERS_MAX=8" in src
     exit_fn = src[src.index("record_exit() {"):]
     assert "prefetch_reap" in exit_fn[:400]
+
+
+# ---------------------------------------------------------------------------
+# D-187 amend — the fan-out ceiling: a value on the run wins, else the coder
+# model's `parallel_coders` in model-profiles.toml, else 1; 1..8 only.
+# ---------------------------------------------------------------------------
+
+RESOLVE = r'''
+set -euo pipefail
+REPO="$1"
+SWBP_PARALLEL_CODERS_MAX=8
+body=$(sed -n "/^resolve_parallel_coders() {/,/^}/p" "$REPO/scripts/orchestrate.sh")
+printf '%s\n' "$body" | grep -q '^}' || { echo "cannot extract" >&2; exit 65; }
+eval "$body"
+resolve_parallel_coders
+'''
+
+
+def _resolve(tmp_path: Path, env_value=None, coder_env=None,
+             models_env_model="splash", profile_value=None):
+    home = tmp_path / "home"
+    cfg = home / ".config" / "sw-dev-blueprint"
+    cfg.mkdir(parents=True, exist_ok=True)
+    if models_env_model:
+        (cfg / "models.env").write_text(f"SWBP_CODER_MODEL={models_env_model}\n")
+    prof = '["splash"]\nmax_output_tokens = 20480\n'
+    if profile_value is not None:
+        prof += f"parallel_coders = {profile_value}\n"
+    prof += '\n["other"]\nparallel_coders = 2\n'
+    (cfg / "model-profiles.toml").write_text(prof)
+    script = tmp_path / "resolve.sh"
+    script.write_text(RESOLVE)
+    env = {"HOME": str(home),
+           "PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"]}
+    if env_value is not None:
+        env["SWBP_PARALLEL_CODERS"] = env_value
+    if coder_env is not None:
+        env["SWBP_CODER_MODEL"] = coder_env
+    return subprocess.run(["bash", str(script), str(REPO)], capture_output=True,
+                          text=True, env=env)
+
+
+def test_fanout_value_on_the_run_wins_over_the_model_default(tmp_path):
+    r = _resolve(tmp_path, env_value="3", profile_value=4)
+    assert (r.returncode, r.stdout.strip()) == (0, "3"), r.stderr
+
+
+def test_fanout_defaults_to_the_coder_models_profile(tmp_path):
+    r = _resolve(tmp_path, profile_value=4)
+    assert (r.returncode, r.stdout.strip()) == (0, "4"), r.stderr
+
+
+def test_fanout_follows_a_per_run_coder_model_override(tmp_path):
+    r = _resolve(tmp_path, coder_env="other", profile_value=4)
+    assert (r.returncode, r.stdout.strip()) == (0, "2"), r.stderr
+
+
+def test_fanout_is_one_without_any_setting(tmp_path):
+    r = _resolve(tmp_path)
+    assert (r.returncode, r.stdout.strip()) == (0, "1"), r.stderr
+
+
+def test_fanout_above_eight_is_refused_from_either_source(tmp_path):
+    on_run = _resolve(tmp_path, env_value="9")
+    assert on_run.returncode != 0 and "maximum is 8" in on_run.stderr
+    in_profile = _resolve(tmp_path, profile_value=12)
+    assert in_profile.returncode != 0 and "maximum is 8" in in_profile.stderr
+
+
+def test_fanout_must_be_a_whole_number(tmp_path):
+    for bad in ("0", "abc", "2.5"):
+        r = _resolve(tmp_path, env_value=bad)
+        assert r.returncode != 0 and "whole number from 1 to 8" in r.stderr, bad
+
+
+def test_fanout_is_resolved_before_the_task_loop():
+    src = (REPO / "scripts" / "orchestrate.sh").read_text()
+    call = src.index('SWBP_PARALLEL_CODERS=$(resolve_parallel_coders)')
+    assert src.index("resolve_parallel_coders() {") < call
+    assert call < src.index("while :; do", src.index('echo "=== Phase: task DAG ==="'))

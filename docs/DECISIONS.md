@@ -56,6 +56,14 @@ reach C=1; parallelism required separate apps.
 prompt differs; prefetching a retry or a no-edit file; defaulting
 `SWBP_PARALLEL_CODERS` above 1 without knowing the seat batches.
 
+**Amended 2026-09-23 (same day):** the ceiling is resolved when the task phase
+starts: an explicit `SWBP_PARALLEL_CODERS` on the run wins, else the coder
+model's `parallel_coders` field in `model-profiles.toml` (looked up by the
+same model id llm-call.sh uses), else 1. Values must be whole numbers from 1
+to 8 (`SWBP_PARALLEL_CODERS_MAX`); anything else fails the run with a named
+message, never a silent clamp. Changing the fan-out is a settings edit, not a
+code change.
+
 ---
 
 ## D-186 — 2026-09-22 — Central builder: apps are built from outside, never host the plane
