@@ -67,8 +67,10 @@ tracked `.githooks/`.
 2. *Local human path.* `swbp` sets `core.hooksPath` in the app's **untracked**
    `.git/config` to the builder checkout's hooks. The pre-commit hook keeps
    verifying the frozen manifest and the active phase. Nothing is committed.
-3. *App pre-push* runs the **app's** suite (+ ruff/mypy as in its `ci.yml`),
-   closing the "release-gate ≠ CI" gap. Control-plane selftests move to the
+3. *App pre-push* runs static checks only — frozen-spec integrity, the
+   guard, ruff/mypy on `src/` — narrowing the "release-gate ≠ CI" gap. The
+   app's tests execute generated code, so they stay in the sandbox/CI and
+   never run on the host (D-114). Control-plane selftests move to the
    builder's own pre-push/CI, where they belong.
 4. *App CI guard* (`swbp-guard.yml`, physical file, like check-drift today):
    commits touching `tests/`, `scripts/.approved/`, or the app adaptations
@@ -87,7 +89,7 @@ through the builder or be flagged. No constraint is relaxed by this design.
 |---|---|---|
 | A ✅ 2026-09-22 | two-root split; `PLANE_DIR` threaded through all scripts; linked children still run via symlink + `PLANE_DIR` = snapshot | yes |
 | B ✅ 2026-09-22 | `scripts/swbp --app` launcher; generalize `plane_entry_guard` to all entries; untracked hooksPath setup | yes |
-| C | app pre-push template + `swbp-guard.yml` (report-first) | yes |
+| C ✅ 2026-09-23 | app pre-push template + `swbp-guard.yml` (report-first) | yes |
 | D | migrate **vortex**: delete links/manifests/pin/drift workflow, add `.swbp`; run its next real feature end-to-end via `swbp` (TPM→EM→coder) | vortex no, others yes |
 | E | migrate testchat, rich-adoption; `new-project.sh` seeds builder-targeted apps (supersedes D-183 born-linked) | — |
 | F | delete the sync layer: `link-template.sh`, `update-template.sh`, `check-drift.sh`, `manifest-drift-guard.sh`, `regen-manifest.sh`'s child role, `.template-link` handling, their selftests | — |

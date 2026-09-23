@@ -22,6 +22,8 @@ die() { echo "swbp: $*" >&2; exit 1; }
 usage() {
   echo "usage: swbp <cmd> --app <path> [--ref <sha>] [-- <args>...]" >&2
   echo "  cmd: orchestrate refreeze tpm-pack tpm-unpack tpm-view tpm-agent em-bench status" >&2
+  echo "       guard [--range A..B] [--enforce]   (D-186 app guard, report-first)" >&2
+  echo "       commit -- <subject> [file...]      (a person's change, via the provenance broker)" >&2
   exit 2
 }
 
@@ -35,7 +37,7 @@ BUILDER="$(cd "$(dirname "$self")/.." && pwd -P)"
 [ $# -ge 1 ] || usage
 CMD="$1"; shift
 case "$CMD" in
-  orchestrate|refreeze|tpm-pack|tpm-unpack|tpm-view|tpm-agent|em-bench|status) ;;
+  orchestrate|refreeze|tpm-pack|tpm-unpack|tpm-view|tpm-agent|em-bench|status|guard|commit) ;;
   -h|--help) usage ;;
   *) die "unknown command: $CMD" ;;
 esac
@@ -80,7 +82,11 @@ fi
 # its entry scripts would cd into the snapshot itself. Refuse, don't guess.
 [ -f "$ROOT/scripts/swbp" ] \
   || die "builder ref $SHA predates swbp (D-186 stage B) — pin a newer ref"
-SCRIPT="$ROOT/scripts/$CMD.sh"
+case "$CMD" in
+  guard)  SCRIPT="$ROOT/scripts/check-app-guard.py" ;;
+  commit) SCRIPT="$ROOT/scripts/git-provenance.sh" ;;
+  *)      SCRIPT="$ROOT/scripts/$CMD.sh" ;;
+esac
 [ -f "$SCRIPT" ] || die "$CMD not available at builder ref $SHA"
 
 # D-168 rule, same wording: the plane may not change under an in-flight
@@ -104,7 +110,18 @@ if [ "$CMD" = orchestrate ]; then
 fi
 
 cd "$APP"
-exec env SWBP_PLANE_SNAPSHOT="$ROOT" SWBP_PLANE_SHA="$SHA" SWBP_APP_ROOT="$APP" \
+export SWBP_PLANE_SNAPSHOT="$ROOT" SWBP_PLANE_SHA="$SHA" SWBP_APP_ROOT="$APP" \
   GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath \
-  GIT_CONFIG_VALUE_0="$ROOT/.githooks" \
-  bash "$SCRIPT" "$@"
+  GIT_CONFIG_VALUE_0="$ROOT/.githooks"
+case "$CMD" in
+  guard)
+    exec python3 "$SCRIPT" "$@" ;;
+  commit)
+    [ $# -ge 1 ] || die "commit needs a subject: swbp commit --app <path> -- <subject> [file...]"
+    # shellcheck disable=SC1090
+    source "$SCRIPT"
+    swbp_commit human "$@"
+    exit $? ;;
+  *)
+    exec bash "$SCRIPT" "$@" ;;
+esac

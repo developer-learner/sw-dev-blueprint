@@ -1,0 +1,58 @@
+name: swbp-guard
+
+# D-186 app guard. This app carries no control plane: CI fetches the builder
+# at the ref pinned in .swbp and runs its checks against this repo —
+#   * frozen spec + tests integrity (phase-gate.sh manifest, app mode)
+#   * changes to tests/, the frozen spec, or pipeline adaptations must come
+#     through the builder (check-app-guard.py; report-first until .swbp says
+#     guard=enforce)
+# Physical file (GitHub parses workflows before any checkout). Installed by
+# the builder at migration; builder-owned, protected by the guard itself.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Read builder pin
+        id: pin
+        run: |
+          echo "ref=$(sed -n 's/^ref=//p' .swbp | head -1)" >> "$GITHUB_OUTPUT"
+          repo=$(sed -n 's/^repo=//p' .swbp | head -1)
+          echo "repo=${repo:-developer-learner/sw-dev-blueprint}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch builder at the pinned ref
+        env:
+          TOKEN: ${{ secrets.TEMPLATE_READ_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            url="https://x-access-token:${TOKEN}@github.com/${{ steps.pin.outputs.repo }}.git"
+          else
+            url="https://github.com/${{ steps.pin.outputs.repo }}.git"
+          fi
+          git init -q "$RUNNER_TEMP/builder"
+          git -C "$RUNNER_TEMP/builder" fetch -q --depth 1 "$url" "${{ steps.pin.outputs.ref }}"
+          git -C "$RUNNER_TEMP/builder" checkout -q --detach FETCH_HEAD
+
+      - name: Frozen spec integrity
+        run: bash "$RUNNER_TEMP/builder/scripts/phase-gate.sh" manifest HEAD
+
+      - name: Builder-only changes to the protected surface
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            spec="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            spec="${{ github.event.before }}..${{ github.sha }}"
+          else
+            spec="${{ github.sha }}~1..${{ github.sha }}"
+          fi
+          python3 "$RUNNER_TEMP/builder/scripts/check-app-guard.py" --rev "$spec"

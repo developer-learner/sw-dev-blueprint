@@ -49,6 +49,7 @@ ZERO="0000000000000000000000000000000000000000"
 #   <local ref> <local sha> <remote ref> <remote sha>
 gating=0
 PUSH_SHA=""
+REMOTE_SHA="$ZERO"
 while read -r local_ref local_sha remote_ref remote_sha; do
   remote_ref="${remote_ref:-}"
   local_sha="${local_sha:-}"
@@ -57,6 +58,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   if [ "$remote_ref" = "$PROTECTED_REF" ]; then
     gating=1
     PUSH_SHA="$local_sha"                    # the exact commit being published
+    REMOTE_SHA="${remote_sha:-$ZERO}"        # D-186 app guard range start
   fi
 done
 
@@ -86,6 +88,33 @@ trap cleanup EXIT
 echo "release-gate: push updates $PROTECTED_REF at $PUSH_SHA — verifying that exact commit before publication..." >&2
 if ! git -C "$PUSH_REPO" worktree add --detach -q "$TMPTREE" "$PUSH_SHA" >/dev/null 2>&1; then
   echo "release-gate: REFUSED — could not check out $PUSH_SHA for verification." >&2
+  exit 1
+fi
+
+# D-186 builder-targeted app (marked by .swbp): it carries no plane and no
+# control-plane suite. This hook runs from the pinned builder snapshot, so the
+# snapshot supplies the checks. Static only — the app's tests execute
+# generated code and run in the sandbox/CI, never on the host (D-114).
+if [ -f "$TMPTREE/.swbp" ]; then
+  PLANE_ROOT="$(cd "$(dirname "$HOOK_FILE")/.." && pwd -P)"
+  if [ "$REMOTE_SHA" = "$ZERO" ]; then guard_spec="$PUSH_SHA"; else guard_spec="$REMOTE_SHA..$PUSH_SHA"; fi
+  app_ok=1
+  ( cd "$TMPTREE" && bash "$PLANE_ROOT/scripts/phase-gate.sh" manifest HEAD ) >&2 || app_ok=0
+  ( cd "$TMPTREE" && python3 "$PLANE_ROOT/scripts/check-app-guard.py" --rev "$guard_spec" ) >&2 || app_ok=0
+  if [ -d "$TMPTREE/src" ]; then
+    for tool in "ruff check src/" "mypy --explicit-package-bases src/"; do
+      if command -v "${tool%% *}" >/dev/null 2>&1; then
+        ( cd "$TMPTREE" && eval "$tool" ) >&2 || app_ok=0
+      else
+        echo "release-gate: note — ${tool%% *} not installed; CI still enforces it." >&2
+      fi
+    done
+  fi
+  if [ "$app_ok" = 1 ]; then
+    echo "release-gate: app checks green at $PUSH_SHA (frozen spec, guard, static) — publication allowed." >&2
+    exit 0
+  fi
+  echo "release-gate: REFUSED — app checks failed at $PUSH_SHA. Fix them, or override deliberately with 'git push --no-verify'." >&2
   exit 1
 fi
 

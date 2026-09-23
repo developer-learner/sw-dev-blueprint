@@ -609,3 +609,114 @@ def test_phase_gate_app_mode_skips_hosted_plane_but_keeps_frozen_spec(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode != 0
     assert "manifest missing" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# D-186 stage C — the app guard (check-app-guard.py), `swbp commit`, and the
+# pre-push hook's app mode. Report-first: findings print, exit 0, unless
+# --enforce or `.swbp` says guard=enforce.
+# ---------------------------------------------------------------------------
+
+GUARD = PLANE / "scripts" / "check-app-guard.py"
+ZERO_SHA = "0" * 40
+IDENT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+
+def _commit(app: Path, path: str, text: str, role: str = "") -> str:
+    f = app / path
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(text)
+    env = {**os.environ, **IDENT}
+    msg = ["-m", f"edit {path}"] + (["-m", f"Swbp-Role: {role}"] if role else [])
+    subprocess.run(["git", "-C", str(app), "add", path], check=True, env=env)
+    subprocess.run(["git", "-C", str(app), "-c", "core.hooksPath=/dev/null",
+                    "commit", "-q", *msg], check=True, env=env)
+    return subprocess.run(["git", "-C", str(app), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _guard(app: Path, *args: str):
+    return subprocess.run([sys.executable, str(GUARD), *args], cwd=app,
+                          capture_output=True, text=True)
+
+
+def _guard_app(tmp_path: Path) -> tuple[Path, str]:
+    app = tmp_path / "guard-app"
+    app.mkdir()
+    subprocess.run(["git", "init", "-q", str(app)], check=True)
+    base = _commit(app, ".swbp", "ref=" + "0" * 40 + "\n", role="human")
+    return app, base
+
+
+def test_guard_accepts_builder_commits_and_flags_hand_edits(tmp_path):
+    app, base = _guard_app(tmp_path)
+    _commit(app, "tests/test_a.py", "def test_a(): pass\n", role="tpm")
+    _commit(app, "CLAUDE.md", "notes\n", role="human")
+    _commit(app, "src/app.py", "x = 1\n")  # product code: not guarded
+    clean = _guard(app, "--rev", f"{base}..HEAD")
+    assert clean.returncode == 0 and "0 finding(s)" in clean.stdout, clean.stdout
+
+    hand_test = _commit(app, "tests/test_a.py", "def test_a(): assert 1\n")
+    coder_spec = _commit(app, "scripts/.approved/ERD.md", "x\n", role="coder")
+    hand_cfg = _commit(app, ".github/workflows/ci.yml", "on: push\n")
+    r = _guard(app, "--rev", f"{base}..HEAD")
+    assert r.returncode == 0, "report-first must not fail"
+    assert "3 finding(s)" in r.stdout, r.stdout
+    for sha in (hand_test, coder_spec, hand_cfg):
+        assert sha[:12] in r.stdout
+
+    assert _guard(app, "--rev", f"{base}..HEAD", "--enforce").returncode == 1
+    (app / ".swbp").write_text("ref=" + "0" * 40 + "\nguard=enforce\n")
+    assert _guard(app, "--rev", f"{base}..HEAD").returncode == 1
+
+
+def test_swbp_commit_goes_through_the_broker(tmp_path):
+    builder, _old, new = _builder_repo(tmp_path)
+    app = _swbp_app(tmp_path, new)
+    env = {**os.environ, **IDENT, "HOME": str(tmp_path / "home"),
+           "XDG_CACHE_HOME": str(tmp_path / "cache")}
+    subprocess.run(["git", "-C", str(app), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(app), "-c", "core.hooksPath=/dev/null",
+                    "commit", "-qm", "seed"], check=True, env=env)
+    base = subprocess.run(["git", "-C", str(app), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    (app / "CLAUDE.md").write_text("app notes\n")
+    r = subprocess.run([str(builder / "scripts" / "swbp"), "commit", "--app", str(app),
+                        "--", "docs: app notes", "CLAUDE.md"],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    body = subprocess.run(["git", "-C", str(app), "log", "-1", "--format=%B"],
+                          capture_output=True, text=True, check=True).stdout
+    assert "Swbp-Role: human" in body and f"Swbp-Plane: {new}" in body, body
+    g = _guard(app, "--rev", f"{base}..HEAD", "--enforce")
+    assert g.returncode == 0, g.stdout
+
+
+def _push_line(sha: str, remote_sha: str = ZERO_SHA) -> str:
+    return f"refs/heads/main {sha} refs/heads/main {remote_sha}\n"
+
+
+
+def test_pre_push_app_mode_runs_app_checks_not_the_plane_suite(tmp_path):
+    app = _swbp_app(tmp_path, "0" * 40)
+    _frozen(app)
+    env = {**os.environ, **IDENT}
+    subprocess.run(["git", "-C", str(app), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(app), "-c", "core.hooksPath=/dev/null",
+                    "commit", "-qm", "seed", "-m", "Swbp-Role: tpm"], check=True, env=env)
+    head = subprocess.run(["git", "-C", str(app), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    hook = str(PLANE / ".githooks" / "pre-push")
+    ok = subprocess.run(["bash", hook, "origin", "url"], cwd=app, input=_push_line(head),
+                        capture_output=True, text=True, env=env)
+    assert ok.returncode == 0, ok.stderr
+    assert "app checks green" in ok.stderr
+    assert "control-plane suite" not in ok.stderr
+
+    # a hand edit to a frozen test: the frozen-spec check refuses the push
+    bad = _commit(app, "tests/api_tests.py", "# tampered\n")
+    r = subprocess.run(["bash", hook, "origin", "url"], cwd=app,
+                       input=_push_line(bad, head), capture_output=True, text=True, env=env)
+    assert r.returncode != 0
+    assert "REFUSED" in r.stderr and "tampered" in r.stderr
