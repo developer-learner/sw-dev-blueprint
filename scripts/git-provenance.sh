@@ -171,6 +171,9 @@ swbp_commit() {
   if [ -z "$plane" ] && [ -f .template-version ]; then
     plane="$(sed -n 's/^ref=//p' .template-version 2>/dev/null | head -1)"
   fi
+  if [ -z "$plane" ] && [ -f .swbp ]; then  # D-186 builder-targeted app
+    plane="$(sed -n 's/^ref=//p' .swbp 2>/dev/null | head -1)"
+  fi
   [ -n "$plane" ] || plane="n/a"
 
   # --- T7 M2 (D-184): durable evidence, staged BEFORE anything else.

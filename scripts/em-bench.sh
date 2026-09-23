@@ -37,7 +37,7 @@ while [ -L "$_plane_self" ]; do
   esac
 done
 PLANE_DIR="${SWBP_PLANE_SNAPSHOT:-$(cd "$(dirname "$_plane_self")/.." && pwd -P)}"
-cd "$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "${SWBP_APP_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}"  # D-186: swbp sets the app root
 
 BRIEF="$PLANE_DIR/.opencode/prompts/em.md"
 ALL=0

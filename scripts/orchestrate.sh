@@ -784,8 +784,10 @@ git --version >/dev/null 2>&1    || die "git required"
 [ -f "$COMPLETION_LEDGER_TOOL" ]    || die "$COMPLETION_LEDGER_TOOL missing"
 [ -f "$FLAKE_LEDGER_TOOL" ]       || die "$FLAKE_LEDGER_TOOL missing"
 [ -f .gate-paths ]               || die ".gate-paths not found"
-[ -f scripts/.manifest-template ] || die "scripts/.manifest-template not found"
-[ -f scripts/.manifest-project ]  || die "scripts/.manifest-project not found"
+if [ ! -f .swbp ]; then  # D-186: a builder-targeted app hosts no plane
+  [ -f scripts/.manifest-template ] || die "scripts/.manifest-template not found"
+  [ -f scripts/.manifest-project ]  || die "scripts/.manifest-project not found"
+fi
 python3 -c "import json, hashlib" 2>/dev/null || die "python3 json/hashlib required"
 if [ "${SANDBOX:-1}" != "1" ]; then
   die "SANDBOX must be 1 (test/smoke execution runs untrusted generated code — containerization is mandatory, AC9)"

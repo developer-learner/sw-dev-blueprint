@@ -62,7 +62,7 @@ while [ -L "$_plane_self" ]; do
   esac
 done
 PLANE_DIR="${SWBP_PLANE_SNAPSHOT:-$(cd "$(dirname "$_plane_self")/.." && pwd -P)}"
-cd "$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "${SWBP_APP_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}"  # D-186: swbp sets the app root
 # T7 M1 (D-174): provenance broker — the freeze commit carries
 # Swbp-Role: tpm (model = SWBP_TPM_MODEL when set, else "human").
 source $PLANE_DIR/scripts/git-provenance.sh

@@ -433,7 +433,8 @@ def _plane_less_app(tmp_path: Path) -> Path:
     approved.mkdir(parents=True)
     for name in ("PRD.md", "ERD.md", "contracts.json"):
         shutil.copy(SPEC / name, approved / name)
-    shutil.copytree(SPEC / "tests", app / "tests")
+    shutil.copytree(SPEC / "tests", app / "tests",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     subprocess.run(["git", "init", "-q", str(app)], check=True)
     (app / "scripts" / "tpm-view.sh").symlink_to(PLANE / "scripts" / "tpm-view.sh")
     return app
@@ -467,3 +468,144 @@ def test_converted_scripts_make_no_cwd_relative_plane_calls():
             if CWD_PLANE_CALL.search(line):
                 offenders.append(f"{rel}:{n}: {code}")
     assert not offenders, "\n".join(offenders)
+
+
+# ---------------------------------------------------------------------------
+# D-186 stage B — `scripts/swbp <cmd> --app <path>`: the builder runs against
+# an app from a snapshot of the pinned builder ref; the app gains nothing.
+# A throwaway builder repo is committed twice: an OLD ref without swbp and a
+# NEW ref with it, so the launcher's ref-age refusal is exercised for real.
+# ---------------------------------------------------------------------------
+
+
+def _builder_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    builder = tmp_path / "builder"
+    files = subprocess.run(
+        ["git", "-C", str(PLANE), "ls-files", "-co", "--exclude-standard", "-z"],
+        capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    for rel in filter(None, files):
+        src = PLANE / rel
+        if src.is_file() and not src.is_symlink():
+            dst = builder / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+    swbp = builder / "scripts" / "swbp"
+    held = swbp.read_bytes()
+    swbp.unlink()
+
+    def commit(msg: str) -> str:
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        subprocess.run(["git", "-C", str(builder), "add", "-A"], check=True, env=env)
+        subprocess.run(["git", "-C", str(builder), "-c", "core.hooksPath=/dev/null",
+                        "commit", "-qm", msg], check=True, env=env)
+        return subprocess.run(["git", "-C", str(builder), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    subprocess.run(["git", "init", "-q", str(builder)], check=True)
+    old = commit("old")
+    swbp.write_bytes(held)
+    swbp.chmod(0o755)
+    new = commit("new")
+    return builder, old, new
+
+
+def _swbp_app(tmp_path: Path, ref: str) -> Path:
+    app = tmp_path / "swbp-app"
+    approved = app / "scripts" / ".approved"
+    approved.mkdir(parents=True)
+    for name in ("PRD.md", "ERD.md", "contracts.json"):
+        shutil.copy(SPEC / name, approved / name)
+    shutil.copytree(SPEC / "tests", app / "tests",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    (app / ".swbp").write_text(f"ref={ref}\n")
+    subprocess.run(["git", "init", "-q", str(app)], check=True)
+    return app
+
+
+def _run_swbp(builder: Path, tmp_path: Path, *args: str):
+    env = {**os.environ, "XDG_CACHE_HOME": str(tmp_path / "cache")}
+    return subprocess.run([str(builder / "scripts" / "swbp"), *args],
+                          capture_output=True, text=True, env=env)
+
+
+def test_swbp_runs_a_builder_step_against_a_plane_less_app(tmp_path):
+    builder, _old, new = _builder_repo(tmp_path)
+    app = _swbp_app(tmp_path, new)
+    r = _run_swbp(builder, tmp_path, "tpm-view", "--app", str(app))
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert (app / ".tpm" / "view" / "contracts.json").is_file()
+    # nothing of the plane landed in the app
+    assert sorted(p.name for p in (app / "scripts").iterdir()) == [".approved"]
+    # hooks come from the pinned snapshot, via untracked config
+    hp = subprocess.run(["git", "-C", str(app), "config", "core.hooksPath"],
+                        capture_output=True, text=True).stdout.strip()
+    assert hp == str(tmp_path / "cache" / "swbp-plane" / new / ".githooks")
+    assert Path(hp, "pre-commit").is_file()
+
+
+def test_swbp_refuses_a_ref_that_predates_it(tmp_path):
+    builder, old, _new = _builder_repo(tmp_path)
+    app = _swbp_app(tmp_path, old)
+    r = _run_swbp(builder, tmp_path, "tpm-view", "--app", str(app))
+    assert r.returncode != 0
+    assert "predates swbp" in r.stderr
+    assert not (app / ".tpm").exists()
+
+
+def test_swbp_refuses_unknown_command_and_non_repo_app(tmp_path):
+    builder, _old, new = _builder_repo(tmp_path)
+    app = _swbp_app(tmp_path, new)
+    r = _run_swbp(builder, tmp_path, "rm", "--app", str(app))
+    assert r.returncode != 0 and "unknown command" in r.stderr
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    r = _run_swbp(builder, tmp_path, "tpm-view", "--app", str(plain))
+    assert r.returncode != 0 and "root of a git repository" in r.stderr
+
+
+def test_swbp_refuses_mid_milestone_plane_change(tmp_path):
+    builder, old, new = _builder_repo(tmp_path)
+    app = _swbp_app(tmp_path, new)
+    state = app / ".pipeline-state"
+    (state / "tasks").mkdir(parents=True)
+    (state / "tasks" / "T1").write_text("pending\n")
+    (state / "plane-sha").write_text(old + "\n")
+    r = _run_swbp(builder, tmp_path, "tpm-view", "--app", str(app))
+    assert r.returncode != 0
+    assert "mid-milestone plane adoption forbidden" in r.stderr
+
+
+def _frozen(app: Path) -> None:
+    approved = app / "scripts" / ".approved"
+    (approved / "VERSION").write_text("1\n")
+    rows = []
+    for f in sorted([*approved.glob("*.md"), *approved.glob("*.json"),
+                     *(app / "tests").glob("*.py")]):
+        digest = hashlib.sha256(f.read_bytes()).hexdigest()
+        rows.append(f"{digest}  {f.relative_to(app)}")
+    (approved / "frozen-manifest").write_text("\n".join(rows) + "\n")
+
+
+def test_phase_gate_app_mode_skips_hosted_plane_but_keeps_frozen_spec(tmp_path):
+    app = _swbp_app(tmp_path, "0" * 40)
+    _frozen(app)
+    gate = str(PLANE / "scripts" / "phase-gate.sh")
+    r = subprocess.run(["bash", gate, "manifest", "HEAD"], cwd=app,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    # the frozen spec is still fail-closed in app mode
+    with open(app / "tests" / "api_tests.py", "a") as fh:
+        fh.write("# tampered\n")
+    r = subprocess.run(["bash", gate, "manifest", "HEAD"], cwd=app,
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "tampered" in r.stdout
+    # without the .swbp marker the hosted-plane checks still apply
+    (app / ".swbp").unlink()
+    _frozen(app)
+    r = subprocess.run(["bash", gate, "manifest", "HEAD"], cwd=app,
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "manifest missing" in r.stdout

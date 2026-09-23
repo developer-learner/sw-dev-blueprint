@@ -10,7 +10,7 @@
 # informational, and a stopped VM is not an error condition.
 set -u
 
-cd "$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "${SWBP_APP_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}"  # D-186: swbp sets the app root
 
 # --- section formatting ------------------------------------------------------
 hdr() { printf '\n== %s ==\n' "$1"; }

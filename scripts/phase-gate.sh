@@ -47,7 +47,13 @@ hash_file() {
 # Hash verification below still pins every resolved byte to the adopted
 # `.manifest-template`; this structural pass prevents a same-byte local copy
 # from silently reintroducing per-child control-plane ownership.
-if [ -f .template-link ]; then
+# D-186: a builder-targeted app (marked by .swbp) hosts no plane — it runs
+# from a content-addressed snapshot of the pinned builder ref, so there is
+# nothing here to link-check or hash. The frozen-spec check below still runs.
+APP_MODE=0
+[ -f .swbp ] && APP_MODE=1
+
+if [ "$APP_MODE" = 0 ] && [ -f .template-link ]; then
   link_mode="$(grep '^mode=' .template-link | cut -d= -f2-)"
   link_source="$(grep '^source=' .template-link | cut -d= -f2-)"
   [ "$link_mode" = "linked" ] && [ -n "$link_source" ] || {
@@ -108,6 +114,7 @@ fi
 #   .manifest-project  — per-project adaptations (Rule 3); never drift-checked
 # Both are required and both fail closed.
 for MANIFEST in scripts/.manifest-template scripts/.manifest-project; do
+  [ "$APP_MODE" = 1 ] && break
   if [ ! -f "$MANIFEST" ]; then
     echo "GATE FAIL: control-plane manifest missing: $MANIFEST"
     exit 1

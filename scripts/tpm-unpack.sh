@@ -14,7 +14,7 @@
 # Usage: tpm-unpack.sh [--force] [reply-file]
 #   --force   replace a non-empty staging dir (previous milestone leftovers)
 set -euo pipefail
-cd "$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "${SWBP_APP_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}"  # D-186: swbp sets the app root
 
 IN_DIR="scripts/.approved/incoming"
 die() { echo "TPM-UNPACK FAIL: $*" >&2; exit 1; }

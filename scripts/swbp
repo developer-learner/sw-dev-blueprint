@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# swbp — run the builder against an app (D-186 stage B).
+#
+#   scripts/swbp <cmd> --app <path> [--ref <sha>] [-- <cmd args>...]
+#
+# The app carries no control plane. swbp resolves a builder ref (default: the
+# app's pin — `.swbp` ref=, else a linked child's `.template-version` ref=),
+# materializes that exact commit into the same content-addressed snapshot
+# D-168 uses ($XDG_CACHE_HOME/swbp-plane/<sha>), and execs the snapshot's
+# script with cwd = the app. Authority is the pinned ref, never this
+# checkout's working tree.
+#
+# Builder-only: this file is not in .manifest-template and never reaches an
+# app. Apps marked by a `.swbp` file are "builder-targeted": phase-gate skips
+# the hosted-plane checks there (no plane to hash) while the frozen spec stays
+# fully verified, and core.hooksPath (untracked .git/config) points at the
+# snapshot's hooks.
+set -euo pipefail
+
+die() { echo "swbp: $*" >&2; exit 1; }
+
+usage() {
+  echo "usage: swbp <cmd> --app <path> [--ref <sha>] [-- <args>...]" >&2
+  echo "  cmd: orchestrate refreeze tpm-pack tpm-unpack tpm-view tpm-agent em-bench status" >&2
+  exit 2
+}
+
+self="$0"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case $link in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
+done
+BUILDER="$(cd "$(dirname "$self")/.." && pwd -P)"
+
+[ $# -ge 1 ] || usage
+CMD="$1"; shift
+case "$CMD" in
+  orchestrate|refreeze|tpm-pack|tpm-unpack|tpm-view|tpm-agent|em-bench|status) ;;
+  -h|--help) usage ;;
+  *) die "unknown command: $CMD" ;;
+esac
+
+APP="" REF=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --app) [ $# -ge 2 ] || usage; APP="$2"; shift 2 ;;
+    --ref) [ $# -ge 2 ] || usage; REF="$2"; shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+[ -n "$APP" ] || usage
+[ -d "$APP" ] || die "app not found: $APP"
+APP="$(cd "$APP" && pwd -P)"
+top="$(git -C "$APP" rev-parse --show-toplevel 2>/dev/null || true)"
+[ "$top" = "$APP" ] || die "app must be the root of a git repository: $APP"
+[ "$APP" != "$BUILDER" ] || die "the builder cannot target itself"
+
+pin_of() {  # ref= from a pin file, or empty
+  [ -f "$1" ] && sed -n 's/^ref=//p' "$1" | head -1 | tr -d '[:space:]' || true
+}
+if [ -z "$REF" ]; then
+  REF="$(pin_of "$APP/.swbp")"
+  [ -n "$REF" ] || REF="$(pin_of "$APP/.template-version")"
+fi
+[ -n "$REF" ] || die "no builder ref: pass --ref or pin one in $APP/.swbp (ref=<sha>)"
+SHA="$(git -C "$BUILDER" rev-parse --verify --quiet "$REF^{commit}" || true)"
+[ -n "$SHA" ] || die "builder ref $REF not present in $BUILDER — fetch it first"
+
+# Materialize once, content-addressed — identical to D-168's layout, so an
+# orchestrate re-exec and a swbp launch share the same snapshot.
+ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/swbp-plane/$SHA"
+if [ ! -f "$ROOT/.swbp-plane-stamped" ]; then
+  rm -rf "$ROOT"
+  mkdir -p "$ROOT"
+  git -C "$BUILDER" archive "$SHA" | tar -x -C "$ROOT"
+  : > "$ROOT/.swbp-plane-stamped"
+fi
+# A ref older than this launcher resolves helpers against the wrong root —
+# its entry scripts would cd into the snapshot itself. Refuse, don't guess.
+[ -f "$ROOT/scripts/swbp" ] \
+  || die "builder ref $SHA predates swbp (D-186 stage B) — pin a newer ref"
+SCRIPT="$ROOT/scripts/$CMD.sh"
+[ -f "$SCRIPT" ] || die "$CMD not available at builder ref $SHA"
+
+# D-168 rule, same wording: the plane may not change under an in-flight
+# milestone. Recorded by orchestrate itself; checked here for every entry.
+prev="$(cat "$APP/.pipeline-state/plane-sha" 2>/dev/null || true)"
+if [ -n "$prev" ] && [ "$prev" != "$SHA" ] \
+   && [ -n "$(ls -A "$APP/.pipeline-state/tasks" 2>/dev/null || true)" ]; then
+  die "mid-milestone plane adoption forbidden (D-168): state recorded $prev, requested $SHA — finish the milestone on $prev, adopt afterwards"
+fi
+
+if [ -f "$APP/.swbp" ]; then
+  # Builder-targeted app: its commits gate through the pinned snapshot's
+  # hooks. Untracked config — nothing lands in the app's history.
+  git -C "$APP" config core.hooksPath "$ROOT/.githooks"
+fi
+if [ "$CMD" = orchestrate ]; then
+  # orchestrate's own guard records this, but it returns early under a
+  # snapshot — record it here so the rule above has its evidence.
+  mkdir -p "$APP/.pipeline-state"
+  echo "$SHA" > "$APP/.pipeline-state/plane-sha"
+fi
+
+cd "$APP"
+exec env SWBP_PLANE_SNAPSHOT="$ROOT" SWBP_PLANE_SHA="$SHA" SWBP_APP_ROOT="$APP" \
+  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath \
+  GIT_CONFIG_VALUE_0="$ROOT/.githooks" \
+  bash "$SCRIPT" "$@"
