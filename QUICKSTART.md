@@ -66,7 +66,21 @@ because the orchestrator refuses a dirty tree (pre-flight, fail-closed).
 (The durable path for real projects is GitHub's "Use this template" — see
 README "Starting a new project". Not needed today.)
 
-**Born-linked (local fleet, D-183):** if the blueprint is checked out next
+**Builder-targeted (recommended, D-186):** the app carries no control plane
+at all — the builder runs against it:
+
+```bash
+cd sw-dev-blueprint
+./scripts/new-project.sh --targeted myproj
+./scripts/swbp refreeze --app ../myproj -- scripts/.approved/incoming
+./scripts/swbp orchestrate --app ../myproj
+```
+
+`../myproj` gets product scaffolding, its own CI plus the `swbp-guard`
+workflow, and a `.swbp` pin to this checkout's HEAD — no scripts, hooks, or
+manifests. Every pipeline step is `scripts/swbp <step> --app <path>`.
+
+**Born-linked (legacy, D-183 — superseded by D-186):** if the blueprint is checked out next
 door, skip the clone-and-copy entirely — create the child already linked:
 
 ```bash

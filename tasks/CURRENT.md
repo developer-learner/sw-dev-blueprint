@@ -43,7 +43,14 @@ commits, not `refreeze.sh` (children's specs still freeze there)
       `swbp commit` (a person's change via the broker), pre-push app mode
       (frozen spec + guard + static ruff/mypy — never the app's tests on the
       host, D-114), `app-template/.github/workflows/swbp-guard.yml`. Suite
-      612 green. Next: stage D (migrate vortex). Design: `tasks/central-builder-design.md`.
+      612 green.
+      **2026-09-23 — D/E:** vortex migrated and pushed (CI + guard green
+      with no builder files); rich-adoption migrated locally (branch
+      `adoption`); `new-project.sh --targeted` added. Testchat skipped
+      (another session's unfinished work). Pending: vortex live milestone
+      via `swbp orchestrate`, testchat cleanup + migration, rich-adoption
+      spec fix (D-179), then stage F. Details:
+      `tasks/central-builder-design.md` § Progress. Design: `tasks/central-builder-design.md`.
 - 2026-09-01: **T7 M1 landed (D-174) + T7 M2 designed (D-176) + T11 Phase 0 done (D-175).** CEO ruling of the day: Option 3 approved as staged (M1 now, M2 after the three prerequisites), Rich approved for Phase 0, T6 untouched. M1: trusted commit broker at every pipeline commit site, author/committer separation, `Swbp-*` trailers, provider-returned model preference, run-id, coder-prompt byte-capture; suite 548 green; published `1b455f0` + bootstrap fix `1684e0b`. M2 design (no code yet, awaiting go): out-of-band pinned-fingerprint trust anchor, atomic durable evidence under `.swbp-evidence/<run-id>/`, attestation semantics stated for the record, verifier report-first → T1 after one clean cycle — `tasks/T7-m2-design.md`. T11 Phase 0: rich-adoption born — rich 15.0.0 pinned at `v15.0.0`/`6ac483cb`, baseline 956/25/0 with lockfile deps (pygments 2.21.0 breaks 8 legacy tests → lockfile is the dependency authority), 73-file legacy pin, plane LINKED at `1684e0b` (run #2 born on the broker plane; first child commit `0127c3bf` carries the full trailer set), pre-spec tunnel state recorded, child verification green. **v1 spec
       drafted (Phase 1 prep):** M1 = `Table.add_rows` +
       `Table.from_rows` (purely additive, delegates to `add_row` cell

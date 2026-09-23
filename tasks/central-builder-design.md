@@ -90,8 +90,8 @@ through the builder or be flagged. No constraint is relaxed by this design.
 | A ✅ 2026-09-22 | two-root split; `PLANE_DIR` threaded through all scripts; linked children still run via symlink + `PLANE_DIR` = snapshot | yes |
 | B ✅ 2026-09-22 | `scripts/swbp --app` launcher; generalize `plane_entry_guard` to all entries; untracked hooksPath setup | yes |
 | C ✅ 2026-09-23 | app pre-push template + `swbp-guard.yml` (report-first) | yes |
-| D | migrate **vortex**: delete links/manifests/pin/drift workflow, add `.swbp`; run its next real feature end-to-end via `swbp` (TPM→EM→coder) | vortex no, others yes |
-| E | migrate testchat, rich-adoption; `new-project.sh` seeds builder-targeted apps (supersedes D-183 born-linked) | — |
+| D ◐ 2026-09-23 migrated, live run pending | migrate **vortex**: delete links/manifests/pin/drift workflow, add `.swbp`; run its next real feature end-to-end via `swbp` (TPM→EM→coder) | vortex no, others yes |
+| E ◐ 2026-09-23 rich-adoption + `--targeted` done; testchat blocked | migrate testchat, rich-adoption; `new-project.sh` seeds builder-targeted apps (supersedes D-183 born-linked) | — |
 | F | delete the sync layer: `link-template.sh`, `update-template.sh`, `check-drift.sh`, `manifest-drift-guard.sh`, `regen-manifest.sh`'s child role, `.template-link` handling, their selftests | — |
 
 Rollback: until F, a migrated child can be re-linked with `link-template.sh`.
@@ -111,3 +111,24 @@ F happens only after every child has completed one real milestone under `swbp`.
 1. Default ref when `--ref` is omitted: the app's `.swbp` pin.
 2. App adaptations stay protected — moved into `swbp-guard`, not dropped.
 3. Vortex migrates first.
+
+## Progress (2026-09-23)
+
+- **A, B, C done** — pushed, CI green.
+- **D — vortex migrated** (`f51aadf`, pushed): 83 plane links, both
+  manifests, pin/link files and `check-drift.yml` removed; `.swbp` + `swbp-guard`
+  added; `ci.yml` no longer reconstructs the builder. GitHub CI (app tests +
+  80% coverage floor) and swbp-guard green without any builder files.
+  In the dev VM, `swbp refreeze` ran the real freeze preflights from the
+  snapshot against vortex. **Pending: one real feature milestone via
+  `swbp orchestrate`** (done criterion 2 — the live-fire).
+- **E — rich-adoption migrated** (local-only branch `adoption`, `f7c20cc2`;
+  origin is upstream Textualize/rich — never pushed). Its staged v1 spec now
+  fails the D-179 preflight (check added 2026-09-03, after the draft) — a TPM
+  spec fix, not a migration defect. `new-project.sh --targeted` seeds
+  builder-targeted apps (supersedes D-183 for new work).
+- **E — testchat NOT migrated:** another session's unfinished work sits
+  there (unpushed revert-of-revert `fee6ce6`, worktree
+  `testchat-vortex-cutover`, uncommitted handoff note). Resolve that first.
+- **F — not started, by design:** gated on every app completing one real
+  milestone under `swbp`.

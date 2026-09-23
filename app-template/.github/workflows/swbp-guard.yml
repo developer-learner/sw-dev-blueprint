@@ -53,6 +53,6 @@ jobs:
           elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
             spec="${{ github.event.before }}..${{ github.sha }}"
           else
-            spec="${{ github.sha }}~1..${{ github.sha }}"
+            spec="${{ github.sha }}^!"  # new branch/repo: just the pushed commit
           fi
           python3 "$RUNNER_TEMP/builder/scripts/check-app-guard.py" --rev "$spec"

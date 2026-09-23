@@ -18,27 +18,37 @@
 #      no copy-seeded plane residue is ever left behind.
 #      --skip-bootstrap: fixture/CI mode — skip the LLM preflight and the
 #      venv/dependency bootstrap (seed + link still run).
+#
+#   3. Builder-targeted (D-186 — the default direction for new apps):
+#        scripts/new-project.sh --targeted <project-name> [--from <blueprint>] [--skip-bootstrap]
+#      Creates <project-name> as a sibling of the blueprint with NO control
+#      plane: child-owned files, app CI + swbp-guard workflows, and a `.swbp`
+#      pin to the blueprint's HEAD. The pipeline runs from the builder:
+#      `scripts/swbp <cmd> --app <project>`. --skip-bootstrap skips only the
+#      LLM preflight (there is no plane bootstrap to run).
 set -euo pipefail
 
 LINKED=0
+TARGETED=0
 SKIP_BOOTSTRAP=0
 BLUEPRINT_OVERRIDE=""
-if [ "${1:-}" = "--linked" ]; then
-  LINKED=1
+if [ "${1:-}" = "--linked" ] || [ "${1:-}" = "--targeted" ]; then
+  mode="${1#--}"
+  if [ "$mode" = linked ]; then LINKED=1; else TARGETED=1; fi
   shift
-  PROJECT_NAME="${1:?usage: scripts/new-project.sh --linked <project-name> [--from <blueprint>] [--skip-bootstrap]}"
+  PROJECT_NAME="${1:?usage: scripts/new-project.sh --$mode <project-name> [--from <blueprint>] [--skip-bootstrap]}"
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --from) BLUEPRINT_OVERRIDE="${2:?--from needs a path}"; shift 2 ;;
       --skip-bootstrap) SKIP_BOOTSTRAP=1; shift ;;
-      *) echo "ERROR: unknown option for --linked mode: $1" >&2; exit 1 ;;
+      *) echo "ERROR: unknown option for --$mode mode: $1" >&2; exit 1 ;;
     esac
   done
 elif [ -n "${1:-}" ]; then
   PROJECT_NAME="$1"
 else
-  echo "usage: scripts/new-project.sh <project-name> | scripts/new-project.sh --linked <project-name> [--from <blueprint>] [--skip-bootstrap]" >&2
+  echo "usage: scripts/new-project.sh <project-name> | scripts/new-project.sh --linked|--targeted <project-name> [--from <blueprint>] [--skip-bootstrap]" >&2
   exit 1
 fi
 
@@ -273,6 +283,99 @@ EOF
   echo "   plane: symlinks into the blueprint (pinned at ${birth_sha:0:12})"
   echo "   next: cd $target && scripts/orchestrate.sh"
 }
+
+
+# --- D-186: builder-targeted birth -------------------------------------------
+# The app is born with no control plane. One seed commit, made through the
+# provenance broker (`swbp commit`), so the app guard sees a clean history.
+born_targeted() {
+  local name="$1" blueprint="$2" skip_bootstrap="$3"
+  local target birth_sha f wf
+
+  [ -x "$blueprint/scripts/swbp" ] || die "not a builder checkout (no scripts/swbp): $blueprint"
+  [ -d "$blueprint/app-template" ] || die "builder missing app-template/: $blueprint"
+  [ -f "$blueprint/CLAUDE.md" ] || die "blueprint missing CLAUDE.md — cannot seed: $blueprint"
+  git var GIT_AUTHOR_IDENT >/dev/null 2>&1 \
+    || die "git identity missing — set user.name/user.email (or GIT_AUTHOR_*/GIT_COMMITTER_* env)"
+  target="$(cd "$blueprint/.." && pwd -P)/$name"
+  [ -e "$target" ] && die "target already exists: $target"
+  birth_sha="$(git -C "$blueprint" rev-parse HEAD)"
+  git -C "$blueprint" cat-file -e "$birth_sha:scripts/swbp" 2>/dev/null \
+    || die "builder HEAD $birth_sha has no committed scripts/swbp — commit it first"
+
+  echo "🧬 Builder-targeted seeding: $name"
+  echo "   builder: $blueprint @ ${birth_sha:0:12}"
+  echo "   target:  $target"
+  echo ""
+  if [ "$skip_bootstrap" = 0 ]; then llm_preflight; echo ""; fi
+
+  mkdir -p "$target/.github/workflows" "$target/docs" "$target/tasks"
+  for f in CLAUDE.md CONVENTIONS.md README.md .gitignore .gate-paths opencode.json \
+           Containerfile requirements.txt .dockerignore .env.example; do
+    [ -f "$blueprint/$f" ] && cp "$blueprint/$f" "$target/$f"
+  done
+  for wf in "$blueprint"/app-template/.github/workflows/*.yml; do
+    cp "$wf" "$target/.github/workflows/$(basename "$wf")"
+  done
+  [ -f "$blueprint/.github/workflows/container-build.yml" ] \
+    && cp "$blueprint/.github/workflows/container-build.yml" "$target/.github/workflows/"
+  ln -s CLAUDE.md "$target/AGENTS.md"
+  printf 'repo=developer-learner/sw-dev-blueprint\nref=%s\n' "$birth_sha" > "$target/.swbp"
+
+  find "$target" -type f \( -name "*.md" -o -name "*.yml" -o -name "*.yaml" \) \
+    -exec "${SED_INPLACE[@]}" "s/\[PROJECT_NAME\]/$name/g" {} +
+  python3 - "$target/CLAUDE.md" "$blueprint" "$target" <<'PY'
+import sys
+from pathlib import Path
+path, builder, app = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+note = f"""> **D-186 — builder-targeted app.** This repo carries no control plane.
+> Every `scripts/<name>.sh` named below means
+> `{builder}/scripts/swbp <name> --app {app} [-- args]`. The builder version
+> is pinned in `.swbp`; change it only between milestones. A person's change
+> to tests, the frozen spec, or pipeline adaptations goes through
+> `swbp commit --app {app} -- "<subject>" <files>`.
+
+"""
+head, _, rest = path.read_text().partition("\n")
+path.write_text(head + "\n\n" + note + rest)
+PY
+
+  cat > "$target/docs/DECISIONS.md" <<'DOC'
+# DECISIONS.md — Architectural Decision Log
+
+> Every non-obvious technical decision goes here with the reasoning.
+> Format: date, decision, why, what not to suggest.
+
+---
+DOC
+  cat > "$target/tasks/CURRENT.md" <<DOC
+# CURRENT — $name
+
+No active milestone yet. First milestone: author the frozen spec
+(PRD/ERD/contracts/tests) with your TPM, stage it under
+scripts/.approved/incoming/, then from the builder:
+  $blueprint/scripts/swbp refreeze --app $target -- scripts/.approved/incoming
+  $blueprint/scripts/swbp orchestrate --app $target
+DOC
+  printf '# BACKLOG\n\n(quiet — nothing queued)\n' > "$target/tasks/BACKLOG.md"
+
+  git init -q -b main "$target"
+  "$blueprint/scripts/swbp" commit --app "$target" -- \
+    "chore: seed $name (builder-targeted, sw-dev-blueprint @ ${birth_sha:0:12})" -A \
+    || die "seed commit failed"
+
+  echo ""
+  echo "✅ $name is born builder-targeted at $target (no control plane)"
+  echo "   builder pin: ${birth_sha:0:12} (.swbp)"
+  echo "   next: create a venv, author the spec, then $blueprint/scripts/swbp refreeze --app $target"
+}
+
+if [ "$TARGETED" = 1 ]; then
+  BLUEPRINT_DIR="${BLUEPRINT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+  BLUEPRINT_DIR="$(cd "$BLUEPRINT_DIR" && pwd -P)"
+  born_targeted "$PROJECT_NAME" "$BLUEPRINT_DIR" "$SKIP_BOOTSTRAP"
+  exit 0
+fi
 
 if [ "$LINKED" = 1 ]; then
   BLUEPRINT_DIR="${BLUEPRINT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"

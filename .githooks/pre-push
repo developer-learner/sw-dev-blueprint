@@ -101,6 +101,8 @@ if [ -f "$TMPTREE/.swbp" ]; then
   app_ok=1
   ( cd "$TMPTREE" && bash "$PLANE_ROOT/scripts/phase-gate.sh" manifest HEAD ) >&2 || app_ok=0
   ( cd "$TMPTREE" && python3 "$PLANE_ROOT/scripts/check-app-guard.py" --rev "$guard_spec" ) >&2 || app_ok=0
+  # The app's own tool versions win (vortex keeps mypy only in its venv).
+  [ -d "$PUSH_REPO/.venv/bin" ] && PATH="$PUSH_REPO/.venv/bin:$PATH"
   if [ -d "$TMPTREE/src" ]; then
     for tool in "ruff check src/" "mypy --explicit-package-bases src/"; do
       if command -v "${tool%% *}" >/dev/null 2>&1; then

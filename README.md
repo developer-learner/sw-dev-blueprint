@@ -103,8 +103,13 @@ cd my-new-project
 ./scripts/bootstrap.sh my-new-project
 ```
 
-Existing local children can use one shared, version-pinned Blueprint control
-plane instead of owning copied scripts:
+**Builder-targeted apps (D-186, the default for new work):** with this repo
+checked out locally, `./scripts/new-project.sh --targeted <name>` creates an
+app that carries no control plane; every pipeline step then runs from here as
+`./scripts/swbp <step> --app ../<name>`. See QUICKSTART.
+
+Legacy: existing local children can still link one shared, version-pinned
+Blueprint control plane instead of owning copied scripts:
 
 ```bash
 bash /path/to/sw-dev-blueprint/scripts/link-template.sh \

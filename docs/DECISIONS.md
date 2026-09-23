@@ -43,6 +43,9 @@ pre-push runs the app's own suite; an app CI guard requires builder trailers
 (D-174) and, after M2b, provenance signatures (D-184) on `tests/`,
 `scripts/.approved/`, and the app adaptations formerly pinned by
 `.manifest-project` — report-first, then failing.
+Amended 2026-09-23 during stage C: the app pre-push runs static checks only
+(frozen spec, guard, ruff/mypy) — the app's tests execute generated code and
+stay in the sandbox/CI, never on the host (D-114).
 
 **Alternatives considered:** (a) Keep D-35 linked mode — centralizes storage,
 not execution: children still run whatever the shared checkout has checked

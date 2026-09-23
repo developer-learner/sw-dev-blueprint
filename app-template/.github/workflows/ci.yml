@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Provenance report (advisory — M2a / D-184): the verifier is a plane file,
+  # so materialize the pinned Blueprint and run it against THIS repo.
+  # Report mode always exits 0 until the M2b gate flip (CEO call after one
+  # live adoption run).
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 50
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Provenance report (advisory — M2a)
+        # D-186: this app carries no plane — fetch the builder at the .swbp pin.
+        env:
+          TOKEN: ${{ secrets.TEMPLATE_READ_TOKEN }}
+        run: |
+          repo=$(sed -n 's/^repo=//p' .swbp | head -1)
+          ref=$(sed -n 's/^ref=//p' .swbp | head -1)
+          if [ -n "$TOKEN" ]; then url="https://x-access-token:${TOKEN}@github.com/${repo}.git"
+          else url="https://github.com/${repo}.git"; fi
+          git init -q "$RUNNER_TEMP/builder"
+          git -C "$RUNNER_TEMP/builder" fetch -q --depth 1 "$url" "$ref"
+          git -C "$RUNNER_TEMP/builder" checkout -q --detach FETCH_HEAD
+          python3 "$RUNNER_TEMP/builder/scripts/check-provenance.py" "HEAD~50..HEAD"
+
+  test:
+    runs-on: ubuntu-latest
+    # NOTE: the skeleton guard is a STEP, not a job-level `if` — hashFiles()
+    # is not available in job-level expressions (no workspace exists yet);
+    # using it there makes the whole workflow file invalid (0s failure).
+    # --- Postgres for projects that need it (uncomment both blocks below) ---
+    # services:
+    #   postgres:
+    #     image: postgres:15
+    #     env:
+    #       POSTGRES_USER: testuser
+    #       POSTGRES_PASSWORD: testpass
+    #       POSTGRES_DB: testdb
+    #     options: >-
+    #       --health-cmd pg_isready
+    #       --health-interval 10s
+    #       --health-timeout 5s
+    #       --health-retries 5
+    #     ports:
+    #       - 5432:5432
+    steps:
+      - uses: actions/checkout@v7
+      - name: Guard — skip bare template skeletons
+        id: guard
+        run: |
+          if [ -f requirements.txt ] && [ -d src ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::skeleton repo (no requirements.txt + src/ yet) — CI steps skipped"
+          fi
+      - name: Set up Python
+        if: steps.guard.outputs.run == 'yes'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install dependencies
+        if: steps.guard.outputs.run == 'yes'
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-json-report ruff mypy respx
+      - name: Lint
+        if: steps.guard.outputs.run == 'yes'
+        run: ruff check src/
+      - name: Type check
+        if: steps.guard.outputs.run == 'yes'
+        # --explicit-package-bases: src/ layouts without __init__.py files make
+        # bare `mypy src/` exit 2 on "Duplicate module named" (e.g. api/models.py
+        # vs services/models.py) BEFORE type-checking a single line.
+        run: mypy --explicit-package-bases src/
+      # If using Postgres, uncomment DATABASE_URL and the services block above:
+      # - name: Run tests
+      #   env:
+      #     DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+      #   run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80
+      # Browser oracle (D-58): projects whose frozen suite includes Playwright
+      # UI tests need the browser binary; a no-playwright project skips in 1s.
+      - name: Install Playwright browser
+        if: steps.guard.outputs.run == 'yes'
+        run: |
+          if pip show playwright >/dev/null 2>&1; then
+            playwright install --with-deps chromium
+          fi
+      - name: Run tests
+        if: steps.guard.outputs.run == 'yes'
+        # PYTHONPATH: tests import `src.*` from the repo root (the sandbox sets
+        # /work; CLAUDE.md documents `PYTHONPATH=. pytest`; CI must match).
+        # mkdir: pytest-json-report does not create the report's parent dir.
+        env:
+          PYTHONPATH: .
+        run: |
+          mkdir -p .cache
+          pytest tests/ --cov=src --cov-report=term-missing --cov-fail-under=80 --json-report --json-report-file=.cache/test-report.json
+      - name: Upload coverage
+        uses: codecov/codecov-action@v7
+        if: always() && steps.guard.outputs.run == 'yes'

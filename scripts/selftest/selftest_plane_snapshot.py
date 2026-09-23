@@ -720,3 +720,55 @@ def test_pre_push_app_mode_runs_app_checks_not_the_plane_suite(tmp_path):
                        input=_push_line(bad, head), capture_output=True, text=True, env=env)
     assert r.returncode != 0
     assert "REFUSED" in r.stderr and "tampered" in r.stderr
+
+
+def test_pre_push_app_mode_uses_the_apps_venv_tools(tmp_path):
+    app = _swbp_app(tmp_path, "0" * 40)
+    _frozen(app)
+    (app / "src").mkdir()
+    (app / "src" / "m.py").write_text("x = 1\n")
+    env = {**os.environ, **IDENT}
+    subprocess.run(["git", "-C", str(app), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(app), "-c", "core.hooksPath=/dev/null",
+                    "commit", "-qm", "seed", "-m", "Swbp-Role: tpm"], check=True, env=env)
+    head = subprocess.run(["git", "-C", str(app), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    # a venv mypy that fails: the hook must find it and refuse
+    venv = app / ".venv" / "bin"
+    venv.mkdir(parents=True)
+    fake = venv / "mypy"
+    fake.write_text("#!/bin/sh\necho venv-mypy-ran >&2\nexit 1\n")
+    fake.chmod(0o755)
+    r = subprocess.run(["bash", str(PLANE / ".githooks" / "pre-push"), "origin", "url"],
+                       cwd=app, input=_push_line(head), capture_output=True, text=True, env=env)
+    assert "venv-mypy-ran" in r.stderr, r.stderr
+    assert r.returncode != 0
+
+
+def test_new_project_targeted_is_born_without_a_plane(tmp_path):
+    builder, _old, new = _builder_repo(tmp_path)
+    env = {**os.environ, **IDENT, "HOME": str(tmp_path / "home"),
+           "XDG_CACHE_HOME": str(tmp_path / "cache")}
+    r = subprocess.run([str(builder / "scripts" / "new-project.sh"), "--targeted", "demo",
+                        "--from", str(builder), "--skip-bootstrap"],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    app = tmp_path / "demo"
+    assert (app / ".swbp").read_text().splitlines()[1] == f"ref={new}"
+    # no plane: no scripts, no manifests, no link/pin files, no tracked hooks
+    tracked = subprocess.run(["git", "-C", str(app), "ls-files"], capture_output=True,
+                             text=True, check=True).stdout.split()
+    assert not [t for t in tracked if t.startswith(("scripts/", ".githooks/", ".opencode/"))
+                and not t.startswith("scripts/.approved/")], tracked
+    for gone in (".template-version", ".template-link", "BLUEPRINT.md"):
+        assert gone not in tracked
+    assert {".github/workflows/ci.yml", ".github/workflows/swbp-guard.yml"} <= set(tracked)
+    assert os.readlink(app / "AGENTS.md") == "CLAUDE.md"
+    assert "builder-targeted app" in (app / "CLAUDE.md").read_text()
+    body = subprocess.run(["git", "-C", str(app), "log", "-1", "--format=%B"],
+                          capture_output=True, text=True, check=True).stdout
+    assert "Swbp-Role: human" in body, body
+    assert _guard(app, "--rev", "HEAD", "--enforce").returncode == 0
+    gate = subprocess.run(["bash", str(PLANE / "scripts" / "phase-gate.sh"), "manifest",
+                           "HEAD"], cwd=app, capture_output=True, text=True)
+    assert gate.returncode == 0, gate.stdout
