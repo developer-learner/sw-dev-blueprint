@@ -23,8 +23,10 @@
 
 ## D-186 — 2026-09-22 — Central builder: apps are built from outside, never host the plane
 
-**Status:** PROPOSED — awaiting CEO approval (Rule 3). Design and stages:
-`tasks/central-builder-design.md`. On approval, supersedes D-35 (linked
+**Status:** APPROVED by the CEO 2026-09-22. Design and stages:
+`tasks/central-builder-design.md`. Resolutions: default ref = the app's
+`.swbp` pin; app adaptations stay protected (moved into `swbp-guard`, not
+dropped — no constraint is relaxed); vortex migrates first. Supersedes D-35 (linked
 distribution) and D-183 (born-linked seeding); amends D-33/D-34 (retired for
 children at stage F) and D-30 (hooks move to untracked `core.hooksPath`).
 
@@ -38,8 +40,9 @@ symlink, both manifests, `.template-version`, `.template-link`,
 `check-drift.yml`, and tracked hooks. Enforcement: run-time lanes and the
 frozen manifest unchanged; local hooks via untracked `core.hooksPath`; app
 pre-push runs the app's own suite; an app CI guard requires builder trailers
-(D-174) and, after M2b, provenance signatures (D-184) on `tests/` and
-`scripts/.approved/` — report-first, then failing.
+(D-174) and, after M2b, provenance signatures (D-184) on `tests/`,
+`scripts/.approved/`, and the app adaptations formerly pinned by
+`.manifest-project` — report-first, then failing.
 
 **Alternatives considered:** (a) Keep D-35 linked mode — centralizes storage,
 not execution: children still run whatever the shared checkout has checked

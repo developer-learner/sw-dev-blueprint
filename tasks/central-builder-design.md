@@ -1,7 +1,6 @@
 # Central builder — design (D-186, PROPOSED)
 
-Status: **proposed, awaiting CEO approval** (Rule 3: this changes how the
-control plane is enforced in children, not just how it detects).
+Status: **APPROVED by the CEO 2026-09-22.**
 
 ## Problem
 
@@ -72,14 +71,15 @@ tracked `.githooks/`.
    closing the "release-gate ≠ CI" gap. Control-plane selftests move to the
    builder's own pre-push/CI, where they belong.
 4. *App CI guard* (`swbp-guard.yml`, physical file, like check-drift today):
-   commits touching `tests/` or `scripts/.approved/` must carry builder
+   commits touching `tests/`, `scripts/.approved/`, or the app adaptations
+   listed above must carry builder
    `Swbp-*` trailers (D-174) and, once M2b's gate flips, a valid provenance
    signature (D-184). **Report-first**, flipped to failing after one clean
    milestone — same staging D-184 used.
 
-The app's own `.manifest-project` protection of adaptations is dropped: during
-runs the lane gate already blocks agents from those files; on the human path
-they are the owner's files by definition (Rule 3 adaptations).
+The protection `.manifest-project` gave the app adaptations is kept, not
+dropped: it moves into `swbp-guard` (item 4), so a change to them must come
+through the builder or be flagged. No constraint is relaxed by this design.
 
 ## Stages (each its own commit set, selftests green at every step)
 
@@ -104,9 +104,8 @@ F happens only after every child has completed one real milestone under `swbp`.
    `tests/` is rejected (live-fire, Rule 6 — not just a selftest).
 5. The sync-layer scripts in stage F are gone from the builder.
 
-## Open questions for the CEO
+## Resolutions (CEO, 2026-09-22)
 
-1. Default ref when `--ref` is omitted: the app's `.swbp` pin (reproducible,
-   proposed) vs builder HEAD (always newest)?
-2. OK to drop `.manifest-project` protection of app adaptations (see above)?
-3. Vortex first (proposed — its plane is already pure links)?
+1. Default ref when `--ref` is omitted: the app's `.swbp` pin.
+2. App adaptations stay protected — moved into `swbp-guard`, not dropped.
+3. Vortex migrates first.
