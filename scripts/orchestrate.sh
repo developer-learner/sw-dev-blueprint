@@ -1081,6 +1081,7 @@ em_smoke_probe() {
 # server supports it; either way validate-plan.py is the real gate.
 em_call() {
   local out="$1" schema="$2" instr="$3"; shift 3
+  case "$out" in tasks/plan*.json) PLAN_FROM_B3=0 ;; esac  # an EM emission owns the plan now
   # D-55 lazy smoke: fires here (type-guarded so extracted selftest shells and
   # any consumer without em_smoke_probe defined skip it) just before the first
   # real EM call — the failure mode it guards is the model-call path itself.
@@ -1639,6 +1640,15 @@ ensure_plan() {
         # T7 M2 (D-184): Swbp-Call-Id from the sidecar (the provider's own
         # receipt, never fabricated) + durable evidence committed atomically
         # (entry: plan-<emit>, the EM emit number that produced this plan).
+        if [ "${PLAN_FROM_B3:-0}" = "1" ]; then
+          # A B3 plan is transcribed by the shell from the frozen TPM
+          # ERD-DELTA — no model wrote it, so it is committed as `pipeline`
+          # with no evidence entry. Committing it as `em` declared an
+          # evidence capture that cannot exist, and the M2b fail-closed
+          # capture rule (criterion 3) refused the commit (vortex v37,
+          # 2026-09-23: B3 plan valid first time, run halted at [plan]).
+          swbp_commit pipeline "[plan] synthesized from TPM briefs, validated against spec v$FROZEN_V" tasks/plan.json
+        else
         SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/em-last.meta" 2>/dev/null | head -1)" \
         SWBP_PROV_CALL_ID="$(sed -n 's/^call_id=//p' "$LOG_DIR/em-last.meta" 2>/dev/null | head -1)" \
         SWBP_PROV_META_FILE="$LOG_DIR/em-last.meta" \
@@ -1646,6 +1656,7 @@ ensure_plan() {
         SWBP_PROV_PROMPT_FILE="${LAST_ARCHIVE_ENTRY:-}/prompt.txt" \
         SWBP_PROV_REPLY_FILE="${LAST_ARCHIVE_ENTRY:-}/reply.json" \
           swbp_commit em "[plan] validated against spec v$FROZEN_V" tasks/plan.json
+        fi
       fi
       return 0
     fi
@@ -1784,6 +1795,7 @@ $audit" "-"
       synth_tmp="$STATE_DIR/synthesize-plan.$$"
       if python3 $PLANE_DIR/scripts/validate-plan.py --synthesize-plan "${ACTIVE_DELTA_FILES[@]}" > "$synth_tmp" 2>&1; then
         mv "$synth_tmp" tasks/plan.json
+        PLAN_FROM_B3=1  # no EM produced this plan: its commit carries no model evidence
         echo "=== B3: plan synthesized mechanically from the TPM's ERD-DELTA briefs/DAG/pins (no EM call); full gate judges it next ==="
         continue
       else

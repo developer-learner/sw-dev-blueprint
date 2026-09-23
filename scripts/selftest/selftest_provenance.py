@@ -334,3 +334,21 @@ def test_llm_call_meta_sidecar_written_only_when_requested(tmp_path):
         assert not (tmp_path / "meta2.txt").exists()
     finally:
         srv.shutdown()
+
+
+def test_b3_mechanical_plan_commits_as_pipeline_not_em():
+    """A B3 plan is transcribed by the shell from the TPM's ERD-DELTA — no EM
+    wrote it. Committing it as `em` declared an evidence capture that cannot
+    exist and the M2b fail-closed capture refused the [plan] commit (vortex
+    v37, 2026-09-23). It must commit as `pipeline`; an EM emission that later
+    rewrites the plan takes the `em` path with its evidence again."""
+    orch = (SCRIPTS / "orchestrate.sh").read_text()
+    b3 = orch.index("=== B3: plan synthesized mechanically")
+    assert "PLAN_FROM_B3=1" in orch[b3 - 400:b3]
+    assert 'case "$out" in tasks/plan*.json) PLAN_FROM_B3=0 ;; esac' in orch
+    gate = orch.index('if [ "${PLAN_FROM_B3:-0}" = "1" ]; then')
+    branch = orch[gate:orch.index("fi\n      fi", gate)]
+    assert 'swbp_commit pipeline "[plan] synthesized from TPM briefs' in branch
+    em_side = branch.split("else", 1)[1]
+    assert 'SWBP_PROV_ENTRY="plan-' in em_side
+    assert 'swbp_commit em "[plan] validated against spec' in em_side
