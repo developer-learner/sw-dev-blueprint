@@ -1775,8 +1775,24 @@ def milestone_scope_ids(mapping, changed_files, changed_tests,
     current = set(current_ids) if current_ids is not None else None
     current_families = (
         {_id_family(c) for c in current} if current is not None else None)
-    scope = {n for n in changed_tests
-             if current is None or _id_family(n) in current_families}
+    scope = set()
+    for n in changed_tests:
+        if current is None:
+            scope.add(n)
+            continue
+        fam = _id_family(n)
+        if fam not in current_families:
+            continue
+        if n == fam and n not in current:
+            # A function-granular producer records a parametrized test by its
+            # bare family; the frozen suite holds only the parametrized
+            # node-ids, so the bare id is not runnable and the plan gate
+            # rejects it (vortex v39-v42). Expand it to those node-ids.
+            members = {c for c in current if _id_family(c) == fam and c != fam}
+            if members:
+                scope |= members
+                continue
+        scope.add(n)
     if mapping:
         pinned = {_id_family(k) for k in mapping}
         if granularity != "function":

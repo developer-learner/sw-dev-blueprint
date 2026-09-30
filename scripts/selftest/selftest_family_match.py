@@ -78,6 +78,27 @@ def test_changed_test_family_matched_against_current():
         f"survive the current-intersection; got {sorted(scope)}")
 
 
+def test_bare_changed_family_expands_to_parametrized_current_ids():
+    """vortex v39-v42: a function-granular delta records a parametrized test
+    by its bare family, but the frozen suite holds only the parametrized
+    node-ids. The bare id is not runnable (the plan gate rejects it), so the
+    slice must carry the parametrized node-ids instead — and never the bare."""
+    vp = _load_validate_plan()
+    fam = "tests/test_synth.py::test_refusals"
+    members = {f"{fam}[a-path]", f"{fam}[b-format]"}
+    current = members | {"tests/test_synth.py::test_other"}
+    scope = vp.milestone_scope_ids({}, [], [fam], "function", current)
+    assert set(scope) == members, (
+        f"bare family must expand to its parametrized node-ids; got {sorted(scope)}")
+
+
+def test_bare_changed_id_present_in_current_is_kept_as_is():
+    """No expansion when the bare id itself is a frozen node-id."""
+    vp = _load_validate_plan()
+    scope = vp.milestone_scope_ids({}, [], [BARE], "function", {BARE, SUFFIXED})
+    assert scope == [BARE], f"got {scope}"
+
+
 # --- direct: _family_mapping collision guard --------------------------------
 
 
