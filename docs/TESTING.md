@@ -122,8 +122,9 @@ python3 scripts/selftest/selftest_plane_snapshot.py
 ## When the full suite runs
 
 Steady-state cadence (D-28, D-75, D-112): each task's mapped frozen tests
-run right after that task; the delta's mapped verdict run closes the
-milestone at run end (the full frozen suite is an on-demand `--full-suite`
+run right after that task; the delta's verdict run closes the milestone at
+run end — the mapped tests plus every DEPENDENT frozen test (its file imports
+a module the milestone created or modified, D-188) (the full frozen suite is an on-demand `--full-suite`
 regression check); the freeze itself verifies only the delta (the D-75
 red-before-green check, which is confined to the Linux sandbox and halts
 if it cannot obtain a readable report). A full-suite run

@@ -84,7 +84,13 @@ def _changed_rows(file: str, baseline_ref: str) -> set[int] | None:
             continue
         start = int(m.group(1))
         count = 1 if m.group(2) is None else int(m.group(2))
-        # count == 0 is a pure deletion at this hunk: no new lines to lint.
+        if count == 0:
+            # A pure deletion adds no new lines, but it CAN create a finding
+            # at the seam (e.g. an import block re-sorted or a blank line
+            # removed -> I001). Mark the rows either side of the deletion
+            # point as touched; git reports `start` as the line before it.
+            rows.update(r for r in (start, start + 1) if r > 0)
+            continue
         for row in range(start, start + count):
             rows.add(row)
     return rows
@@ -115,8 +121,18 @@ def _in_scope(finding: dict, rows: set[int] | None) -> bool:
         return True
     if rows is None:  # whole-file scope
         return True
-    row = (finding.get("location") or {}).get("row")
-    return isinstance(row, int) and row in rows
+    # A finding is in scope when ANY row of its reported range was changed,
+    # not only its first row: block-level rules such as I001 (import order)
+    # anchor at the first line of the block, while the coder's change sits
+    # lower inside it — start-row-only scoping silently dropped exactly those
+    # (vortex v38/v43: an added import passed D-74 and failed CI's ruff).
+    start = (finding.get("location") or {}).get("row")
+    if not isinstance(start, int):
+        return False
+    end = (finding.get("end_location") or {}).get("row")
+    if not isinstance(end, int) or end < start:
+        end = start
+    return any(r in rows for r in range(start, end + 1))
 
 
 def _format(finding: dict) -> str:

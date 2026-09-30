@@ -311,8 +311,12 @@ specified or they drift. The system absorbs this structurally:
   `_terminate_pid(pid)` over the `lifecycle.terminate(entry)` instance method,
   burning strikes across two freezes). "Exact signatures" covers the call
   site, not only the definition.
-- **End every brief with an explicit self-verify action** ("re-open `<file>`
-  and confirm `<condition>`") — it reduces retries; Rule 5 still decides.
+- **End every brief with an explicit self-verify action** ("check your
+  change against `<file>`'s content in this message and confirm
+  `<condition>`") — it reduces retries; Rule 5 still decides. Never phrase it
+  as an action the coder cannot take ("re-open", "read the file"): the coder
+  has no tools, and agent-trained models answer such wording with a tool call
+  instead of edits.
 
 ### Rule 9 — Gate strength proportional to blast radius (gate-symmetry)
 
@@ -541,7 +545,7 @@ rows in tasks/ and docs/, etc.
 You cannot trust "I filled everything in." Run:
 
 ```bash
-grep -rnE '\[[A-Z][A-Za-z0-9_ ]+\]|\[[A-Z][a-z]+ [a-z]|\[[a-z][a-z_]+ [a-z]' . \
+grep -rnE '(^|[^A-Za-z0-9_.])\[[A-Z][A-Za-z0-9_ ]+\]|(^|[^A-Za-z0-9_.])\[[A-Z][a-z]+ [a-z]|(^|[^A-Za-z0-9_.])\[[a-z][a-z_]+ [a-z]' . \
   --include='*.md' --include='*.json' --exclude-dir=.git \
   --exclude='DECISIONS.md' --exclude='BLUEPRINT.md' \
   | grep -vE '\]\('

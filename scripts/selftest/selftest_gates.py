@@ -1748,6 +1748,28 @@ def test_apply_empty_reply_fails(tmp_path):
     assert "no edit blocks" in r.stderr
 
 
+def test_apply_tool_call_reply_names_the_failure(tmp_path):
+    """An agent-trained coder answering with a tool invocation instead of
+    edits (vortex v42/v43 Flash Next) gets a failure that says exactly that,
+    so the retry brief can correct it; the file is left untouched."""
+    r, out = run_apply(tmp_path, "<tool_call>\n<function=Read>\n</function>\n</tool_call>\n")
+    assert r.returncode == 1
+    assert "tool call" in r.stderr and "no tools" in r.stderr
+    assert out == TARGET_SRC
+
+
+def test_coder_attempt_brief_never_asks_for_a_tool_action():
+    """The coder has no tools (coder.md). The attempt brief and the retry note
+    must not tell it to re-open or read the file — agent-trained models answer
+    that wording with a tool call instead of edit blocks."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    start = source.index('attempt_brief="$brief')
+    region = source[start:source.index('printf \'%s\' "$attempt_brief"', start)]
+    assert "re-open" not in region
+    assert "read its CURRENT state" not in region
+    assert "no tools" in region
+
+
 def test_missing_contracts_is_usage_error(tmp_path):
     tests_dir = tmp_path / "frozen-tests"
     tests_dir.mkdir()
@@ -3436,6 +3458,22 @@ def test_placeholder_gate_passes_clean_when_armed(frozen_repo):
     (frozen_repo / ".placeholder-gate").write_text("")
     r = _run_gate(frozen_repo)
     assert r.returncode == 0, r.stdout
+
+
+def test_placeholder_gate_ignores_code_subscripts_when_armed(frozen_repo):
+    """A bracket right after an identifier or '.' is code, not a placeholder:
+    vortex v43's freeze was rolled back because a coder brief in ERD-DELTA.md
+    annotated `list[DiscoveredModel]`. A real placeholder beside it still hits."""
+    _write_md(frozen_repo, "docs/TEMPLATE.md",
+              "    fresh: Callable[[], list[DiscoveredModel]]\n"
+              "    x = cache[Key]; y = obj.items[Foo]\n")
+    (frozen_repo / ".placeholder-gate").write_text("")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 0, r.stdout
+    _write_md(frozen_repo, "docs/OTHER.md", "list[Model] and a [PROJECT_NAME] slot\n")
+    r = _run_gate(frozen_repo)
+    assert r.returncode == 1
+    assert "PROJECT_NAME" in r.stdout
 
 
 def test_placeholder_gate_ignores_markdown_links_when_armed(frozen_repo):

@@ -33,6 +33,10 @@ Modes:
   validate-plan.py --affected DELTA.json [DELTA.json ...]
                                             print ids invalidated across re-freezes
                                             delta, including transitive dependents
+  validate-plan.py --dependent-ids   frozen node-ids NOT mapped by the plan whose
+                                     test file imports a module an inventory
+                                     file defines (created or modified; src/
+                                     layout aware) — the D-112 verdict adds them
   validate-plan.py --milestone-scope DELTA.json [DELTA.json ...]
                                             print the authoritative milestone
                                             node-id scope (sorted-unique, one per
@@ -1803,6 +1807,81 @@ def milestone_scope_ids(mapping, changed_files, changed_tests,
     return sorted(scope)
 
 
+def _inventory_modules(task_files):
+    """Dotted module names a milestone's inventory files define, in every
+    import spelling a test may use: `src/pkg/mod.py` is imported as
+    `src.pkg.mod` in a flat layout and as `pkg.mod` in a src-layout package
+    (pytest `pythonpath = src`); a package `__init__.py` is its package."""
+    mods = set()
+    for f in task_files:
+        if not f.endswith(".py"):
+            continue
+        dotted = f[:-3].replace("/", ".").removesuffix(".__init__")
+        mods.add(dotted)
+        if dotted.startswith("src."):
+            mods.add(dotted.removeprefix("src."))
+    return mods
+
+
+def _file_imports_any(path, mods):
+    """True when a test file imports (anywhere in it, absolute imports only)
+    a module in `mods`, directly or as `from pkg import mod`."""
+    try:
+        tree = ast.parse(Path(path).read_text(), filename=path)
+    except (OSError, SyntaxError, ValueError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(a.name in mods for a in node.names):
+            return True
+        if (isinstance(node, ast.ImportFrom) and node.module and not node.level
+                and (node.module in mods
+                     or any(f"{node.module}.{a.name}" in mods for a in node.names))):
+            return True
+    return False
+
+
+def dependent_node_ids(task_files, nodeids, mapped=()):
+    """Frozen node-ids that DEPEND on this milestone but are not mapped to it:
+    their test file imports a module an inventory file defines, whether the
+    task created or MODIFIED it. D-112 judges a milestone by "what it can
+    touch" (dependent-based testing), but the mapped union only covers tests
+    the plan assigned, and the D-57 ownership projection counts only CREATED
+    modules — so a frozen test of a modified module (vortex v43: the Stop
+    Vortex confirm-order and stdlib-allowlist tests of edited ui.py and
+    discovery.py) was neither mapped nor run, and [success] landed with the
+    suite red. These ride the verdict as carried nodes (D-77 triage applies).
+    """
+    mods = _inventory_modules(task_files)
+    if not mods:
+        return []
+    mapped = set(mapped)
+    by_file = {}
+    out = []
+    for n in nodeids:
+        if n in mapped:
+            continue
+        tf = n.split("::")[0]
+        if tf not in by_file:
+            by_file[tf] = _file_imports_any(tf, mods)
+        if by_file[tf] and n not in out:
+            out.append(n)
+    return out
+
+
+def cmd_dependent_ids():
+    """Print dependent_node_ids for the current plan and frozen node-ids (one
+    per line). Prints nothing when either input is absent."""
+    if not PLAN.exists() or not NODEIDS.exists():
+        return
+    plan = load_json(PLAN, "plan")
+    tasks = plan.get("tasks", [])
+    mapped = {n for t in tasks for n in t.get("tests", [])}
+    nodeids = [line.strip() for line in NODEIDS.read_text().splitlines() if line.strip()]
+    ids = dependent_node_ids([t.get("file", "") for t in tasks], nodeids, mapped)
+    if ids:
+        print("\n".join(ids))
+
+
 def _hit_task_ids(tasks, delta, test_slice=None):
     """Task ids a delta invalidates: direct hits (a mapped test changed, a
     referenced contract changed, or the task's file is in the declared
@@ -2910,6 +2989,9 @@ def main(argv):
         return
     if argv[0] == "--affected" and len(argv) >= 2:
         cmd_affected(argv[1:])
+        return
+    if argv[0] == "--dependent-ids" and len(argv) == 1:
+        cmd_dependent_ids()
         return
     if argv[0] == "--milestone-scope" and len(argv) >= 2:
         cmd_milestone_scope(argv[1:])

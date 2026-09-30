@@ -64,7 +64,8 @@ LM Studio — no specific model required, D-41) and `scripts/bootstrap.sh`.
 4. **Build.** The conductor runs `SANDBOX=1 scripts/orchestrate.sh` and
    reports. The pipeline plans (EM), builds (coder), tests, retries, and
    escalates internally.
-   - **Exit 0** — the milestone's delta-mapped tests pass (D-112): a
+   - **Exit 0** — the milestone's mapped tests AND every test that
+     depends on a file it changed pass (D-112/D-188): a
      measurement, not an opinion. The full frozen suite is an optional
      regression check, not the completion criterion. This means "built as
      specified" — NOT yet "milestone done" (D-44).

@@ -149,3 +149,40 @@ def test_ruff_crash_returns_2(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", f"{shim}:{__import__('os').environ['PATH']}")
     r = _run(repo, "m.py", base)
     assert r.returncode == 2, r.stdout + r.stderr
+
+
+def test_block_finding_anchored_above_the_change_is_flagged(tmp_path):
+    """I001 anchors at the FIRST line of the import block; the coder's added
+    import sits lower in it. The finding's range covers the changed line, so
+    it is in scope (vortex v38/v43: start-row-only scoping let it through D-74
+    and CI's ruff rejected it)."""
+    repo = _repo(tmp_path)
+    (repo / "ruff.toml").write_text('[lint]\nselect = ["I"]\n')
+    base = _commit(repo, "m.py", "import os\nimport sys\n\nprint(os, sys)\n")
+    (repo / "m.py").write_text("import os\nimport sys\nimport abc\n\nprint(os, sys, abc)\n")
+    r = _run(repo, "m.py", base)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "I001" in r.stdout
+
+
+def test_block_finding_untouched_by_the_change_stays_grandfathered(tmp_path):
+    """A legacy unsorted import block the edit does not touch stays out of
+    scope — range scoping widens only to findings the change overlaps."""
+    repo = _repo(tmp_path)
+    (repo / "ruff.toml").write_text('[lint]\nselect = ["I"]\n')
+    base = _commit(repo, "m.py", "import sys\nimport os\n\n\ndef a():\n    return os, sys\n")
+    (repo / "m.py").write_text(
+        "import sys\nimport os\n\n\ndef a():\n    return os, sys\n\n\ndef b():\n    return 2\n")
+    r = _run(repo, "m.py", base)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_pure_deletion_does_not_invent_findings(tmp_path):
+    """The rows either side of a pure deletion now count as touched (a seam
+    finding there is in scope); a clean deletion must still pass."""
+    repo = _repo(tmp_path)
+    (repo / "ruff.toml").write_text('[lint]\nselect = ["I"]\n')
+    base = _commit(repo, "m.py", "import abc\nimport zlib\nimport os\n\nprint(abc, zlib, os)\n")
+    (repo / "m.py").write_text("import abc\nimport os\n\nprint(abc, os)\n")
+    r = _run(repo, "m.py", base)
+    assert r.returncode == 0, r.stdout + r.stderr

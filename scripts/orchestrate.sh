@@ -1190,11 +1190,11 @@ task_attempt_brief() {
   [ -n "$brief" ] || brief=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field brief)
   attempt_brief="$brief
 
-Write EXACTLY one file: $file — the gate rejects any other change, including new files. Before finishing, re-open $file and confirm it satisfies every acceptance condition in this brief."
+Write EXACTLY one file: $file — the gate rejects any other change, including new files. Before answering, check your change against the file content already in this message and confirm it satisfies every acceptance condition in this brief. You have no tools — do not emit tool calls."
   last_fail=$(cat "$TASK_STATE/$id.lastfail" 2>/dev/null || true)
   [ -n "$last_fail" ] && attempt_brief="$attempt_brief
 
-The previous attempt failed with: $last_fail. Fix the cause, do not just retry the same content. NOTE: the file may already contain a previous attempt's partial work — read its CURRENT state, find the SMALLEST remaining delta that satisfies the brief, and emit only that; if the file already satisfies the brief, reply === NO CHANGES ===. Do not re-describe or re-apply work that is already present."
+The previous attempt failed with: $last_fail. Fix the cause, do not just retry the same content. NOTE: the file may already contain a previous attempt's partial work — its CURRENT content is the file block already in this message (you have no tools; do not try to read or open anything), so find the SMALLEST remaining delta that satisfies the brief, and emit only that; if the file already satisfies the brief, reply === NO CHANGES ===. Do not re-describe or re-apply work that is already present."
   printf '%s' "$attempt_brief"
 }
 
@@ -2728,9 +2728,22 @@ for t in p.get('tasks', []):
         if n not in ids:
             ids.append(n)
 print('\n'.join(ids))")
-  if [ "${#VERDICT_IDS[@]}" -gt 0 ]; then
-    echo "=== Verdict: ${#VERDICT_IDS[@]} delta-mapped test(s) (D-112) ==="
-    run_tests "${VERDICT_IDS[@]}"
+  # Dependent tests (D-112 amend 2026-09-30): frozen tests NOT mapped to a
+  # task but whose file imports a module this milestone created or MODIFIED
+  # (src/-layout aware). "A feature is judged by what it can touch" — the
+  # mapped union alone missed these (vortex v43 reached [success] with the
+  # full suite 3 red). They ride the run as carried nodes, so the D-77 flake
+  # triage and the DRIFT routing below apply to them. Absent inputs (no plane
+  # path, no frozen node-ids) degrade to none — never to a failure.
+  DEP_IDS=()
+  if [ -n "${PLANE_DIR:-}" ] && [ -f "${PLANE_DIR:-}/scripts/validate-plan.py" ]; then
+    while IFS= read -r _did; do
+      [ -n "$_did" ] && DEP_IDS+=("$_did")
+    done < <(python3 "$PLANE_DIR/scripts/validate-plan.py" --dependent-ids 2>/dev/null || true)
+  fi
+  if [ "${#VERDICT_IDS[@]}" -gt 0 ] || [ "${#DEP_IDS[@]}" -gt 0 ]; then
+    echo "=== Verdict: ${#VERDICT_IDS[@]} delta-mapped + ${#DEP_IDS[@]} dependent test(s) (D-112) ==="
+    run_tests ${VERDICT_IDS[@]+"${VERDICT_IDS[@]}"} ${DEP_IDS[@]+"${DEP_IDS[@]}"}
   else
     echo "=== Verdict: no mapped tests — per-task acceptance is the verdict (D-112) ==="
     TESTS_RC=0
@@ -2747,8 +2760,9 @@ fi
 # the original verdict failure red. Any mapped node or collection error also
 # keeps the DRIFT path exactly as before. Accepted occurrences persist by spec;
 # the recurring threshold closes the bypass and routes a TPM bundle (D-111).
-# In mapped verdict scope (D-112) every failing node is mapped, so this block
-# is inert: all_carried drops to 0 on the first id and the DRIFT path stands.
+# In mapped verdict scope (D-112) a failing MAPPED node sends all_carried to 0
+# and the DRIFT path stands; a failing DEPENDENT node (unmapped, see the
+# verdict block) is carried and gets the isolation re-runs like any other.
 #
 # The block between the BEGIN/END markers below is extracted verbatim by
 # scripts/selftest/drive-drift.sh — keep the markers on their own lines.

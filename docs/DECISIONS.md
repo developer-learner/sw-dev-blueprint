@@ -21,6 +21,20 @@
 
 ## Decisions
 
+## D-188 — 2026-09-30 — Four vortex-v38..v43 pipeline gaps: dependent verdict, range-scoped lint, code-aware placeholder gate, tool-free coder wording
+
+**Decision:** Four independent fixes, each found live in vortex v38–v43 (full account: CORRECTION-LOG 2026-09-30).
+(1) **D-112 amend — the verdict also runs DEPENDENT tests.** After the mapped union, the verdict adds every frozen node-id NOT mapped to a task whose test file imports a module an inventory file defines — created OR modified — resolved in both import spellings (`src.pkg.mod` and, for src-layout packages, `pkg.mod`) (`validate-plan.py --dependent-ids`). They ride as carried nodes, so D-77 isolation triage and the DRIFT routing apply. The full suite stays on-demand (`--full-suite`); D-112's doctrine is unchanged, its implementation now matches it.
+(2) **D-74 lint scopes by finding RANGE, not start row.** `lint-changed.py` keeps a finding when any row of `location..end_location` was changed, and marks the rows either side of a pure deletion as touched. Block-anchored rules (I001) reported at the block's first line were silently out of scope whenever the coder's change sat lower in the block.
+(3) **The D-160 placeholder gate ignores code subscripts.** A `[` directly after an identifier character or `.` is code (`list[Model]`, `x[Key]`), not a placeholder; the gate and BLUEPRINT.md Step 7 share the updated pattern.
+(4) **Coder prompts never ask for a tool action.** The attempt brief's self-verify and the retry note no longer say "re-open"/"read its CURRENT state" (the coder has no tools; coder.md already says so); BLUEPRINT Rule 8's self-verify guidance is reworded the same way; `apply-edit-blocks.py` reports a tool-call reply as exactly that.
+
+**Reason:** (1) vortex v43 reached `[success]` with the full suite 3 red — all three were frozen tests of MODIFIED files (Stop Vortex's first-confirm contract in ui.py, the stdlib allowlist of discovery.py, the status-field contract). The mapped union covered only assigned tests, and the D-57 ownership projection keys on CREATED modules in flat `src.` spelling only, so dependents of modified modules — and every test in a src-layout app — fell to "carried regression", whose acceptance point (the full suite) D-112 made optional. (2) vortex v38 and v43 each passed D-74 with an I001 the child's CI then rejected. (3) vortex v43's first v43 freeze was rolled back by `list[DiscoveredModel]` in a verbatim coder brief. (4) vortex's Flash Next coder answered every edit-mode retry of app.py with a bare `<tool_call><function=Read>`, burning the task through operator review twice.
+
+**Alternatives considered:** (1) Re-adding the full suite to completion — rejected by D-112 and unnecessary: the dependent set is the part of the full suite D-112 always meant to keep. (1b) Fixing the D-57 projection to count modified modules — rejected: that check drives plan *mapping* (it would force every dependent test onto a task and flood per-task acceptance); the verdict is the right consumer. (2) Linting whole files again — rejected: re-introduces the legacy-finding strike burn the diff scope fixed. (3) Excluding fenced/indented code blocks — rejected: markdown-structure parsing in a grep gate is fragile; the identifier-prefix rule catches the real class. (4) Stripping tool-call syntax and retrying — rejected: silent repair hides a model/prompt mismatch; naming it feeds the retry brief.
+
+**Do not suggest:** Mapping dependent tests into tasks (they are verdict-only); dropping the src-layout spelling; start-row-only lint scoping; weakening the placeholder gate beyond the identifier-prefix rule; any coder-facing wording that implies the coder can read, open or run anything.
+
 ## D-187 — 2026-09-23 — Parallel coder calls: overlap the model call, never the judgment
 
 **Decision:** When several plan tasks are ready at once (pending, all

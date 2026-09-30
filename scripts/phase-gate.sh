@@ -228,9 +228,11 @@ case "$PHASE" in
     # the enforced side from its first bootstrap, so its first commit cannot
     # carry an unfilled placeholder. Same command + exclusions as Step 7:
     # md/json, markdown links filtered, DECISIONS.md/BLUEPRINT.md excluded
-    # (intentional bracket content).
+    # (intentional bracket content). A bracket directly after an identifier
+    # or '.' is code, not a placeholder (`list[DiscoveredModel]`, `x[Key]`) —
+    # vortex v43's freeze was rolled back by a Python type in a coder brief.
     if [ -f .placeholder-gate ]; then
-      hits=$({ grep -rnE '\[[A-Z][A-Za-z0-9_ ]+\]|\[[A-Z][a-z]+ [a-z]|\[[a-z][a-z_]+ [a-z]' . \
+      hits=$({ grep -rnE '(^|[^A-Za-z0-9_.])\[[A-Z][A-Za-z0-9_ ]+\]|(^|[^A-Za-z0-9_.])\[[A-Z][a-z]+ [a-z]|(^|[^A-Za-z0-9_.])\[[a-z][a-z_]+ [a-z]' . \
           --include='*.md' --include='*.json' --exclude-dir=.git \
           --exclude-dir=project-trail --exclude-dir=.em-archive \
           --exclude-dir=.pipeline-state --exclude-dir=.measurement \

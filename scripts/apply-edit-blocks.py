@@ -76,6 +76,14 @@ def main() -> None:
         print("no changes (coder judged brief already satisfied — mapped tests still gate)")
         return
     if not blocks:
+        # Agent-trained models sometimes answer with a tool invocation (e.g.
+        # `<tool_call><function=Read>`) instead of edits — vortex v42/v43's
+        # Flash Next coder did so on every edit-mode retry. Name that exactly,
+        # so the retry brief tells the model what it did wrong.
+        if re.search(r"<tool_call>|<function=|\"tool_calls\"", raw):
+            fail("reply was a tool call, not edit blocks — the coder has no tools; "
+                 "the file's current content is already in the message: reply "
+                 "with SEARCH/REPLACE edit blocks (or === NO CHANGES ===) only")
         fail("reply contained no edit blocks and no NO-CHANGES line")
 
     src = open(target).read()

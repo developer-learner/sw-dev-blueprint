@@ -143,7 +143,7 @@ CEO business intent ──► TPM (CEO-assigned seat, D-139 — web chat, scoped
                 Coder (one HTTP completion, no tools, D-53) replies with the
                 file ──► shell writes it ──► phase-gate task ──► mapped frozen tests
                           │
-              all tasks done ──► delta-mapped verdict green = done (D-112)
+              all tasks done ──► mapped + dependent verdict green = done (D-112/D-188)
                 fail → escalation ladder (retry → EM consult → bounded revisions
                         → batched TPM bundle → refreeze → affected subtree resumes)
 ```
