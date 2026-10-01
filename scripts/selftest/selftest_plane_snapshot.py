@@ -671,6 +671,85 @@ def test_guard_accepts_builder_commits_and_flags_hand_edits(tmp_path):
     assert _guard(app, "--rev", f"{base}..HEAD").returncode == 1
 
 
+def _git(app: Path, *args: str, input: str | None = None) -> str:
+    return subprocess.run(["git", "-C", str(app), *args], check=True,
+                          capture_output=True, text=True,
+                          env={**os.environ, **IDENT}, input=input).stdout.strip()
+
+
+def test_guard_merge_carrying_brokered_changes_is_clean(tmp_path):
+    # D-192: a (role-less) merge that merely carries brokered branch changes
+    # is authorized by the origin commits — no finding.
+    app, base = _guard_app(tmp_path)
+    branch = _git(app, "symbolic-ref", "--short", "HEAD")
+    _commit(app, "tests/test_a.py", "def test_a(): pass\n", role="tpm")
+    subprocess.run(["git", "-C", str(app), "checkout", "-qb", "side"], check=True)
+    _commit(app, "tests/test_b.py", "def test_b(): pass\n", role="tpm")
+    subprocess.run(["git", "-C", str(app), "checkout", "-q", branch], check=True)
+    subprocess.run(["git", "-C", str(app), "-c", "core.hooksPath=/dev/null",
+                    "merge", "-q", "--no-ff", "side", "-m", "merge side"],
+                   check=True, env={**os.environ, **IDENT})
+    r = _guard(app, "--range", f"{base}..HEAD")
+    assert r.returncode == 0 and "0 finding(s)" in r.stdout, r.stdout
+
+
+def test_guard_flags_merge_introduced_changes(tmp_path):
+    # D-192: the merge commit's introduced diff (first-parent) is inspected.
+    # Here the merge carries a hand edit to a frozen test that NO commit
+    # contains — a conflict-resolution-style introduction the old
+    # --no-merges guard never saw.
+    app, base = _guard_app(tmp_path)
+    branch = _git(app, "symbolic-ref", "--short", "HEAD")
+    main1 = _commit(app, "tests/test_b.py", "def test_b(): pass\n", role="tpm")
+    subprocess.run(["git", "-C", str(app), "checkout", "-qb", "side"], check=True)
+    _commit(app, "tests/test_c.py", "def test_c(): pass\n", role="tpm")
+    side_head = _git(app, "rev-parse", "HEAD")
+    subprocess.run(["git", "-C", str(app), "checkout", "-q", branch], check=True)
+    # hand-built merge: main1's tree + side's brokered test_c + a hand edit
+    # to tests/test_a.py that exists in no commit
+    _git(app, "read-tree", main1)
+    _git(app, "update-index", "--add", "--cacheinfo",
+         f"100644,{_git(app, 'rev-parse', 'side:tests/test_c.py')},tests/test_c.py")
+    blob = _git(app, "hash-object", "-w", "--stdin",
+                input="def test_a(): assert False  # hand edit in the merge\n")
+    _git(app, "update-index", "--add", "--cacheinfo", f"100644,{blob},tests/test_a.py")
+    tree = _git(app, "write-tree")
+    merge = _git(app, "commit-tree", tree, "-p", main1, "-p", side_head,
+                 "-m", "merge side")
+    _git(app, "update-ref", f"refs/heads/{branch}", merge)
+    r = _guard(app, "--range", f"{base}..HEAD")
+    assert r.returncode == 0, "report-first must not fail"
+    assert "1 finding(s)" in r.stdout, r.stdout
+    assert merge[:12] in r.stdout and "tests/test_a.py" in r.stdout, r.stdout
+    assert _guard(app, "--range", f"{base}..HEAD", "--enforce").returncode == 1
+
+
+def test_guard_enforcement_ratchets_against_downgrades(tmp_path):
+    # D-192: once any commit in the range had guard=enforce, the whole range
+    # is checked in enforce mode — a hand downgrade of the guard cannot
+    # demote the check that would catch it.
+    app = tmp_path / "guard-app"
+    app.mkdir()
+    subprocess.run(["git", "init", "-q", str(app)], check=True)
+    base = _commit(app, ".swbp", "ref=" + "0" * 40 + "\nguard=enforce\n",
+                   role="human")
+    _commit(app, ".swbp", "ref=" + "0" * 40 + "\n")  # hand downgrade
+    r = _guard(app, "--range", f"{base}..HEAD")
+    assert "1 finding(s)" in r.stdout, r.stdout
+    assert "[enforce]" in r.stdout, r.stdout
+    assert r.returncode == 1, "a hand downgrade must not demote the check"
+
+    # the authorized path: a brokered commit may lower the mode
+    app2 = tmp_path / "guard-app2"
+    app2.mkdir()
+    subprocess.run(["git", "init", "-q", str(app2)], check=True)
+    base2 = _commit(app2, ".swbp", "ref=" + "0" * 40 + "\nguard=enforce\n",
+                    role="human")
+    _commit(app2, ".swbp", "ref=" + "0" * 40 + "\n", role="human")
+    r2 = _guard(app2, "--range", f"{base2}..HEAD")
+    assert "0 finding(s)" in r2.stdout and r2.returncode == 0, r2.stdout
+
+
 def test_swbp_commit_goes_through_the_broker(tmp_path):
     builder, _old, new = _builder_repo(tmp_path)
     app = _swbp_app(tmp_path, new)

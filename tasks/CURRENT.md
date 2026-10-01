@@ -24,6 +24,17 @@ designed D-176) + T11 rich-adoption (Phase 0 done D-175, v1 spec drafting)
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-01: **Security plan item 5 (partial) implemented (D-192), worktree `secplan-4-15`.**
+      App guard now inspects merge-introduced diffs (a merge's first-parent
+      diff, authorized by the brokered origin commits in the merged line)
+      and ratchets enforcement: once a range was under guard=enforce, a
+      hand downgrade cannot demote the check that catches it. The
+      authenticated-role half (M2b provenance gate flip) remains a CEO
+      decision; until then the guard's claim is bounded to
+      "broker-commit required" and says so in its docstring.
+      Validation: 680 control-plane selftests passed (677 + 3 new guard
+      tests); fail-before demonstrated for both the merge hole and the
+      downgrade hole.
 - 2026-10-01: **Security plan item 4 implemented (D-191), worktree `secplan-4-15` (branched from main @ D-190).**
       Dependent verdict coverage now follows the transitive import graph (two-hop
       dependencies, `__init__` chains) and modified conftest.py directory subtrees.

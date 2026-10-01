@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-192 — 2026-10-01 — App guard: merge inspection and the enforcement ratchet (security plan item 5, partial)
+
+**Decision:** `check-app-guard.py` now (a) INSPECTS merge commits: a merge's introduced diff is the first-parent diff (what the merge brought into the mainline, including conflict-resolution edits that live in no other commit), and an introduced path is authorized by the merge's own broker role or by any commit in a merged line that touched the path with the required role (the change was brokered at its origin); and (b) applies an enforcement RATCHET: the range is checked in enforce mode when the `--enforce` flag is set, the current `.swbp` says `guard=enforce`, the state in force at the range's start says so, or any commit in the range had `guard=enforce`. A hand downgrade of the guard can no longer demote the check that would catch it; only a brokered commit may lower the mode, and it stays in the provenance trail.
+
+**Reason:** The guard used `git rev-list --no-merges` — a merge is the point where changes enter the branch, and its introduced diff can carry unauthorized edits (a hand conflict resolution of a frozen test) that no non-merge commit contains, so they were invisible. And the enforcement mode was read from the working tree: a hand edit flipping `guard=enforce` to `report` was evaluated in the post-change state, so the downgrade succeeded in report mode while printing its own finding.
+
+**Role authority (the part that is NOT this decision):** the `Swbp-Role:` trailer is still self-asserted. The authenticated-role fix is the M2b provenance gate flip (`check-provenance.py --gate`: GPG signature + pinned trust anchor + revocation), which is a CEO decision (security plan item 5, reserved). Until it flips, the guard's enforcement claim is bounded to "protected-surface changes require a broker commit" — not "by an authenticated role". The guard's docstring says so.
+
+**Do not suggest:** reverting to `--no-merges` "because merges are noise" (the double finding on a hand-edit branch merge is evidence, not noise); making the ratchet per-commit "latest state wins" (that is the downgrade hole); letting an app lower its own guard mode through any non-broker path; flipping the M2b gate without the CEO's decision.
+
 ## D-191 — 2026-10-01 — Dependent-test coverage: transitive graph, conftest subtrees, fail-closed fallback (security plan item 4)
 
 **Decision:** The D-112 dependent set now follows the import graph TRANSITIVELY (a test of `svc` is dependent when the milestone modified `core`, which `svc` imports — including through package `__init__` chains) and covers modified `conftest.py` files by their directory subtree (pytest loads conftest without an import edge, fixtures included). The graph is built by parsing every `.py` file in the tree outside machine-generated directories. When the selection is uncertain — a frozen test file or plan task file missing from the tree, or an unparseable file in the graph — `validate-plan.py --dependent-ids` exits 1 with the reason on stderr, and the verdict block runs the FULL frozen suite instead of the mapped union plus computable dependents.
