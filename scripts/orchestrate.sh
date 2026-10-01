@@ -1543,14 +1543,17 @@ PYEOF
 # string, and an EM diagnosing from bare ids misdiagnosed twice in the
 # 2026-07-16 drill).
 run_tests() {
-  mkdir -p .cache
+  local prepare_out
+  if ! prepare_out=$(python3 "$PLANE_DIR/scripts/test-verdict.py" prepare); then
+    die "unsafe pytest cache — $prepare_out"
+  fi
   mark "tests start ($# node-id(s); 0 = full suite)"
   local test_args=("$@")
   [ "${#test_args[@]}" -gt 0 ] || test_args=(tests/)
   # A sandbox launch/build/timeout failure may produce no report. Remove the
   # prior invocation's report first so that failure cannot replay a stale green
   # verdict; a missing new report is classified NO_REPORT below.
-  rm -f .cache/test-report.json
+  # test-verdict.py prepare removed the old report without following links.
   # Type gate (D-129): mypy was CI-only (post-M29 "a gate that lives only in
   # CI does not exist until a remote does" — testchat shipped 40 spec versions
   # with its type gate dark and went red on first push). Every acceptance
@@ -1678,7 +1681,6 @@ PYMYPYHASH
       || true
     [ -n "$FAIL_DETAIL" ] || FAIL_DETAIL="mypy exited $MYPY_RC — see run output"
     TESTS_RC=1
-    rm -f .cache/test-report.json
     return 0
   fi
   if [ -n "$mypy_green_marker" ] && [ ! -f "$mypy_green_marker" ]; then
@@ -1687,85 +1689,17 @@ PYMYPYHASH
     printf 'green\n' > "$mypy_green_tmp"
     mv "$mypy_green_tmp" "$mypy_green_marker"
   fi
-  $PLANE_DIR/scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
-    --json-report-file=.cache/test-report.json "${test_args[@]}" >/dev/null 2>&1 || true
+  local pytest_rc=0
+  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider --json-report \
+    --json-report-file=.cache/test-report.json "${test_args[@]}" >/dev/null 2>&1 || pytest_rc=$?
   local out
-  if out=$(python3 - <<'PYEOF'
-import json, re, sys
-from pathlib import Path
-
-# Cleared first: stale detail from a previous run must never leak into a
-# later attempt's evidence.
-DETAIL = Path(".cache/test-failures.txt")
-DETAIL.write_text("")
-
-def tail(s, n=240):
-    s = re.sub(r"\s+", " ", str(s)).strip()
-    return s if len(s) <= n else "..." + s[-n:]
-
-try:
-    with open(".cache/test-report.json") as f:
-        r = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    print("NO_REPORT"); sys.exit(3)
-tests = r.get("tests", [])
-summary = r.get("summary", {})
-total = summary.get("total", 0) if isinstance(summary, dict) else 0
-failed_collectors = [c for c in r.get("collectors", [])
-                     if c.get("outcome") == "failed"]
-if total == 0 and not failed_collectors:
-    print("NO_TESTS"); sys.exit(3)
-
-def crash_text(t):
-    # The tail is the informative end: a longrepr's final line is the error;
-    # the crash message (when the plugin recorded one) is already terse.
-    for phase in ("call", "setup", "teardown"):
-        p = t.get(phase) or {}
-        msg = (p.get("crash") or {}).get("message") or p.get("longrepr")
-        if msg:
-            return tail(msg)
-    return ""
-
-def xfail_reason(t):
-    for record in (t, t.get("setup") or {}, t.get("call") or {},
-                   t.get("teardown") or {}):
-        if "wasxfail" in record:
-            return record.get("wasxfail")
-    return None
-
-# The frozen suite is an acceptance oracle: only an ordinary pass is green.
-# pytest may encode xfail as a distinct outcome, as "skipped", or as a passed
-# call carrying wasxfail metadata (XPASS). Reject every such representation.
-nonpassing_tests = sorted(
-    (t for t in tests
-     if t.get("outcome") != "passed" or xfail_reason(t) is not None),
-    key=lambda t: t["nodeid"],
-)
-failed = [t["nodeid"] for t in nonpassing_tests]
-detail = []
-for t in nonpassing_tests[:3]:
-    reason = crash_text(t)
-    if not reason:
-        reason = f"outcome={t.get('outcome', 'unknown')}"
-        if xfail_reason(t) is not None:
-            reason += f", wasxfail={xfail_reason(t)}"
-    detail.append(f"{t['nodeid']}: {reason}")
-for c in failed_collectors[:1]:
-    detail.append(f"collection: {tail(c.get('longrepr', ''))}")
-if failed_collectors:
-    failed.append("COLLECTION_ERROR (see .cache/test-report.json)")
-if not failed:
-    sys.exit(0)
-if detail:
-    DETAIL.write_text(" || ".join(detail) + "\n")
-print("|".join(failed))
-sys.exit(1)
-PYEOF
-  ); then
+  if out=$(python3 "$PLANE_DIR/scripts/test-verdict.py" "$pytest_rc" "${test_args[@]}"); then
     TESTS_RC=0; FAILING=""; FAIL_DETAIL=""
   else
-    TESTS_RC=$?; FAILING="$out"
-    FAIL_DETAIL=$(head -c 900 .cache/test-failures.txt 2>/dev/null | tr -d '\n' || true)
+    TESTS_RC=$?
+    FAILING="${out%%$'\n'*}"
+    FAIL_DETAIL=""
+    [[ "$out" == *$'\n'* ]] && FAIL_DETAIL="${out#*$'\n'}"
   fi
   mark "tests done (rc=$TESTS_RC)"
 }
@@ -2163,7 +2097,12 @@ package_escalation() {  # $1 kind  $2 id  $3 evidence  $4 diagnosis-file
   local kind="$1" id="$2" evidence="$3" diag="$4"
   local dir="$ESC_DIR/$id"
   mkdir -p "$dir"
-  [ -f .cache/test-report.json ] && cp .cache/test-report.json "$dir/" || true
+  # The bundle ships to the external web-chat TPM: copy the report WITHOUT
+  # following symlinks (a sandbox-planted link would read a read-only mount
+  # and exfiltrate its target's bytes). Refusal is controlled: the bundle
+  # ships without the report rather than with a foreign file. `:-.` keeps the
+  # extracted-function selftest (no PLANE_DIR) alive under set -u.
+  python3 "${PLANE_DIR:-.}/scripts/test-verdict.py" copy "$dir/test-report.json" || true
   {
     echo "## Escalation: $kind — $id (spec v$FROZEN_V)"
     echo

@@ -28,7 +28,8 @@ die() { echo "FAIL: $*" >&2; exit 1; }
 
 case "$MODE" in
   tests)
-    mkdir -p scripts .cache
+    mkdir -p scripts
+    cp "$REPO/scripts/test-verdict.py" scripts/
     cat > scripts/sandbox-run.sh <<'STUB'
 #!/usr/bin/env bash
 # D-129: the sandbox stub must distinguish the mypy invocation from the
@@ -46,7 +47,8 @@ STUB
     chmod +x scripts/sandbox-run.sh
     mark() { :; }
     eval "$(extract run_tests)"
-    run_tests
+    shift 2
+    run_tests "$@"
     echo "FINAL_TESTS_RC=$TESTS_RC"
     echo "FINAL_FAILING=$FAILING"
     if [ -n "${SANDBOX_ARG_LOG:-}" ] && [ -f "$SANDBOX_ARG_LOG" ]; then

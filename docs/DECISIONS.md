@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-189 — 2026-09-30 — Test verdict integrity and cache-symlink hardening (security plan items 1 and 2)
+
+**Decision:** The test report is untrusted input consumed by one host-side tool, `scripts/test-verdict.py`: it opens `.cache/test-report.json` without following symlinks (regular file, single link, ≤ 64 MiB), requires the report's `exitcode` to equal the runner status the host observed, requires summary counts to equal per-record counts, requires the reported node IDs to cover exactly the frozen `scripts/.approved/test-nodeids` set (or the selected subset), and requires every phase to be an ordinary pass; exit 3 (unavailable/inconsistent evidence) is never a green. Host-owned diagnostics move out of sandbox-writable storage: the red-check marker lives in `.pipeline-state` (blocklisted from `--rw`, read-only mount) instead of `.cache`, the red-check report is read no-follow, and the escalation bundle — which ships to the external web chat — copies the report via `test-verdict.py copy` (no-follow, `O_EXCL` temp + rename) instead of `cp`.
+
+**Alternatives considered:** (a) loosen the verdict to keep the old fixtures green — rejected: the `exitcode`/frozen-coverage checks ARE the security property; the old fixtures were the weak acceptance checks the plan says to replace; (b) no-follow the red-check marker inside `.cache` — rejected: the file then cannot be tampered with at all once it lives in host-owned storage; (c) keep `cp` in `package_escalation` because the repo mounts read-only — rejected: reads through a planted symlink on a read-only mount still succeed, and the bundle leaves the machine.
+
+**Reason:** A sandbox-planted symlink could redirect host report reads, diagnostic writes, or escalation copies through the link. A report that says "all passed" while the runner exited 1 (or covers fewer tests than the frozen set) is not evidence of a green suite. The residual — hostile in-process code fabricating both the report and a zero exit status — is documented in TESTING.md ("Remaining limits"); it requires isolation of the test oracle and its observations. Moving only the report writer cannot establish that isolation.
+
+**Do not suggest:** Re-adding `exitcode`/coverage leniency to make fixtures pass; writing host diagnostics back into `.cache`; `cp`-ing the report into the escalation bundle; claiming the verdict attests in-process pytest (it is a consistency check, and the docs say so).
+
 ## D-188 — 2026-09-30 — Four vortex-v38..v43 pipeline gaps: dependent verdict, range-scoped lint, code-aware placeholder gate, tool-free coder wording
 
 **Decision:** Four independent fixes, each found live in vortex v38–v43 (full account: CORRECTION-LOG 2026-09-30).

@@ -3593,7 +3593,7 @@ def stageable_repo(tmp_path):
     (tmp_path / "scripts").mkdir(exist_ok=True)
     for name in (
         "git-provenance.sh",
-        "refreeze.sh",
+        "refreeze.sh", "test-verdict.py",
         "phase-gate.sh",
         "spec_artifacts.py",
         "check-spec-delta.py",
@@ -5344,11 +5344,15 @@ def test_run_tests_mypy_gate_green_runs_pytest(tmp_path):
     exactly as before (the mypy invocation precedes it; the report decides)."""
     source = tmp_path / "fresh-report.json"
     source.write_text(json.dumps({
+        "exitcode": 0,
         "summary": {"total": 1, "passed": 1},
         "tests": [{"nodeid": "tests/test_new.py::test_new",
-                   "outcome": "passed"}],
+                   "outcome": "passed",
+                   **{p: {"outcome": "passed"}
+                       for p in ("setup", "call", "teardown")}}],
         "collectors": [],
     }))
+    _frozen_nodeids(tmp_path, "tests/test_new.py::test_new")
     arg_log = tmp_path / "args.log"
     env = {**os.environ, "SANDBOX_REPORT_SOURCE": str(source),
            "SANDBOX_ARG_LOG": str(arg_log), "SANDBOX_STUB_RC": "0",
@@ -5424,6 +5428,7 @@ def _drive_scoped_run_tests(tmp_path, *, src_files, deltas, node_ids,
     work = tmp_path
     (work / "scripts").mkdir(parents=True, exist_ok=True)
     (work / ".cache").mkdir(exist_ok=True)
+    (work / "scripts/test-verdict.py").write_bytes((SCRIPTS / "test-verdict.py").read_bytes())
     stub = work / "scripts" / "sandbox-run.sh"
     stub.write_text(_SCOPED_STUB)
     stub.chmod(0o755)
@@ -5438,10 +5443,14 @@ def _drive_scoped_run_tests(tmp_path, *, src_files, deltas, node_ids,
         delta_paths.append(str(dp))
     report = work / "pass-report.json"
     report.write_text(json.dumps({
+        "exitcode": 0,
         "summary": {"total": 1, "passed": 1},
-        "tests": [{"nodeid": "tests/test_a.py::t", "outcome": "passed"}],
+        "tests": [{"nodeid": "tests/test_a.py::t", "outcome": "passed",
+                   **{p: {"outcome": "passed"}
+                       for p in ("setup", "call", "teardown")}}],
         "collectors": [],
     }))
+    _frozen_nodeids(work, "tests/test_a.py::t")
     arg_log = work / "args.log"
     driver = (_SCOPED_DRIVER
               .replace("__WORK__", str(work))
@@ -5567,6 +5576,14 @@ def _run_with_json_report(tmp_path, report):
     )
 
 
+def _frozen_nodeids(work, *ids):
+    """Write the frozen node-ID set the verdict now requires (D-189): the
+    report must cover exactly these IDs (or the selected subset)."""
+    approved = work / "scripts" / ".approved"
+    approved.mkdir(parents=True, exist_ok=True)
+    (approved / "test-nodeids").write_text("\n".join(ids) + "\n")
+
+
 def _actual_pytest_json_report(tmp_path, test_source):
     fixture = tmp_path / "report-fixture"
     fixture.mkdir()
@@ -5585,6 +5602,11 @@ def _actual_pytest_json_report(tmp_path, test_source):
 
 
 def _run_report_file(tmp_path, report):
+    # The frozen set is derived from the generated report: these tests pin
+    # schema/OUTCOME handling of a real plugin report, not coverage (the
+    # frozen-set check is pinned by selftest_acceptance_boundaries.py).
+    r = json.loads(report.read_text())
+    _frozen_nodeids(tmp_path, *[t["nodeid"] for t in r.get("tests", [])])
     env = {**os.environ, "SANDBOX_REPORT_SOURCE": str(report),
            "SANDBOX_STUB_RC": "0"}
     return subprocess.run(
@@ -5625,8 +5647,11 @@ def test_run_tests_rejects_real_skipped_report_and_ci_installs_plugin(tmp_path):
 def test_run_tests_rejects_skipped_and_xfailed_outcomes(tmp_path):
     """Frozen acceptance is fail-closed: a collected test that did not
     ordinarily pass cannot make the task or full suite green."""
+    _frozen_nodeids(tmp_path, "tests/test_x.py::test_skipped",
+                    "tests/test_x.py::test_xfail")
     r = _run_with_json_report(tmp_path, {
-        "summary": {"total": 2, "skipped": 2},
+        "exitcode": 0,
+        "summary": {"total": 2, "skipped": 1, "xfailed": 1},
         "tests": [
             {"nodeid": "tests/test_x.py::test_skipped",
              "outcome": "skipped"},
@@ -5644,7 +5669,9 @@ def test_run_tests_rejects_skipped_and_xfailed_outcomes(tmp_path):
 def test_run_tests_rejects_xfail_marked_pass(tmp_path):
     """An XPASS may be encoded as outcome=passed plus wasxfail metadata.
     It is still not an ordinary frozen-oracle pass."""
+    _frozen_nodeids(tmp_path, "tests/test_x.py::test_xpass")
     r = _run_with_json_report(tmp_path, {
+        "exitcode": 0,
         "summary": {"total": 1, "passed": 1},
         "tests": [{
             "nodeid": "tests/test_x.py::test_xpass",
@@ -6678,7 +6705,7 @@ def freezable_repo(tmp_path):
     (tmp_path / ".gitignore").write_text("scripts/.approved/incoming/\n")
     for name in (
         "git-provenance.sh",
-        "refreeze.sh",
+        "refreeze.sh", "test-verdict.py",
         "refreeze_delta.py",
         "contracts-merge.py",
         "check-prd-additive.py",
@@ -6884,7 +6911,7 @@ def _install_refreeze_scripts(repo):
     plus the passthrough sandbox adapter (no containers in selftests)."""
     for name in (
         "git-provenance.sh",
-        "refreeze.sh",
+        "refreeze.sh", "test-verdict.py",
         "refreeze_delta.py",
         "contracts-merge.py",
         "check-prd-additive.py",

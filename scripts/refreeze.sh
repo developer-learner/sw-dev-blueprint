@@ -847,7 +847,10 @@ rm -f "$TMP/refreeze-old-nodeids" "$TMP/refreeze-changed-files" "$TMP/refreeze-r
 # acceptance per D-65, carried-forward behavior), so this surfaces a claim
 # for the human, never a halt. changed_tests is the runnable channel; the
 # frozen-set filter remains a defensive backstop for legacy artifacts.
-rm -f .cache/redcheck-already-green
+# The marker lives in .pipeline-state, NOT .cache: host-owned diagnostics
+# must not sit in sandbox-writable storage (a symlink planted there would
+# turn the host marker write below into a write through the link).
+rm -f .pipeline-state/redcheck-already-green
 RED_IDS=$(python3 - "$NEW" "$APPROVED/test-nodeids" <<'PYEOF'
 import json, sys
 from pathlib import Path
@@ -859,34 +862,16 @@ PYEOF
 )
 if [ -n "$RED_IDS" ]; then
   echo "red-before-green check (D-75): running $(printf '%s\n' "$RED_IDS" | grep -c '::') delta test(s) against the pre-implementation tree..."
-  mkdir -p .cache
+  python3 "$PLANE_DIR/scripts/test-verdict.py" prepare-redcheck \
+    || die "red-before-green cache is unsafe"
   RED_ARGS=()
   while IFS= read -r _t; do [ -n "$_t" ] && RED_ARGS+=("$_t"); done <<< "$RED_IDS"
-  rm -f .cache/redcheck-report.json
-  $PLANE_DIR/scripts/sandbox-run.sh --rw .cache -- pytest -p no:cacheprovider --json-report \
+  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider --json-report \
     --json-report-file=.cache/redcheck-report.json "${RED_ARGS[@]}" >/dev/null 2>&1 || true
-  if ! python3 -c 'import json; json.load(open(".cache/redcheck-report.json"))' 2>/dev/null; then
-    die "red-before-green sandbox produced no readable report — run refreeze inside the Linux dev VM; staged tests are never executed on the host"
-  fi
-  python3 - <<'PYEOF'
-import json
-r = json.load(open(".cache/redcheck-report.json"))
-passed = sorted(t["nodeid"] for t in r.get("tests", [])
-                if t.get("outcome") == "passed")
-print("  red-check ran via: sandbox")
-if passed:
-    open(".cache/redcheck-already-green", "w").close()
-    print("")
-    print("  WARNING (D-75): delta test(s) ALREADY PASS with no implementation done:")
-    for n in passed:
-        print(f"    {n}")
-    print("  A test that never goes red gates nothing. Expected only for no_edit_files")
-    print("  acceptance (D-65) or carried-forward behavior — anything else is a vacuous")
-    print("  test: bounce it back to the TPM before running the pipeline.")
-else:
-    print("  red-check: all delta tests red pre-implementation, as INV-1 expects")
-PYEOF
-  rm -f .cache/redcheck-report.json
+  python3 "$PLANE_DIR/scripts/test-verdict.py" redcheck \
+    || die "red-before-green sandbox produced no safe readable report — run refreeze inside the Linux dev VM; staged tests are never executed on the host"
+  python3 "$PLANE_DIR/scripts/test-verdict.py" prepare-redcheck \
+    || die "red-before-green cache cleanup is unsafe"
 else
   echo "red-before-green check (D-75): delta carries no runnable test changes — nothing to check"
 fi
@@ -941,14 +926,14 @@ PYEOF
       fi
     done <<< "$NEW_SMOKE"
     if [ "$SMOKE_RED_FAIL" = "1" ]; then
-      if [ -e .cache/redcheck-already-green ]; then
+      if [ -e .pipeline-state/redcheck-already-green ]; then
         echo "  WARNING: tree already carries this delta's implementation — a passing smoke"
         echo "  check here proves nothing about the milestone; re-verify after the run."
       else
         die "a staged smoke check passes on the pre-implementation tree — it gates nothing (M35: a vacuous app.js smoke check accepted T1 with zero evidence). Reauthor the check to probe the delta's new behavior so it is red before the milestone runs, or pin real tests."
       fi
     fi
-    rm -f .cache/redcheck-already-green
+    rm -f .pipeline-state/redcheck-already-green
   fi
 fi
 

@@ -186,6 +186,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-100**: D-77 flake-green requires at least one isolated pass per failing carried node
 - **D-103**: Frozen acceptance requires ordinary passed outcomes; skip/xfail/xpass remain red
 - **D-110**: Report-parser compatibility is exercised against the real pytest-json-report producer
+- **D-189**: Host verdict cross-checks runner status, report consistency, and frozen test coverage; cache access refuses links. In-process pytest remains untrusted (TESTING.md).
 - **D-111**: Accepted flakes persist by spec; the recurring threshold routes directly to a TPM bundle
 - **D-108**: Successful exact task/output matches persist in a bounded completion ledger
 - **D-113**: Post-success spec continuity comes from the validated completion ledger, preserving delta invalidation

@@ -46,6 +46,7 @@ def _run_twice(
     """Run the extracted acceptance funnel twice over one pipeline state."""
     (tmp_path / "src").mkdir()
     (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/test-verdict.py").write_bytes((SCRIPTS / "test-verdict.py").read_bytes())
     (tmp_path / ".cache").mkdir()
     (tmp_path / "src" / "a.py").write_text(
         "def value() -> int:\n    return 1\n"
@@ -61,13 +62,18 @@ def _run_twice(
     }))
     report = tmp_path / "pass-report.json"
     report.write_text(json.dumps({
+        "exitcode": 0,
         "summary": {"total": 1, "passed": 1},
         "tests": [{
             "nodeid": "tests/test_a.py::test_a",
             "outcome": "passed",
+            **{p: {"outcome": "passed"} for p in ("setup", "call", "teardown")},
         }],
         "collectors": [],
     }))
+    approved = tmp_path / "scripts" / ".approved"
+    approved.mkdir(parents=True, exist_ok=True)
+    (approved / "test-nodeids").write_text("tests/test_a.py::test_a\n")
     sandbox = tmp_path / "scripts" / "sandbox-run.sh"
     sandbox.write_text(SANDBOX_STUB)
     sandbox.chmod(0o755)

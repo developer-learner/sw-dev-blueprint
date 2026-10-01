@@ -198,10 +198,28 @@ that nothing reads.
 ## Machine-readable results
 
 Tests produce a JSON report at `.cache/test-report.json` (via `pytest-json-report`).
-`scripts/orchestrate.sh` reads this file to determine pass/fail and extract failing
-test IDs + assertion messages — the shell parses the JSON, never the human
-terminal output. (Post-D-53 there is no "orchestrator agent" — orchestrate is
-a shell script and consumes the report directly.)
+The report is untrusted input: it is written by the pytest process, which runs
+application code inside a sandbox whose `.cache` is writable. The only consumer
+is `scripts/test-verdict.py`, a host-side tool that never runs in the sandbox:
+
+- `prepare` — refuses a symlinked `.cache` and unlinks the previous report
+  without following links.
+- `<runner-status> [selector...]` — opens the report without following
+  symlinks (regular file, single link, ≤ 64 MiB), then checks consistency:
+  the report's `exitcode` must equal the runner status the host observed;
+  summary counts must equal the per-record counts; the reported node IDs must
+  cover exactly the frozen `scripts/.approved/test-nodeids` set (or the
+  selected subset); every phase must be an ordinary pass. Exit 0 = pass,
+  1 = failed acceptance (failing IDs + bounded detail on stdout),
+  3 = unavailable or inconsistent evidence. 3 is never a green.
+- `copy <dest>` — copies the report to a host-owned destination (the
+  escalation bundle) without following symlinks.
+- `prepare-redcheck` / `redcheck` — use the same safe cache access for the
+  freeze preflight's advisory report. Its marker is written only under
+  host-owned `.pipeline-state`, never into the sandbox's writable cache.
+
+(Post-D-53 there is no "orchestrator agent" — orchestrate is a shell script
+and consumes the verdict, never the human terminal output.)
 
 The control-plane suite generates reports with the real plugin and passes them
 through the production parser (D-110); synthetic reports remain for malformed
@@ -213,6 +231,43 @@ the suite red and creates a TPM bundle instead of granting another bypass
 The sandbox image is built from a cold cache on packaging changes and weekly,
 then inspected for an absent project tree (D-123). This complements the static
 Dockerfile/context tests; it does not replace them.
+
+### Remaining limits (in-process pytest)
+
+The verdict is a consistency check, **not** an attestation. Application code
+runs inside the same pytest process that writes the report, and `.cache` is
+writable from inside the sandbox. A sufficiently hostile in-process actor can,
+after `pytest-json-report` has written the honest report at session end,
+overwrite `.cache/test-report.json` with a fully consistent forged green
+report (all-pass records, matching summary, `exitcode: 0`) and force
+`session.exitstatus = 0` so the runner exits 0 — indistinguishable from a
+genuine green run. The `exitcode`-equality check defeats the naive forgery
+(a forged all-pass report while pytest actually exited non-zero is rejected);
+closing the residual requires separating application execution from the
+trusted test oracle and its observations. Moving only the JSON writer to the
+host or another process does not establish that isolation: an untrusted
+pytest process could still send fabricated results. That boundary redesign
+is future work, not a claimed guarantee (D-189).
+
+The constrained actors are the tool-free coder's reply and application code
+executing inside the sandbox. They do not have write access to the host's
+control plane, frozen node IDs, or `.pipeline-state`; the sandbox-writable
+cache and all pytest process state remain untrusted. A compromised host,
+container runtime, or human with checkout write access is outside this boundary.
+
+### Source destination containment
+
+The plan validator and coder appliers share `scripts/source_paths.py`
+(D-190). Task paths must be canonical relative descendants of the configured
+build lane: absolute paths, `.`/`..`, empty segments, and symlinked files or
+ancestors are refused. The coder checks before calling the model and again
+when applying its reply. Reads and writes walk directory descriptors without
+following links; writes replace a temporary file atomically, preserving an
+existing file's permissions while avoiding writes through hard links.
+
+Control-plane regressions exercise rejected plans, direct edits, create
+tasks, late symlink insertion, hard links, and normal nested custom lanes.
+These are local filesystem and stubbed-runner checks, not a live VM milestone.
 
 Completion-ledger coverage includes the success-cleanup boundary (D-113): with
 runtime `spec_version` gone and newer freezes installed, the exact resolver,
