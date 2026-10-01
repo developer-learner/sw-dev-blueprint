@@ -8,6 +8,8 @@
 #   3. --rw lane is writable.
 #   4. Network is disabled (curl/ping fail).
 #   5. A pytest invocation in the sandbox completes (the orchestrate.sh pattern).
+#   6. The sandbox process is non-root.
+#   7. The container's process count is capped (sandbox-run.sh --pids-limit).
 #
 # Exit 0 = all checks pass. Non-zero = stop and report (per constraint 2).
 set -euo pipefail
@@ -121,6 +123,21 @@ if [ -n "$SANDBOX_UID" ] && [ "$SANDBOX_UID" != "0" ]; then
   pass=$((pass + 1))
 else
   echo "  FAIL: sandbox uid is '${SANDBOX_UID:-unset}' (root or unknown)"
+  fail=$((fail + 1))
+fi
+echo ""
+
+# 7. Process cap (security plan item 11, commit 10f80a0): generated code must
+# hit a pids ceiling, not exhaust the VM. Selftests only prove the flag is
+# passed to a stubbed podman; this is the runtime proof.
+echo "[7] Sandbox process count is capped..."
+EXPECTED_PIDS="${SANDBOX_PIDS_LIMIT:-1024}"
+PIDS_MAX=$(scripts/sandbox-run.sh -- sh -c 'cat /sys/fs/cgroup/pids.max' 2>/dev/null || true)
+if [ "$PIDS_MAX" = "$EXPECTED_PIDS" ]; then
+  echo "  PASS: pids.max is $PIDS_MAX"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: pids.max is '${PIDS_MAX:-unreadable}', expected $EXPECTED_PIDS"
   fail=$((fail + 1))
 fi
 echo ""

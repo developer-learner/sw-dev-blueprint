@@ -151,6 +151,10 @@ Podman becomes native.
       isolation surface directly (`sandbox-run.sh -- sh -c 'id -u'` → uid
       1000, empty CapEff, no-new-privileges; testchat `tasks/CURRENT.md`
       session notes).
+- [ ] Container process cap holds at runtime — `scripts/selftest/verify-sandbox-in-vm.sh`
+      check [7] reads `pids.max` inside the sandbox and expects
+      `${SANDBOX_PIDS_LIMIT:-1024}`. **Not yet run in the VM**; selftests only
+      prove the `--pids-limit` flag reaches a stubbed podman.
 - [x] `llm-call.sh` round-trip to the host model server passes from inside
       the VM — exercised by every milestone's pre-flight smoke since D-55,
       including Vortex's three `[success]` runs (v1 `a6f6ec6`, v2
