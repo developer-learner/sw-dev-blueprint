@@ -22,6 +22,9 @@
 # Usage: sandbox-run.sh [--rw <relpath>]... [--] <command...>
 #   --rw src        mount $REPO/src read-write (created if missing)
 #   --rw .cache     e.g. for the pytest JSON report
+# Never mountable rw: scripts/, .git/, .githooks/, tests/ (the frozen oracle),
+# .pipeline-state/ (run counters). Container pids are capped (SANDBOX_PIDS_LIMIT,
+# default 1024) so generated code cannot fork-bomb the VM.
 # No --rw flags = fully read-only repo (test runs, smoke checks).
 set -euo pipefail
 
@@ -55,22 +58,35 @@ while [ $# -gt 0 ]; do
       case "$rel" in
         ""|.|/*) echo "sandbox-run: refusing --rw '$2' (must be a repo-relative subdir)" >&2; exit 2 ;;
       esac
-      # Canonicalize before comparing: bash case-globs match '/', so a
-      # literal `scripts|scripts/*` blocklist accepts `tests/../scripts`.
-      # realpath resolves the traversal, then containment is checked against
-      # the real target — this script is the load-bearing security wall.
-      mkdir -p "$REPO/$rel"
-      canon="$(realpath -- "$REPO/$rel" 2>/dev/null || true)"
+      # Canonicalize before comparing, and decide BEFORE creating anything: a
+      # refused lane must leave no directory behind. `..` segments are refused
+      # outright; the deepest EXISTING ancestor is resolved with realpath (so a
+      # symlink already in the repo cannot carry the lane outside), the not-yet-
+      # existing remainder is appended lexically, and only then is it made.
+      # bash case-globs match '/', so a literal `scripts|scripts/*` blocklist
+      # accepts `tests/../scripts` — hence the `..` refusal above the blocklist.
+      # This script is the load-bearing security wall.
+      case "/$rel/" in
+        */../*) echo "sandbox-run: refusing --rw '$2' (path traversal)" >&2; exit 2 ;;
+      esac
       repo_canon="$(realpath -- "$REPO")"
+      probe="$REPO/$rel"
+      rest=""
+      while [ ! -e "$probe" ]; do
+        rest="/$(basename "$probe")$rest"
+        probe="$(dirname "$probe")"
+      done
+      canon="$(realpath -- "$probe" 2>/dev/null || true)$rest"
       case "$canon" in
         "$repo_canon"/*) ;;
         *) echo "sandbox-run: refusing --rw '$2' (escapes repo root)" >&2; exit 2 ;;
       esac
       inner="${canon#"$repo_canon"/}"
       case "$inner" in
-        scripts|scripts/*|.git|.git/*|.githooks|.githooks/*)
+        scripts|scripts/*|.git|.git/*|.githooks|.githooks/*|tests|tests/*|.pipeline-state|.pipeline-state/*)
           echo "sandbox-run: refusing --rw '$2' (control plane is never agent-writable: $inner)" >&2; exit 2 ;;
       esac
+      mkdir -p "$canon"
       RW_MOUNTS+=(-v "$canon:/work/$inner:Z")
       shift 2 ;;
     --) shift; break ;;
@@ -97,6 +113,6 @@ podman run --rm --timeout "$TIMEOUT" \
   --network none \
   --env PYTHONPATH=/work \
   --env PYTHONDONTWRITEBYTECODE=1 \
-  --memory=4g --cpus=2 \
+  --memory=4g --cpus=2 --pids-limit="${SANDBOX_PIDS_LIMIT:-1024}" \
   --cap-drop=ALL --security-opt no-new-privileges \
   "$IMAGE" "$@"

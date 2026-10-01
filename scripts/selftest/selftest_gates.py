@@ -9108,6 +9108,73 @@ def test_group2_sandbox_run_allows_valid_subdir_rw(tmp_path):
     assert "escapes repo root" not in (r.stdout + r.stderr), (r.stdout, r.stderr)
 
 
+def _sandbox_repo(tmp_path):
+    """A minimal git repo plus a recording podman stub on PATH."""
+    repo = tmp_path / "proj"
+    (repo / "scripts").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "Containerfile").write_text("FROM scratch\n")
+    (repo / "requirements.txt").write_text("# none\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    calls = tmp_path / "podman-calls.log"
+    stub = bindir / "podman"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in run) printf \'%s\\n\' "$*" >> "$PODMAN_LOG" ;; esac\n'
+        "exit 0\n"
+    )
+    stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+           "PODMAN_LOG": str(calls)}
+    return repo, env, calls
+
+
+def _sandbox_rw(repo, env, rel):
+    return subprocess.run(
+        ["bash", str(SCRIPTS / "sandbox-run.sh"), "--rw", rel, "--", "true"],
+        cwd=repo, capture_output=True, text=True, env=env,
+    )
+
+
+def test_sandbox_run_rw_refusal_creates_nothing_outside_the_repo(tmp_path):
+    """The --rw escape check must run BEFORE any mkdir: a refused lane may not
+    leave a directory behind, whether it climbs out with `..` or through a
+    symlink that already lives in the repo."""
+    repo, env, _ = _sandbox_repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (repo / "link").symlink_to(outside)
+    r = _sandbox_rw(repo, env, "../made-by-rw")
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert not (tmp_path / "made-by-rw").exists()
+    r = _sandbox_rw(repo, env, "link/made-by-rw")
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert not (outside / "made-by-rw").exists()
+
+
+def test_sandbox_run_rw_refuses_control_lanes_without_creating_them(tmp_path):
+    """tests/ (the frozen oracle) and .pipeline-state/ (run counters) join the
+    control-plane blocklist, and a refused lane is never created on disk."""
+    repo, env, calls = _sandbox_repo(tmp_path)
+    for rel in ("tests", "tests/sub", "tests/./sub", ".pipeline-state",
+                "scripts/newdir"):
+        r = _sandbox_rw(repo, env, rel)
+        assert r.returncode == 2, (rel, r.stdout, r.stderr)
+        assert "never agent-writable" in r.stderr, (rel, r.stderr)
+        assert not (repo / rel).exists(), rel
+    assert not calls.exists()
+
+
+def test_sandbox_run_caps_container_pids(tmp_path):
+    """A fork bomb in generated code must hit a pids ceiling, not the VM."""
+    repo, env, calls = _sandbox_repo(tmp_path)
+    r = _sandbox_rw(repo, env, ".cache")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert (repo / ".cache").is_dir()
+    assert "--pids-limit=1024" in calls.read_text(), calls.read_text()
+
+
 def test_ci_lints_template_owned_python_scripts():
     """The unconditional control-plane job must lint scripts/, where the
     gate code and its selftests live, even for an unbootstrapped skeleton.
