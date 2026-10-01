@@ -1354,14 +1354,42 @@ prefetch_take() {
 }
 
 # prefetch_reap — at run exit, stop any prefetch still in flight so no
-# orphaned model call outlives the run.
+# orphaned model call outlives the run. The recorded pid is only the
+# background subshell; the call itself runs below it (timeout -> llm-call.sh
+# -> python). Killing the subshell alone re-parents those to init and they
+# keep a model-server slot busy for up to AGENT_TIMEOUT. So the whole tree is
+# collected FIRST (once the subshell dies its children can no longer be found
+# from it), then TERM, then KILL for anything still alive after ~2 s.
 prefetch_reap() {
-  local d pid
+  local d pid all="" frontier next p survivors="" st
   for d in "$PREFETCH_DIR"/*/; do
     [ -d "$d" ] || continue
     pid=$(cat "$d/pid" 2>/dev/null || true)
-    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    [ -n "$pid" ] || continue
+    frontier="$pid"
+    while [ -n "$frontier" ]; do
+      all="$all $frontier"
+      next=""
+      for p in $frontier; do
+        next="$next $( { pgrep -P "$p" 2>/dev/null || true; } | tr '\n' ' ')"
+      done
+      frontier=$(echo $next)
+    done
   done
+  if [ -n "$all" ]; then
+    kill $all 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      survivors=""
+      for p in $all; do
+        # A killed direct child stays a zombie until waited on; it is dead.
+        st=$(ps -o stat= -p "$p" 2>/dev/null || true)
+        case "$st" in ""|Z*) ;; *) survivors="$survivors $p" ;; esac
+      done
+      [ -z "$survivors" ] && break
+      sleep 0.2
+    done
+    [ -z "$survivors" ] || kill -KILL $survivors 2>/dev/null || true
+  fi
   rm -rf "$PREFETCH_DIR"
 }
 

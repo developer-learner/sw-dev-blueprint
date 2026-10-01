@@ -33,6 +33,9 @@ cp "$REPO/scripts/source_paths.py" "$REPO/scripts/apply-edit-blocks.py" "$REPO/s
 cat > scripts/llm-call.sh <<'STUB'
 #!/usr/bin/env bash
 prompt=$(cat)
+# reap scenario: a call that never returns on its own, with a uniquely named
+# child process the test can look for after cancellation.
+[ -f hang ] && sleep "$HANG_MARK"
 target=$(printf '%s\n' "$prompt" | sed -n 's/^Write EXACTLY one file: \([^ ]*\) .*/\1/p' | head -1)
 touch "running/$$"
 ls running | wc -l | tr -d ' ' >> calls/concurrency
@@ -113,6 +116,22 @@ case "$SCENARIO" in
   retry)
     printf '1\n' > "$TASK_STATE/T2.strikes"
     take T1 src/a.py ;;
+  reap)
+    : > hang
+    prefetch_launch T1          # starts T2's call in the background
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      pgrep -f "sleep $HANG_MARK" >/dev/null && break; sleep 0.3
+    done
+    echo "STARTED=$( { pgrep -f "sleep $HANG_MARK" || true; } | wc -l | tr -d ' ')"
+    prefetch_reap
+    survivors=0
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      survivors=$( { pgrep -f "sleep $HANG_MARK" || true; } | wc -l | tr -d ' ')
+      [ "$survivors" = 0 ] && break; sleep 0.3
+    done
+    echo "SURVIVORS=$survivors"
+    pkill -f "sleep $HANG_MARK" 2>/dev/null || true
+    exit 0 ;;
 esac
 prefetch_reap
 echo "CALLS=$(wc -l < calls/targets | tr -d ' ')"
@@ -123,13 +142,14 @@ echo "FILES=$(ls src/a.py src/b.py src/c.py 2>/dev/null | tr '\n' ',')"
 '''
 
 
-def _run(tmp_path: Path, par: int, scenario: str) -> dict:
+def _run(tmp_path: Path, par: int, scenario: str, env: dict | None = None) -> dict:
     work = tmp_path / f"w-{par}-{scenario}"
     work.mkdir()
     script = work / "harness.sh"
     script.write_text(HARNESS)
     r = subprocess.run(["bash", str(script), str(REPO), str(par), scenario],
-                       cwd=work, capture_output=True, text=True, timeout=120)
+                       cwd=work, capture_output=True, text=True, timeout=120,
+                       env={**os.environ, **(env or {})})
     assert r.returncode == 0, (r.stdout, r.stderr)
     out = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
     return out
@@ -258,3 +278,14 @@ def test_fanout_is_resolved_before_the_task_loop():
     call = src.index('SWBP_PARALLEL_CODERS=$(resolve_parallel_coders)')
     assert src.index("resolve_parallel_coders() {") < call
     assert call < src.index("while :; do", src.index('echo "=== Phase: task DAG ==="'))
+
+
+def test_reap_kills_the_whole_call_tree(tmp_path):
+    """Cancelling a prefetch must stop the model call itself, not just the
+    background subshell that launched it. Killing only the subshell left the
+    `timeout` wrapper and the llm-call client running for up to
+    AGENT_TIMEOUT after the run ended, still holding a model-server slot."""
+    mark = f"{4000 + os.getpid() % 1000}.{os.getpid() % 997 + 1}"
+    out = _run(tmp_path, 4, "reap", env={"HANG_MARK": mark})
+    assert out["STARTED"] == "1", out
+    assert out["SURVIVORS"] == "0", out

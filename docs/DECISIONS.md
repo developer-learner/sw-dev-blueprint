@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-197 — 2026-10-01 — Cancelling a parallel coder call stops the call, not just its launcher (security plan item 8)
+
+**Decision:** `prefetch_reap` collects the whole process tree under each in-flight prefetch (subshell, `timeout`, `llm-call.sh`, its Python client) before signalling, sends TERM to all of it, and KILLs anything still alive after about 2 s. `selftest_parallel_coder.py::test_reap_kills_the_whole_call_tree` starts a prefetch whose fake call never returns and asserts that no process of it survives the reap.
+
+**Alternatives considered:** (a) Launch each prefetch under `set -m` and kill its process group — rejected: job control in a non-interactive script prints job notices and changes signal behavior for the whole run. (b) Leave it — rejected: every run that ended with a prefetch in flight left a client holding a model-server slot for up to `AGENT_TIMEOUT` (30 min), slowing the next run on a batching server.
+
+**Reason:** D-187's comment promised "no orphaned model call outlives the run"; killing the subshell alone re-parented the call to init. Reproduced before the fix. Whether the model server stops computing once its client disconnects is not verified here.
+
+**Do not suggest:** signalling only the recorded pid; signalling before the tree is collected (children become unreachable once their parent dies).
+
 ## D-196 — 2026-10-01 — The dev VM mounts four projects, never ~/dev wholesale (security plan item 10, repo part)
 
 **Decision:** `lima/dev-vm.yaml` mounts exactly `~/dev/sw-dev-blueprint`, `~/dev/vortex`, `~/dev/testchat` and `~/dev/rich-adoption` writable, instead of all of `~/dev`. `scripts/selftest/selftest_lima_mounts.py` pins that set and refuses a whole-`~/dev` or home mount. This changes the repo file only; the live VM picks it up when the operator recreates or edits it.
