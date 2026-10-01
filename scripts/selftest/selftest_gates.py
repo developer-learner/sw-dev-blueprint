@@ -9248,14 +9248,15 @@ def test_plan_trivial_one_file_zero_em_calls(tmp_path):
         "tests/test_b.py::test_three"}
 
 
-# --- update-template.sh D-96 auto mode (mirrors D-95) ------------------------
-# The doc had already conceded (script line 36 pre-D-96) that this y/N was
-# an "authorization that the control plane changed with a human aware — not
-# a code review." An authorization with no defect-catching role is exactly
-# what the CEO's rubber-stamp complaint targets. Correctness upstream: the
-# template's own selftests ran green before the template committed the
-# change. Correctness downstream: phase-gate.sh manifest HEAD runs
-# fail-closed post-apply. The middle keystroke was ceremony.
+# --- update-template.sh D-193 approval-required default (D-96 auto -> --auto) ---
+# D-96 made the pull auto-apply on pre-diff green, on the assumption that the
+# template repo is trustworthy ("the human already authorized the change
+# upstream"). The security-plan threat model removes that assumption: a
+# compromised template commit flows into every child on the next update, and
+# the child's own gates are part of what is being replaced. D-193 makes the
+# default print-and-stop (approval required), keeps --approve hash-bound
+# (D-61), keeps --interactive, and moves the D-96 auto-apply behind --auto.
+# Every [template-update ...] commit records the Template-Diff-SHA trailer.
 
 
 def _run_ut(cmd, cwd):
@@ -9325,15 +9326,15 @@ def template_pull_pair(tmp_path):
     return child, clone
 
 
-def test_update_template_auto_proceeds_without_terminal(template_pull_pair):
-    """No flags, no tty — auto applies the pull and prints the D-96 audit
-    line. Pre-D-96 this died at the `[ -t 0 ]` check demanding a terminal
-    for the y/N prompt. Verifies the [template-update ...] commit lands
-    (real apply, not a dry-run) and phase-gate integrity holds post-apply."""
+def test_update_template_auto_flag_applies_without_terminal(template_pull_pair):
+    """--auto (opt-in D-96) applies the pull without a tty and prints the
+    audit line. Verifies the [template-update ...] commit lands (real apply,
+    not a dry-run degrade) and phase-gate integrity holds post-apply."""
     child, clone = template_pull_pair
-    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--auto",
+                 "--from", str(clone)], child)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "auto-approved (D-96)" in r.stdout, r.stdout
+    assert "auto-approved (D-96, via --auto)" in r.stdout, r.stdout
     # The rubber-stamp prompt must not print in auto mode.
     assert "Apply this template update?" not in r.stdout, r.stdout
     # A real commit landed — not a dry-run degrade.
@@ -9344,6 +9345,51 @@ def test_update_template_auto_proceeds_without_terminal(template_pull_pair):
     assert log.stdout.strip().startswith("[template-update "), log.stdout
     # And the file actually changed to the template's content.
     assert "new-content" in (child / "scripts" / "hello.sh").read_text()
+
+
+def test_update_template_default_requires_approval(template_pull_pair):
+    """D-193: no mode flag, no tty — the pull must NOT apply. The diff,
+    claims, and DIFF-SHA print; the exact --approve command is shown; no
+    commit lands and the child's file is untouched. Before D-193 (D-96
+    default) this same invocation auto-applied."""
+    child, clone = template_pull_pair
+    before = subprocess.run(
+        ["git", "log", "-1", "--format=%H"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)],
+                child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "approval required (D-193)" in r.stdout, r.stdout
+    assert "--approve" in r.stdout, r.stdout
+    assert "DIFF-SHA" in r.stdout, r.stdout
+    # Nothing applied: no new commit, file still old content.
+    after = subprocess.run(
+        ["git", "log", "-1", "--format=%H"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert before == after, "default mode must not commit"
+    assert "old-content" in (child / "scripts" / "hello.sh").read_text()
+
+
+def test_update_template_commit_records_diff_sha_trailer(template_pull_pair):
+    """D-193: the [template-update ...] commit must carry a
+    Template-Diff-SHA: trailer equal to the DIFF-SHA the approval bound to —
+    the byte-binding lives in history, not just on the console."""
+    child, clone = template_pull_pair
+    dry = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
+                   "--from", str(clone)], child)
+    assert dry.returncode == 0, dry.stdout
+    match = re.search(r"DIFF-SHA: ([0-9a-f]{64})", dry.stdout)
+    assert match, dry.stdout
+    r = _run_ut(["bash", "scripts/update-template.sh",
+                 "--approve", match.group(1), "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    full = subprocess.run(
+        ["git", "log", "-1", "--format=%B"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert f"Template-Diff-SHA: {match.group(1)}" in full, full
 
 
 def test_update_template_interactive_flag_requires_terminal(template_pull_pair):
@@ -9397,7 +9443,8 @@ def test_update_template_applies_removal_only_update(template_pull_pair):
     )
 
     r = _run_ut(
-        ["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+        ["bash", "scripts/update-template.sh", "--auto", "--from", str(clone)],
+        child)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "scripts/obsolete.sh" in r.stdout
     assert not obsolete.exists()
@@ -9438,7 +9485,8 @@ def test_update_template_manifest_only_drift(template_pull_pair):
     )
 
     r = _run_ut(
-        ["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+        ["bash", "scripts/update-template.sh", "--auto", "--from", str(clone)],
+        child)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert repr(r.stdout).find("(manifest verbatim)") != -1, r.stdout
     template_manifest = (clone / "scripts" / ".manifest-template").read_text()

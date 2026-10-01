@@ -24,6 +24,16 @@ designed D-176) + T11 rich-adoption (Phase 0 done D-175, v1 spec drafting)
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-01: **Security plan item 6 implemented (D-193), worktree `secplan-4-15`.**
+      Template updates are approval-required by default: the diff +
+      claims + DIFF-SHA print, nothing applies, and the exact --approve
+      command is shown. The D-96 auto-apply is now opt-in `--auto` (the
+      security-plan threat model does not assume the template repo is
+      trustworthy — the child's own gates are part of what the update
+      replaces). Every [template-update ...] commit records a
+      Template-Diff-SHA: trailer (new SWBP_EXTRA_TRAILERS hook in
+      swbp_commit). Validation: 682 control-plane selftests passed (680 +
+      2 new); fail-before demonstrated (default auto-applied, no trailer).
 - 2026-10-01: **Security plan item 5 (partial) implemented (D-192), worktree `secplan-4-15`.**
       App guard now inspects merge-introduced diffs (a merge's first-parent
       diff, authorized by the brokered origin commits in the merged line)

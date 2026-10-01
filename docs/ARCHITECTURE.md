@@ -208,6 +208,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-190**: Plan and coder paths share canonical lane validation and no-follow filesystem access; atomic replacement prevents writes through hard links.
 - **D-191**: Dependent verdict coverage follows the transitive import graph and modified conftest subtrees; an uncertain lookup exits 1 and the verdict falls back to the full frozen suite instead of narrowing to the mapped union (TESTING.md).
 - **D-192**: The app guard inspects merge-introduced diffs (first-parent, line-authorized) and ratchets enforcement — a hand downgrade of `guard=enforce` cannot demote the check that catches it; the authenticated-role claim waits on the M2b provenance gate (CEO decision).
+- **D-193**: Template updates are approval-required by default (D-96 auto-apply moved behind `--auto`); every `[template-update ...]` commit records the `Template-Diff-SHA:` trailer binding the applied bytes to the reviewed diff.
 - **D-76/D-84**: `project-trail/` running project record (né `postmortems/`) — unauthoritative, conductor- and human-authored, zero pipeline dependency, narrative never evidence
 
 ### Recent pipeline architecture (post-D-108 highlights)

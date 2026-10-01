@@ -258,6 +258,13 @@ Swbp-Call-Id: $SWBP_PROV_CALL_ID"
     trailers="$trailers
 Swbp-Evidence-Schema: 1"
   fi
+  # Caller-supplied trailers (D-193: update-template.sh records the
+  # Template-Diff-SHA it bound the apply to). Newline-separated; empty by
+  # default so every other call site is untouched.
+  if [ -n "${SWBP_EXTRA_TRAILERS:-}" ]; then
+    trailers="$trailers
+$SWBP_EXTRA_TRAILERS"
+  fi
 
   # --- T7 M2 (D-184): signing. Dedicated homedir (the key never touches
   # the user's keyring); batch/loopback wrapper (no passphrase prompts —

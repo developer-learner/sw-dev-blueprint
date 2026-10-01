@@ -21,6 +21,14 @@
 
 ## Decisions
 
+## D-193 — 2026-10-01 — Template updates: approval-required default, recorded diff binding (security plan item 6)
+
+**Decision:** `update-template.sh` defaults to approval-required: the aggregate diff, the template's CLAIMS, and the DIFF-SHA are printed, nothing is applied, and the exact `--approve <sha>` command is shown. The D-96 auto-apply survives as opt-in `--auto`. A ref advance with no content or manifest changes still applies without approval (no code or control-plane input enters the child). Every `[template-update ...]` commit now carries a `Template-Diff-SHA:` trailer (via a new `SWBP_EXTRA_TRAILERS` hook in `swbp_commit`), so the byte-binding between an applied update and its reviewed diff lives in history, not just on the console.
+
+**Reason:** D-96's auto default rested on "the human already authorized the change upstream in the blueprint." The security plan's threat model removes that assumption: a compromised or malicious template commit flows into every child on the next update, and the child's own gates (the manifest check, the selftests) are part of what the update replaces — the child cannot be trusted to verify the thing that rewrites its verifier. A trust-boundary change must therefore be an explicit, hash-bound act in the child. The mechanism already existed (D-61 `--approve`); the item was the default and the recorded binding.
+
+**Do not suggest:** reverting the default to auto "because D-96 decided it" (D-96 predates the security plan's threat model; this decision supersedes its default, not its mechanism); requiring approval for the ref-advance-only path (nothing enters the child); dropping the `Template-Diff-SHA` trailer because "the console printed it" (console output is not history); making `--auto` the default for NEW children only (the threat is identical for all children).
+
 ## D-192 — 2026-10-01 — App guard: merge inspection and the enforcement ratchet (security plan item 5, partial)
 
 **Decision:** `check-app-guard.py` now (a) INSPECTS merge commits: a merge's introduced diff is the first-parent diff (what the merge brought into the mainline, including conflict-resolution edits that live in no other commit), and an introduced path is authorized by the merge's own broker role or by any commit in a merged line that touched the path with the required role (the change was brokered at its origin); and (b) applies an enforcement RATCHET: the range is checked in enforce mode when the `--enforce` flag is set, the current `.swbp` says `guard=enforce`, the state in force at the range's start says so, or any commit in the range had `guard=enforce`. A hand downgrade of the guard can no longer demote the check that would catch it; only a brokered commit may lower the mode, and it stays in the provenance trail.
