@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-195 — 2026-10-01 — The mypy green-cache fingerprint hashes the sandbox helper (security plan item 13)
+
+**Decision:** The D-142 mypy fingerprint in `run_tests` receives the sandbox helper's path through `SWBP_FP_SANDBOX` and hashes that file. The previous tuple entry `"$PLANE_DIR/scripts/sandbox-run.sh"` sat inside a quoted heredoc, so it was never expanded: Python looked for a file literally named `$PLANE_DIR/...`, found none, and silently left the helper out. A missing variable fails the fingerprint (and with it the run), never skips the input.
+
+**Alternatives considered:** (a) Unquote the heredoc — rejected: every `$` in the embedded Python would then need escaping. (b) Pass the path as an argument — rejected: argv already carries the mypy target list.
+
+**Reason:** The comment and D-142 both say the sandbox helper is a typing-environment input; the code did not do it. Impact was low (D-168 forbids a plane change mid-milestone), but a declared input that is silently absent is the kind of defect that hides a real one later.
+
+**Do not suggest:** re-adding the literal path to the tuple; making the variable optional.
+
 ## D-194 — 2026-10-01 — Template updates auto-apply again; a wrong --approve refuses before any mutation (security plan item 6, amends D-193)
 
 **Decision:** `update-template.sh` returns to the D-96 default: on green pre-diff checks the pull applies without a prompt. D-193's stop-and-print behavior becomes the opt-in `--require-approval`; `--auto` stays accepted as a no-op so existing invocations keep working. A supplied `--approve <sha>` is now verified before any mutation in every branch — previously the ref-advance-only branch ran ahead of the gate, so a wrong hash still rewrote `.template-version` and committed. D-193's `Template-Diff-SHA:` trailer on every `[template-update ...]` commit is kept unchanged.

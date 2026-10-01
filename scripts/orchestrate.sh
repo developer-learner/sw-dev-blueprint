@@ -1632,7 +1632,8 @@ PYSCOPE
     # The cache lives in ephemeral pipeline state and stores successes only:
     # unknown/failing checks always execute and any relevant edit selects a
     # new marker rather than trusting stale green state.
-    mypy_fingerprint=$(python3 - "${mypy_targets[@]}" <<'PYMYPYHASH'
+    mypy_fingerprint=$(SWBP_FP_SANDBOX="$PLANE_DIR/scripts/sandbox-run.sh" \
+      python3 - "${mypy_targets[@]}" <<'PYMYPYHASH'
 import hashlib
 import os
 import sys
@@ -1656,11 +1657,16 @@ for name in (
     ".mypy.ini", "mypy.ini", "pyproject.toml", "setup.cfg", "tox.ini",
     "requirements.txt", "requirements-dev.txt", "requirements.lock",
     "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock", "Containerfile",
-    "$PLANE_DIR/scripts/sandbox-run.sh",
 ):
     path = Path(name)
     if path.is_file():
         inputs.add(path)
+# The sandbox helper is a typing-environment input, but it lives outside the
+# workdir: the quoted heredoc cannot expand $PLANE_DIR, so the path arrives
+# via the environment (a missing var fails the fingerprint, never skips it).
+sandbox = Path(os.environ["SWBP_FP_SANDBOX"])
+if sandbox.is_file():
+    inputs.add(sandbox)
 for pattern in ("requirements*.txt", "requirements*.lock"):
     inputs.update(path for path in Path(".").glob(pattern) if path.is_file())
 

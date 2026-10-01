@@ -138,6 +138,20 @@ def test_mypy_green_invalidates_after_typing_config_change(tmp_path: Path):
     assert len(_mypy_calls(calls)) == 2, calls
 
 
+def test_mypy_green_invalidates_after_sandbox_helper_change(tmp_path: Path):
+    """The sandbox helper is a typing-environment input: a change to it must
+    miss the green cache, not replay a verdict the new sandbox would not
+    reproduce (the quoted heredoc never expanded $PLANE_DIR, so the literal
+    path was never a file and the helper was never hashed)."""
+    result, calls = _run_twice(
+        tmp_path,
+        between="printf '\\n# sandbox changed\\n' >> scripts/sandbox-run.sh",
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert len(_mypy_calls(calls)) == 2, calls
+    assert len(_pytest_calls(calls)) == 2, calls
+
+
 def test_mypy_green_is_specific_to_target_set(tmp_path: Path):
     result, calls = _run_twice(tmp_path, second_args="")
     assert result.returncode == 0, (result.stdout, result.stderr)
