@@ -265,6 +265,19 @@ control plane, frozen node IDs, or `.pipeline-state`; the sandbox-writable
 cache and all pytest process state remain untrusted. A compromised host,
 container runtime, or human with checkout write access is outside this boundary.
 
+**Accepted residuals (security plan, 2026-10-01).** The working threat model is
+a *buggy* local model, not a hostile one. Under it, two known gaps are accepted
+on purpose rather than fixed:
+
+- the in-process report forgery above (closing it needs the isolation
+  redesign, not more consistency checks);
+- forged `Swbp-Role:` trailers: the app guard (D-192) reads the role from an
+  unsigned commit trailer, so a commit can claim `tpm`. Signature-checked
+  roles (`check-provenance.py --gate`) are deferred until an untrusted model
+  or an outside contributor appears.
+
+Both are listed so nobody reads the gates as stronger than they are.
+
 ### Source destination containment
 
 The plan validator and coder appliers share `scripts/source_paths.py`

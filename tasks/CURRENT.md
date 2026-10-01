@@ -19,11 +19,34 @@ notes below and in `docs/DECISIONS.md`. The per-project instance of this file
 (in a derived repo like testchat) tracks that project's milestone instead,
 using the fields below:
 
-**Feature:** templates/tools — T7 trusted-commit-broker (M1 landed D-174, M2
-designed D-176) + T11 rich-adoption (Phase 0 done D-175, v1 spec drafting)
+**Feature:** security hardening plan (2026-09-30 review → D-189..D-202), branch
+`secplan-4-15`. Earlier tracks: T7 trusted-commit-broker (M1 D-174; M2
+provenance verifier shipped report-first, gate flip deferred) and T11
+rich-adoption (Phase 0 D-175).
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-01: **Security plan, remaining items landed (D-195..D-202), branch `secplan-4-15`.**
+      Each with a test shown failing before the fix. D-195 mypy cache
+      fingerprint really hashes the sandbox helper. D-196 the dev VM mounts
+      four projects, not all of `~/dev` (repo file only; the live VM still
+      needs recreating). D-197 cancelling a parallel coder call kills the
+      whole call tree (orphans held a model slot up to 30 min). D-198 the
+      template updater refuses while unrelated changes are staged. D-199
+      the updater survives large new files (SIGPIPE exit 141) and syncs
+      exec-bit changes; the "hidden tail not hashed" premise was tested and
+      wrong (the manifest hash already binds it). D-200 the updater refuses
+      unsafe destinations — a symlinked dir in the child let it write
+      outside the repo. D-201 plane snapshots publish by atomic rename and
+      app hooks are shims in `.git` that refuse when the snapshot is purged
+      (before: concurrent launchers deleted each other's snapshot, and a
+      purged cache left commits with no hooks). D-202 every plane helper
+      path is quoted. VM pids-cap runtime check added, not yet run in the
+      VM. T7 and T10 were coded by the local coder (Splash fan-out) and
+      reviewed; the rest written directly (ad hoc rule). Suite 706 green.
+      Still open: shellcheck in CI (needs shellcheck locally first),
+      Containerfile pins (needs a VM build), live VM mount change,
+      copy-in/copy-out VM redesign, signed roles, report isolation.
 - 2026-10-01: **D-194 — template updates auto-apply again; wrong `--approve` refuses everywhere.**
       The CEO ruled that a business owner is never asked to approve a
       technical diff, so D-193's stop-by-default is reversed: the pull
