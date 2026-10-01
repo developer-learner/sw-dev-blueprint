@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-201 — 2026-10-01 — Plane snapshots are published atomically; app hooks survive a purged cache (security plan item 7)
+
+**Decision:** (1) `swbp` and `orchestrate.sh`'s entry guard (both the git-archive path and the copied-plane path) build a snapshot in a sibling stage directory, stamp it, and publish it with one `rename`. A published snapshot is never deleted or rewritten. A launcher that loses the rename waits (up to `SWBP_PLANE_PUBLISH_WAIT`, default 30 s) for the winner's stamp and discards its own stage; a root still unstamped after the wait is an abandoned leftover and is renamed aside, never deleted in place. (2) `swbp` no longer points a builder-targeted app's `core.hooksPath` into the cache. It writes small shims to `<git-dir>/swbp-hooks/` (per worktree) that `exec` the pinned snapshot's hook, or refuse with "plane snapshot missing" when it is gone. The cache location itself is unchanged.
+
+**Alternatives considered:** (a) A lock directory around extraction — rejected: an atomic rename gives the same guarantee without stale-lock handling. (b) Moving snapshots out of `~/.cache` to a durable home — rejected: any location can be deleted; the shim makes deletion fail closed instead of relying on it never happening, and avoids moving D-168's documented layout. (c) Checking the hooks path on each `swbp` entry only — rejected: the gap is raw `git commit` between a purge and the next entry.
+
+**Reason:** Reproduced before the fix: a second launcher `rm -rf`'d a snapshot another launcher was still publishing (both in `swbp` and in the entry guard), and after a cache purge `git commit` in an app succeeded with no hooks at all, because git treats a missing hooks directory as "no hooks". Parallel sessions on one machine are routine here, so both happen in practice.
+
+**Do not suggest:** `rm -rf` of a stamped snapshot; pointing `core.hooksPath` straight into the cache again.
+
 ## D-200 — 2026-10-01 — The template updater refuses unsafe destinations before any write (security plan item 3, updater)
 
 **Decision:** Every path in the template's manifest (and the manifest itself) is checked before anything is diffed or written: no traversal, no absolute path, no empty or doubled separator, nothing under `.git`, no backslash, and neither the destination nor any parent directory may be a symlink in the child. A failure dies with "unsafe template path" and leaves the child untouched.

@@ -65,7 +65,9 @@ tracked `.githooks/`.
    after every phase; the coder still writes only its task path; the frozen
    manifest in `scripts/.approved/` still pins spec + tests.
 2. *Local human path.* `swbp` sets `core.hooksPath` in the app's **untracked**
-   `.git/config` to the builder checkout's hooks. The pre-commit hook keeps
+   `.git/config` to the builder checkout's hooks (since D-201: to shims in
+   `.git/swbp-hooks/` that forward to the pinned snapshot's hooks and refuse
+   when the snapshot has been purged). The pre-commit hook keeps
    verifying the frozen manifest and the active phase. Nothing is committed.
 3. *App pre-push* runs static checks only — frozen-spec integrity, the
    guard, ruff/mypy on `src/` — narrowing the "release-gate ≠ CI" gap. The

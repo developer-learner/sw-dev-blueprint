@@ -71,12 +71,53 @@ SHA="$(git -C "$BUILDER" rev-parse --verify --quiet "$REF^{commit}" || true)"
 
 # Materialize once, content-addressed — identical to D-168's layout, so an
 # orchestrate re-exec and a swbp launch share the same snapshot.
+# D-201: published by ONE rename of a complete, stamped stage dir; a published
+# snapshot is never deleted or rewritten (another launcher may be running
+# from it). Same rules as orchestrate.sh's _plane_publish.
 ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/swbp-plane/$SHA"
 if [ ! -f "$ROOT/.swbp-plane-stamped" ]; then
-  rm -rf "$ROOT"
-  mkdir -p "$ROOT"
-  git -C "$BUILDER" archive "$SHA" | tar -x -C "$ROOT"
-  : > "$ROOT/.swbp-plane-stamped"
+  stage="${ROOT}.tmp.$$"
+  rm -rf "$stage"
+  mkdir -p "$stage"
+  git -C "$BUILDER" archive "$SHA" | tar -x -C "$stage"
+  : > "$stage/.swbp-plane-stamped"
+  python3 - "$stage" "$ROOT" "${SWBP_PLANE_PUBLISH_WAIT:-30}" <<'PYPUBLISH' \
+    || die "could not publish the plane snapshot at $ROOT"
+import os
+import shutil
+import sys
+import time
+
+stage, root, wait = sys.argv[1], sys.argv[2], float(sys.argv[3])
+stamp = os.path.join(root, ".swbp-plane-stamped")
+
+
+def rename() -> bool:
+    try:
+        os.rename(stage, root)
+        return True
+    except OSError:
+        return False
+
+
+if rename():
+    sys.exit(0)
+deadline = time.time() + wait
+while not os.path.exists(stamp) and time.time() < deadline:
+    time.sleep(0.2)
+if not os.path.exists(stamp):
+    aside = f"{root}.stale.{os.getpid()}"
+    try:
+        os.rename(root, aside)
+    except OSError:
+        pass
+    if rename():
+        shutil.rmtree(aside, ignore_errors=True)
+        sys.exit(0)
+    if not os.path.exists(stamp):
+        sys.exit(f"cannot publish plane snapshot at {root}")
+shutil.rmtree(stage, ignore_errors=True)
+PYPUBLISH
 fi
 # A ref older than this launcher resolves helpers against the wrong root —
 # its entry scripts would cd into the snapshot itself. Refuse, don't guess.
@@ -100,13 +141,38 @@ fi
 if [ -f "$APP/.swbp" ]; then
   # Builder-targeted app: its commits gate through the pinned snapshot's
   # hooks. Untracked config — nothing lands in the app's history.
+  # D-201: core.hooksPath points at small shims inside the app's own git dir,
+  # not into the cache. git silently runs NO hooks when hooksPath is missing,
+  # so a purged cache used to leave every commit ungated; a shim survives the
+  # purge and refuses until any swbp entry re-materializes the snapshot.
+  hook_dir="$(git -C "$APP" rev-parse --absolute-git-dir)/swbp-hooks"
+  mkdir -p "$hook_dir"
+  for hook in "$ROOT"/.githooks/*; do
+    [ -f "$hook" ] || continue
+    name="$(basename "$hook")"
+    cat > "$hook_dir/$name.tmp.$$" <<SHIM
+#!/bin/sh
+# swbp hook shim (D-201): forwards to the pinned plane snapshot. Written by
+# scripts/swbp into .git, so a cache purge cannot remove it.
+target='$hook'
+if [ ! -x "\$target" ]; then
+  echo "swbp: plane snapshot missing (\$target) — rerun any 'swbp <cmd> --app <this repo>' to restore it; refusing to run ungated" >&2
+  exit 1
+fi
+exec "\$target" "\$@"
+SHIM
+    chmod +x "$hook_dir/$name.tmp.$$"
+    mv "$hook_dir/$name.tmp.$$" "$hook_dir/$name"
+  done
+  [ -x "$ROOT/.githooks/pre-commit" ] && [ -x "$hook_dir/pre-commit" ] \
+    || die "hooks missing in the plane snapshot $ROOT — refusing to continue ungated"
   # A linked worktree shares .git/config with its main checkout — writing
   # there would re-point the MAIN checkout's hooks too. Scope it per worktree.
   if [ "$(git -C "$APP" rev-parse --git-dir)" != "$(git -C "$APP" rev-parse --git-common-dir)" ]; then
     git -C "$APP" config extensions.worktreeConfig true
-    git -C "$APP" config --worktree core.hooksPath "$ROOT/.githooks"
+    git -C "$APP" config --worktree core.hooksPath "$hook_dir"
   else
-    git -C "$APP" config core.hooksPath "$ROOT/.githooks"
+    git -C "$APP" config core.hooksPath "$hook_dir"
   fi
 fi
 if [ "$CMD" = orchestrate ]; then

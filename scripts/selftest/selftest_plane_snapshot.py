@@ -538,11 +538,14 @@ def test_swbp_runs_a_builder_step_against_a_plane_less_app(tmp_path):
     assert (app / ".tpm" / "view" / "contracts.json").is_file()
     # nothing of the plane landed in the app
     assert sorted(p.name for p in (app / "scripts").iterdir()) == [".approved"]
-    # hooks come from the pinned snapshot, via untracked config
+    # hooks come from the pinned snapshot, via untracked config: D-201 points
+    # hooksPath at shims inside the app's .git that forward to the snapshot
     hp = subprocess.run(["git", "-C", str(app), "config", "core.hooksPath"],
                         capture_output=True, text=True).stdout.strip()
-    assert hp == str(tmp_path / "cache" / "swbp-plane" / new / ".githooks")
-    assert Path(hp, "pre-commit").is_file()
+    assert Path(hp) == (app / ".git" / "swbp-hooks").resolve()
+    snap_hook = tmp_path / "cache" / "swbp-plane" / new / ".githooks" / "pre-commit"
+    assert snap_hook.is_file()
+    assert f"target='{snap_hook}'" in Path(hp, "pre-commit").read_text()
 
 
 def test_swbp_refuses_a_ref_that_predates_it(tmp_path):
@@ -873,4 +876,92 @@ def test_swbp_in_a_worktree_leaves_the_main_checkouts_hooks_alone(tmp_path):
                               capture_output=True, text=True).stdout.strip()
 
     assert hp(main) == ".githooks"
-    assert hp(wt).endswith(f"swbp-plane/{new}/.githooks")
+    wt_gitdir = subprocess.run(["git", "-C", str(wt), "rev-parse", "--absolute-git-dir"],
+                               capture_output=True, text=True, check=True).stdout.strip()
+    assert hp(wt) == f"{wt_gitdir}/swbp-hooks"
+    assert f"swbp-plane/{new}/.githooks/pre-commit'" in Path(hp(wt), "pre-commit").read_text()
+
+# --- D-201: snapshot publication is atomic; hooks survive a purged cache ---
+
+def _populate_unstamped(root: Path, builder: Path, sha: str) -> None:
+    """Model ANOTHER launcher mid-publication: a complete extraction that is
+    not stamped yet, plus a marker the test can watch for deletion."""
+    root.mkdir(parents=True)
+    arch = subprocess.run(["git", "-C", str(builder), "archive", sha],
+                          capture_output=True, check=True).stdout
+    subprocess.run(["tar", "-x", "-C", str(root)], input=arch, check=True)
+    (root / "IN-PROGRESS-BY-OTHER").write_text("x")
+
+
+def _stamp_later(root: Path, delay: float) -> subprocess.Popen:
+    return subprocess.Popen(
+        ["sh", "-c", f'sleep {delay}; : > "{root}/.swbp-plane-stamped"'])
+
+
+def test_swbp_never_deletes_a_snapshot_another_launcher_is_publishing(tmp_path):
+    builder, _old, new = _builder_repo(tmp_path)
+    app = _swbp_app(tmp_path, new)
+    root = tmp_path / "cache" / "swbp-plane" / new
+    _populate_unstamped(root, builder, new)
+    other = _stamp_later(root, 1.5)
+    r = _run_swbp(builder, tmp_path, "tpm-view", "--app", str(app))
+    other.wait()
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert (root / "IN-PROGRESS-BY-OTHER").exists(), \
+        "an unstamped snapshot another launcher was publishing was deleted"
+    assert (root / ".swbp-plane-stamped").exists()
+
+
+def test_swbp_replaces_a_stale_unstamped_leftover(tmp_path):
+    builder, _old, new = _builder_repo(tmp_path)
+    app = _swbp_app(tmp_path, new)
+    root = tmp_path / "cache" / "swbp-plane" / new
+    root.mkdir(parents=True)
+    (root / "half-written").write_text("crash leftover")
+    env_wait = {"SWBP_PLANE_PUBLISH_WAIT": "1"}
+    env = {**os.environ, "XDG_CACHE_HOME": str(tmp_path / "cache"), **env_wait}
+    r = subprocess.run([str(builder / "scripts" / "swbp"), "tpm-view", "--app", str(app)],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert (root / ".swbp-plane-stamped").exists()
+    assert (root / "scripts" / "swbp").is_file()
+    assert not (root / "half-written").exists()
+
+
+def test_guard_never_deletes_a_snapshot_another_launcher_is_publishing(tmp_path):
+    plane = FakePlane(tmp_path / "plane-a")
+    pin = plane.head
+    (tmp_path / "a").mkdir()
+    child = make_child(tmp_path / "a", pin, plane.root)
+    root = child / "_cache" / "swbp-plane" / pin
+    _populate_unstamped(root, plane.root, pin)
+    other = _stamp_later(root, 1.5)
+    r = run_guard(child)
+    other.wait()
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert (root / "IN-PROGRESS-BY-OTHER").exists(), \
+        "an unstamped snapshot another launcher was publishing was deleted"
+
+
+def test_swbp_hooks_refuse_when_the_snapshot_is_purged(tmp_path):
+    """git silently runs NO hooks when core.hooksPath points at a missing
+    directory. After a cache purge, a commit must be refused, not ungated;
+    the next swbp entry restores gating."""
+    builder, _old, new = _builder_repo(tmp_path)
+    app = _swbp_app(tmp_path, new)
+    env = {**os.environ, **IDENT}
+    subprocess.run(["git", "-C", str(app), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(app), "-c", "core.hooksPath=/dev/null",
+                    "commit", "-qm", "seed"], check=True, env=env)
+    assert _run_swbp(builder, tmp_path, "tpm-view", "--app", str(app)).returncode == 0
+    shutil.rmtree(tmp_path / "cache" / "swbp-plane" / new)
+    (app / "notes.md").write_text("hand edit\n")
+    subprocess.run(["git", "-C", str(app), "add", "notes.md"], check=True, env=env)
+    r = subprocess.run(["git", "-C", str(app), "commit", "-qm", "ungated?"],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode != 0, "commit went through with the plane snapshot purged"
+    assert "snapshot missing" in r.stderr, r.stderr
+    assert _run_swbp(builder, tmp_path, "tpm-view", "--app", str(app)).returncode == 0
+    r = subprocess.run(["git", "-C", str(app), "commit", "-qm", "gated again"],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, (r.stdout, r.stderr)

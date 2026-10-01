@@ -85,6 +85,49 @@ _plane_hash_file() {  # portable SHA-256 for the installed-plane fallback
     die "no sha256sum or shasum found — cannot verify the installed plane"
   fi
 }
+_plane_publish() { # _plane_publish <stage> <root> — D-201 atomic publication
+  # A snapshot is published by ONE rename of a complete, stamped stage dir;
+  # a published root is never deleted or rewritten. A launcher that loses the
+  # rename waits for the winner's stamp and discards its own stage. A root
+  # that stays unstamped past the wait is an abandoned leftover: it is
+  # renamed aside (never deleted in place), then the stage is published.
+  python3 - "$1" "$2" "${SWBP_PLANE_PUBLISH_WAIT:-30}" <<'PYPUBLISH'
+import os
+import shutil
+import sys
+import time
+
+stage, root, wait = sys.argv[1], sys.argv[2], float(sys.argv[3])
+stamp = os.path.join(root, ".swbp-plane-stamped")
+
+
+def rename() -> bool:
+    try:
+        os.rename(stage, root)
+        return True
+    except OSError:
+        return False
+
+
+if rename():
+    sys.exit(0)
+deadline = time.time() + wait
+while not os.path.exists(stamp) and time.time() < deadline:
+    time.sleep(0.2)
+if not os.path.exists(stamp):
+    aside = f"{root}.stale.{os.getpid()}"
+    try:
+        os.rename(root, aside)
+    except OSError:
+        pass
+    if rename():
+        shutil.rmtree(aside, ignore_errors=True)
+        sys.exit(0)
+    if not os.path.exists(stamp):
+        sys.exit(f"cannot publish plane snapshot at {root}")
+shutil.rmtree(stage, ignore_errors=True)
+PYPUBLISH
+}
 _plane_snapshot_from_installed() { # normal update-template child: copied files
   local root="$1" manifest="scripts/.manifest-template"
   local stage expected path extra actual
@@ -110,15 +153,14 @@ _plane_snapshot_from_installed() { # normal update-template child: copied files
   mkdir -p "$stage/scripts"
   cp -p "$manifest" "$stage/scripts/.manifest-template"
   : > "$stage/.swbp-plane-stamped"
-  rm -rf "$root"
-  mv "$stage" "$root"
+  _plane_publish "$stage" "$root" || die "could not publish the plane snapshot at $root"
 }
 plane_entry_guard() { # runs BEFORE first mutation; execs or falls through
   if [ -n "${SWBP_PLANE_SNAPSHOT:-}" ]; then
     PLANE_DIR="$(cd "$(dirname "$(_plane_self "${BASH_SOURCE[0]}")")/.." && pwd -P)"
     return 0
   fi
-  local pin repo project_repo head root prev repo_has_pin=0
+  local pin repo project_repo head root prev stage repo_has_pin=0
   # Locate the blueprint repository this script was reached through (children
   # reach it via symlink; direct checkouts reach themselves).
   repo="$(git -C "$(dirname "$(_plane_self "${BASH_SOURCE[0]}")")" rev-parse --show-toplevel 2>/dev/null || true)"
@@ -136,10 +178,12 @@ plane_entry_guard() { # runs BEFORE first mutation; execs or falls through
   root="${XDG_CACHE_HOME:-$HOME/.cache}/swbp-plane/$pin"
   if [ ! -f "$root/.swbp-plane-stamped" ]; then
     if [ "$repo_has_pin" = "1" ]; then
-      rm -rf "$root"
-      mkdir -p "$root"
-      git -C "$repo" archive "$pin" | tar -x -C "$root"
-      : > "$root/.swbp-plane-stamped"
+      stage="${root}.tmp.$$"
+      rm -rf "$stage"
+      mkdir -p "$stage"
+      git -C "$repo" archive "$pin" | tar -x -C "$stage"
+      : > "$stage/.swbp-plane-stamped"
+      _plane_publish "$stage" "$root" || die "could not publish the plane snapshot at $root"
     else
       # update-template installs ordinary files, not symlinks or blueprint git
       # objects. Their template manifest is the byte-level authority available
