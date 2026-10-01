@@ -9504,6 +9504,79 @@ def test_update_template_dry_run_works_with_staged_changes(template_pull_pair):
     assert _staged(child) == ["notes.txt"]
 
 
+def _clone_add_file(clone, rel, content, mode=0o644):
+    """Commit a file into the template clone and re-pin its manifest."""
+    path = clone / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    path.chmod(mode)
+    lines = []
+    for f in sorted({*(ln.split(None, 1)[1].strip() for ln in
+                       (clone / "scripts" / ".manifest-template").read_text().splitlines()
+                       if ln.strip()), rel}):
+        h = subprocess.run(["sha256sum", f], cwd=clone, capture_output=True,
+                           text=True, check=True).stdout.split()[0]
+        lines.append(f"{h}  {f}")
+    (clone / "scripts" / ".manifest-template").write_text("\n".join(lines) + "\n")
+    subprocess.run(["git", "add", "-A"], cwd=clone, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit",
+                    "-qm", f"add {rel}"], cwd=clone, check=True)
+
+
+def _diff_sha(child, clone):
+    r = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
+                 "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    line = [ln for ln in r.stdout.splitlines() if ln.startswith("DIFF-SHA:")]
+    assert line, r.stdout
+    return line[0].split()[1]
+
+
+def test_update_template_hidden_tail_of_new_file_changes_diff_sha(template_pull_pair):
+    """D-199: a new file is DISPLAYED abbreviated, but a change anywhere in it
+    must change the DIFF-SHA the approval binds to."""
+    child, clone = template_pull_pair
+    body = [f"echo line-{i}" for i in range(120)]
+    _clone_add_file(clone, "scripts/big.sh", "\n".join(body) + "\n")
+    first = _diff_sha(child, clone)
+    body[89] = "echo CHANGED-line-89"
+    _clone_add_file(clone, "scripts/big.sh", "\n".join(body) + "\n")
+    assert _diff_sha(child, clone) != first
+
+
+def test_update_template_large_new_file_reviews_cleanly(template_pull_pair):
+    """D-199: a large new file must not kill the review with a SIGPIPE from
+    an abbreviated display (`git show | head` under pipefail)."""
+    child, clone = template_pull_pair
+    _clone_add_file(clone, "scripts/huge.txt", ("x" * 99 + "\n") * 3000)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
+                 "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout[-400:], r.stderr[-400:])
+    assert "DIFF-SHA:" in r.stdout
+    assert "more lines not shown" in r.stdout
+
+
+def test_update_template_exec_bit_change_is_a_change(template_pull_pair):
+    """D-199: a template-side exec-bit flip with identical bytes is a real
+    change: it shows in the diff, changes the DIFF-SHA, and is applied."""
+    child, clone = template_pull_pair
+    (child / "scripts" / "hello.sh").write_bytes(
+        (clone / "scripts" / "hello.sh").read_bytes())
+    (child / "scripts" / "hello.sh").chmod(0o644)
+    (child / "scripts" / ".manifest-template").write_text(
+        (clone / "scripts" / ".manifest-template").read_text())
+    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture: same bytes, not executable"],
+                   cwd=child, check=True)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
+                 "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "scripts/hello.sh" in r.stdout and "DIFF-SHA:" in r.stdout, r.stdout
+    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert os.access(child / "scripts" / "hello.sh", os.X_OK)
+
+
 def test_update_template_commit_records_diff_sha_trailer(template_pull_pair):
     """D-193: the [template-update ...] commit must carry a
     Template-Diff-SHA: trailer equal to the DIFF-SHA the approval bound to —

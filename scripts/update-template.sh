@@ -175,15 +175,39 @@ sha256_of() {
 }
 CHANGED=""
 DIFF_TMP=$(mktemp)
+BLOB_TMP=$(mktemp)
+# D-199: abbreviated display of a new file. The blob is written to a file
+# first: `git show | head -40` under pipefail died with SIGPIPE (exit 141,
+# no output) on any blob larger than the pipe buffer. The display is
+# abbreviated; the binding is not — the template manifest pins the file's
+# full hash and the manifest diff is part of DIFF-SHA.
+show_new() {  # show_new <template-path>
+  local total
+  git -C "$CLONE" show "$TARGET:$1" > "$BLOB_TMP"
+  head -n 40 "$BLOB_TMP"
+  total=$(wc -l < "$BLOB_TMP" | tr -d ' ')
+  if [ "$total" -gt 40 ]; then
+    echo "($((total - 40)) more lines not shown — covered by DIFF-SHA via the manifest hash)"
+  fi
+}
+template_mode() { git -C "$CLONE" ls-tree "$TARGET" -- "$1" | awk '{print $1}'; }
+child_mode() { if [ -x "$1" ]; then echo 100755; else echo 100644; fi; }
 for f in $TFILES; do
   new_h=$(git -C "$CLONE" show "$TARGET:$f" | sha256_of)
   cur_h=$([ -f "$f" ] && sha256_of < "$f" || echo MISSING)
-  [ "$new_h" = "$cur_h" ] && continue
+  new_m=$(template_mode "$f")
+  cur_m=$([ -f "$f" ] && child_mode "$f" || echo MISSING)
+  # D-199: an exec-bit flip with identical bytes is a change too — it is
+  # shown, hashed into DIFF-SHA, and applied.
+  [ "$new_h" = "$cur_h" ] && [ "$new_m" = "$cur_m" ] && continue
   CHANGED="$CHANGED $f"
   {
     echo ""
     echo "--- $f ---"
-    if [ -f "$f" ]; then
+    [ "$cur_m" = MISSING ] || [ "$new_m" = "$cur_m" ] || echo "mode change: $cur_m -> $new_m"
+    if [ "$new_h" = "$cur_h" ]; then
+      :
+    elif [ -f "$f" ]; then
       # -L labels replace diff's filename+TIMESTAMP headers: the stdin side
       # would otherwise be stamped with the current time, making the diff
       # text — and therefore DIFF-SHA — different on every invocation, so no
@@ -192,7 +216,7 @@ for f in $TFILES; do
       git -C "$CLONE" show "$TARGET:$f" | diff -u -L "$f (child)" -L "$f (template@${TARGET:0:12})" "$f" - || true
     else
       echo "(new file from template)"
-      git -C "$CLONE" show "$TARGET:$f" | head -40
+      show_new "$f"
     fi
   } >> "$DIFF_TMP"
 done
@@ -214,7 +238,7 @@ if [ "$new_m" != "$cur_m" ]; then
       git -C "$CLONE" show "$TARGET:scripts/.manifest-template" | diff -u -L "scripts/.manifest-template (child)" -L "scripts/.manifest-template (template@${TARGET:0:12})" scripts/.manifest-template - || true
     else
       echo "(new manifest from template)"
-      git -C "$CLONE" show "$TARGET:scripts/.manifest-template" | head -40
+      show_new scripts/.manifest-template
     fi
   } >> "$DIFF_TMP"
 fi
@@ -368,8 +392,7 @@ fi
 for f in $CHANGED; do
   mkdir -p "$(dirname "$f")"
   git -C "$CLONE" show "$TARGET:$f" > "$f"
-  mode=$(git -C "$CLONE" ls-tree "$TARGET" -- "$f" | awk '{print $1}')
-  [ "$mode" = "100755" ] && chmod +x "$f"
+  if [ "$(template_mode "$f")" = "100755" ]; then chmod +x "$f"; else chmod -x "$f"; fi
 done
 git -C "$CLONE" show "$TARGET:scripts/.manifest-template" > scripts/.manifest-template
 

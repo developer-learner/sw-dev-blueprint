@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-199 — 2026-10-01 — Template review survives large new files; exec-bit changes are real changes (security plan item 6b)
+
+**Decision:** (1) `update-template.sh` writes a new file's blob to a temp file before showing its first 40 lines, and says how many lines are not shown. `git show | head -40` under `pipefail` died with SIGPIPE — exit 141, no output at all — on any new file larger than the pipe buffer, so `--dry-run` and every apply failed silently. (2) A template-side exec-bit change with identical bytes now counts as a change: it is listed as `mode change: A -> B`, it is part of DIFF-SHA, and the apply sets or clears the bit to match the template. Before, such a file was reported as "already matches" and never synced.
+
+**Alternatives considered:** Hashing every new file's full bytes into DIFF-SHA separately — not needed: the premise was tested and found wrong. The template manifest pins each file's full SHA-256 and the manifest diff is already in DIFF-SHA, so a change in a hidden tail already changes the token (`test_update_template_hidden_tail_of_new_file_changes_diff_sha` passed before any change and stays as a regression guard). The post-apply `phase-gate.sh manifest HEAD` then verifies the installed bytes against those hashes.
+
+**Reason:** Both were reproduced before the fix (exit 141 on a 300 KB file; a mode-only change ignored).
+
+**Do not suggest:** re-piping `git show` into `head`; treating mode-only drift as "in sync".
+
 ## D-198 — 2026-10-01 — The template updater refuses while unrelated changes are staged (security plan item 9)
 
 **Decision:** Before any write — the stamp, ref-advance-only and apply paths — `update-template.sh` checks `git diff --cached`; if anything is staged it dies, listing the staged paths, and leaves the index exactly as it was. `--dry-run` and `--review` are unaffected. `swbp_commit` itself is unchanged: other callers legitimately commit what they staged.
