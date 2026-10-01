@@ -93,7 +93,9 @@ Podman becomes native.
    `~/dev/testchat`, `~/dev/rich-adoption`), never `~/dev` wholesale — every
    other project under `~/dev` (some hold `.env` secrets) is deliberately not
    mounted. Copy-in/copy-out remains the scheduled stronger fix; the narrowed
-   live mount is the interim boundary.
+   live mount is the interim boundary. VM-side helpers that used to live
+   elsewhere under `~/dev` moved into this repo (`lima/splash-relay.py`, the
+   VM's relay to the host Splash server).
 
 ## What NOT to change
 
