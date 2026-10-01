@@ -26,7 +26,7 @@ HARNESS = r'''
 set -euo pipefail
 REPO="$1"; PAR="$2"; SCENARIO="$3"
 mkdir -p scripts/.approved .opencode/prompts calls running
-cp "$REPO/scripts/apply-edit-blocks.py" "$REPO/scripts/check-swallowed-errors.py" scripts/
+cp "$REPO/scripts/source_paths.py" "$REPO/scripts/apply-edit-blocks.py" "$REPO/scripts/check-swallowed-errors.py" scripts/
 : > .opencode/prompts/coder.md
 
 # Fake coder: 1 s per call; records peak concurrency and the target file.
@@ -51,12 +51,12 @@ chmod +x scripts/phase-gate.sh
 # Plan: T1, T2, T3 independent; T3's file is declared no-edit.
 cat > plan.json <<'JSON'
 {"tasks": [
-  {"id": "T1", "file": "a.py", "depends_on": [], "brief": "make a"},
-  {"id": "T2", "file": "b.py", "depends_on": [], "brief": "make b"},
-  {"id": "T3", "file": "c.py", "depends_on": [], "brief": "make c"}
+  {"id": "T1", "file": "src/a.py", "depends_on": [], "brief": "make a"},
+  {"id": "T2", "file": "src/b.py", "depends_on": [], "brief": "make b"},
+  {"id": "T3", "file": "src/c.py", "depends_on": [], "brief": "make c"}
 ]}
 JSON
-echo '{"no_edit_files": ["c.py"]}' > scripts/.approved/contracts.json
+echo '{"no_edit_files": ["src/c.py"]}' > scripts/.approved/contracts.json
 cat > scripts/validate-plan.py <<'PY'
 import json, sys
 a = sys.argv[1:]
@@ -102,24 +102,24 @@ take() {  # the DAG loop's sequence for one task: brief, launch others, code
 
 case "$SCENARIO" in
   overlap)
-    take T1 a.py
-    take T2 b.py ;;
+    take T1 src/a.py
+    take T2 src/b.py ;;
   mismatch)
-    brief=$(task_attempt_brief T1 a.py); prefetch_launch T1
+    brief=$(task_attempt_brief T1 src/a.py); prefetch_launch T1
     # T2's brief is revised after its prefetch started: the prompt differs.
     printf 'make b differently\n' > "$BRIEF_DIR/T2"; printf '7\n' > "$BRIEF_DIR/T2.spec_version"
-    run_coder T1 a.py "$brief" 1; set_tstat T1 done
-    take T2 b.py ;;
+    run_coder T1 src/a.py "$brief" 1; set_tstat T1 done
+    take T2 src/b.py ;;
   retry)
     printf '1\n' > "$TASK_STATE/T2.strikes"
-    take T1 a.py ;;
+    take T1 src/a.py ;;
 esac
 prefetch_reap
 echo "CALLS=$(wc -l < calls/targets | tr -d ' ')"
 echo "PEAK=$(sort -n calls/concurrency | tail -1)"
 echo "TARGETS=$(tr '\n' ',' < calls/targets)"
 echo "REUSED=$(grep -c 'prefetched reply reused' marks 2>/dev/null || echo 0)"
-echo "FILES=$(ls a.py b.py c.py 2>/dev/null | tr '\n' ',')"
+echo "FILES=$(ls src/a.py src/b.py src/c.py 2>/dev/null | tr '\n' ',')"
 '''
 
 
@@ -141,18 +141,18 @@ def test_ready_tasks_are_coded_concurrently_and_the_reply_is_reused(tmp_path):
     # called a second time; T3 (no-edit) was never sent to the coder.
     assert out["PEAK"] == "2"
     assert out["CALLS"] == "2"
-    assert sorted(out["TARGETS"].strip(",").split(",")) == ["a.py", "b.py"]
+    assert sorted(out["TARGETS"].strip(",").split(",")) == ["src/a.py", "src/b.py"]
     assert out["REUSED"] == "1"
-    assert out["FILES"] == "a.py,b.py,"
+    assert out["FILES"] == "src/a.py,src/b.py,"
 
 
 def test_a_changed_prompt_discards_the_prefetch_and_calls_fresh(tmp_path):
     out = _run(tmp_path, 4, "mismatch")
-    # Prefetch for b.py was made with the OLD brief; run_coder built a
-    # different prompt, so the reply was discarded and b.py called again.
+    # Prefetch for src/b.py was made with the OLD brief; run_coder built a
+    # different prompt, so the reply was discarded and src/b.py called again.
     assert out["CALLS"] == "3"
     assert out["REUSED"] == "0"
-    assert out["FILES"] == "a.py,b.py,"
+    assert out["FILES"] == "src/a.py,src/b.py,"
 
 
 def test_default_setting_never_prefetches(tmp_path):
@@ -166,7 +166,7 @@ def test_retried_tasks_are_not_prefetched(tmp_path):
     out = _run(tmp_path, 4, "retry")
     # T2 already has a strike: its next prompt carries the failure feedback,
     # so it is left to the sequential path.
-    assert out["TARGETS"] == "a.py,"
+    assert out["TARGETS"] == "src/a.py,"
     assert out["PEAK"] == "1"
 
 

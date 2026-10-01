@@ -24,6 +24,15 @@ designed D-176) + T11 rich-adoption (Phase 0 done D-175, v1 spec drafting)
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-09-30: **Security plan items 1–3 + 11 landed (D-189/D-190), committed 2026-10-01 as three commits (item 11 sandbox; items 1+2; item 3).**
+      Host cache access refuses symlinks; test verdicts cross-check runner status,
+      report consistency, and exact frozen coverage; plan/create/edit paths enforce
+      source containment through actual filesystem writes. Sandbox hardening (item 11) is its own
+      commit; its pids cap still needs one live check in the dev VM. Hostile in-process pytest can
+      still forge both a report and its exit status; oracle isolation remains future
+      work. Guard authority and template approval are separate outstanding items.
+      Validation: 670 control-plane selftests passed; scripts lint, shell syntax,
+      manifest, and documentation checks passed. No live VM milestone was run.
 - 2026-09-22: **D-186 central builder approved; stage A landed.** Entry
       scripts (orchestrate, refreeze, tpm-pack/agent/view, em-bench) resolve
       plane files from the plane root, app files from cwd. Side fix:

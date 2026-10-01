@@ -30,6 +30,8 @@ case "$ARM" in full|trimmed) ;; *) echo "drive-plan-live: ARM must be full or tr
 REPO=$(cd "$(dirname "$0")/../.." && pwd -P)
 
 cd "$WORK"
+mkdir -p scripts
+cp "$REPO/scripts/source_paths.py" scripts/
 [ -f scripts/.approved/VERSION ] || { echo "drive-plan-live: no scripts/.approved/VERSION in $WORK" >&2; exit 64; }
 mkdir -p scripts/schemas tasks .opencode/prompts prompts
 cp "$REPO/scripts/validate-plan.py" scripts/

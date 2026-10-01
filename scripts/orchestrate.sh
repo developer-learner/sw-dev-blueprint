@@ -1406,6 +1406,8 @@ brief; transcribe it into working code immediately."
 
 run_coder() {
   local id="$1" file="$2" brief="$3" attempt="$4"
+  python3 "$PLANE_DIR/scripts/source_paths.py" "$file" \
+    || die "unsafe coder destination ($file) — hard halt before any model call or write"
   local phase_start; phase_start=$(git rev-parse HEAD)
   write_state phase task
   write_state task_target "$file"
@@ -1463,9 +1465,11 @@ run_coder() {
       write_state phase ""
       return 1
     fi
-  elif ! CODER_EVIDENCE=$(python3 - "$file" "$LOG_DIR/$id-a$attempt.raw" "$LOG_DIR/$id-a$attempt.log" 2>&1 <<'PYEOF'
+  elif ! CODER_EVIDENCE=$(python3 - "$file" "$LOG_DIR/$id-a$attempt.raw" "$LOG_DIR/$id-a$attempt.log" "$PLANE_DIR/scripts" 2>&1 <<'PYEOF'
 import re, sys
 path, raw_path, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, sys.argv[4])
+from source_paths import write_source
 text = open(raw_path).read()
 m = re.search(r"^=== FILE: (.+?) ===\n(.*)\n=== END FILE ===$", text, re.M | re.S)
 if not m:
@@ -1499,8 +1503,10 @@ if got_path != path:
     sys.exit(f"coder wrote to '{got_path}', task named '{path}'")
 if not content.strip():
     sys.exit("coder reply block was empty")
-import os; os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-open(path, "w").write(content)
+try:
+    write_source(path, content)
+except (OSError, ValueError) as exc:
+    sys.exit(f"unsafe coder destination: {exc}")
 PYEOF
   ); then
     write_state phase ""

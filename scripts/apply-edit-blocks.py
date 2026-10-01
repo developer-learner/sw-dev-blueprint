@@ -23,6 +23,8 @@ Exit: 0 applied (or no-op) · 1 failure, reason on stderr, target untouched.
 import re
 import sys
 
+from source_paths import read_source, validate_source_path, write_source
+
 OPEN, SEP, CLOSE = "<<<<<<< SEARCH", "=======", ">>>>>>> REPLACE"
 NO_CHANGES = "=== NO CHANGES ==="
 
@@ -57,6 +59,10 @@ def main() -> None:
     if len(sys.argv) != 3:
         fail("usage: apply-edit-blocks.py <target-file> <raw-reply-file>")
     target, reply_path = sys.argv[1], sys.argv[2]
+    try:
+        validate_source_path(target)
+    except (OSError, ValueError) as exc:
+        fail(f"unsafe source destination: {exc}")
     raw = open(reply_path).read()
 
     no_changes_declared = bool(
@@ -86,7 +92,10 @@ def main() -> None:
                  "with SEARCH/REPLACE edit blocks (or === NO CHANGES ===) only")
         fail("reply contained no edit blocks and no NO-CHANGES line")
 
-    src = open(target).read()
+    try:
+        src = read_source(target)
+    except (OSError, ValueError) as exc:
+        fail(f"unsafe source destination: {exc}")
 
     # Uniqueness is validated against the ORIGINAL file — the one the coder
     # actually saw — for every block, before anything is applied. Checking
@@ -126,7 +135,10 @@ def main() -> None:
                 f"nothing written"
             )
 
-    open(target, "w").write(out)
+    try:
+        write_source(target, out)
+    except (OSError, ValueError) as exc:
+        fail(f"unsafe source destination: {exc}")
     print(f"applied {len(blocks)} edit block(s) to {target}")
 
 

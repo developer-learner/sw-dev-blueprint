@@ -36,6 +36,7 @@ def _load_validate_plan():
         "validate_plan_family_match", VALIDATE_PLAN)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    sys.path.insert(0, str(SCRIPTS))
     spec.loader.exec_module(module)
     return module
 

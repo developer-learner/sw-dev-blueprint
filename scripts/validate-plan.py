@@ -141,6 +141,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from source_paths import validate_source_path
+
 PLAN = Path("tasks/plan.json")
 APPROVED = Path("scripts/.approved")
 CONTRACTS = APPROVED / "contracts.json"
@@ -593,8 +595,10 @@ def validate():
             errs.append(f"{where}: id must match ^T[0-9]+$")
         ids.append(tid)
         f = t["file"]
-        if not isinstance(f, str) or not f.startswith(lane):
-            errs.append(f"{where}: file must be a path under the build lane {lane!r}: {f!r}")
+        try:
+            validate_source_path(f, lane)
+        except (OSError, ValueError) as exc:
+            errs.append(f"{where}: unsafe source destination: {exc}")
         files.append(f)
         if not isinstance(t["brief"], str) or not t["brief"].strip():
             errs.append(f"{where}: brief must be a non-empty string")

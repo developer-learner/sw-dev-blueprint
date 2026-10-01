@@ -34,6 +34,8 @@ BUDGET="${5:-}"
 REPO=$(cd "$(dirname "$0")/../.." && pwd -P)
 
 cd "$WORK"
+mkdir -p scripts
+cp "$REPO/scripts/source_paths.py" scripts/
 [ -f replies/1 ] || { echo "drive-coder: no replies/1 staged in $WORK" >&2; exit 64; }
 mkdir -p scripts/.approved .opencode/prompts prompts
 cp "$REPO/scripts/apply-edit-blocks.py" scripts/

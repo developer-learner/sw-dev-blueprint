@@ -1646,13 +1646,14 @@ TARGET_SRC = "line one\nline two\nline three\nline four\n"
 
 
 def run_apply(tmp_path, reply):
-    target = tmp_path / "target.py"
+    (tmp_path / "src").mkdir(exist_ok=True)
+    target = tmp_path / "src/target.py"
     target.write_text(TARGET_SRC)
     reply_f = tmp_path / "reply.raw"
     reply_f.write_text(reply)
     r = subprocess.run(
-        [sys.executable, str(APPLY_BLOCKS), str(target), str(reply_f)],
-        capture_output=True, text=True,
+        [sys.executable, str(APPLY_BLOCKS), "src/target.py", str(reply_f)],
+        cwd=tmp_path, capture_output=True, text=True,
     )
     return r, target.read_text()
 
@@ -1673,13 +1674,14 @@ def test_apply_missing_anchor_fails_closed(tmp_path):
 
 
 def test_apply_ambiguous_anchor_fails_closed(tmp_path):
-    target = tmp_path / "target.py"
+    (tmp_path / "src").mkdir(exist_ok=True)
+    target = tmp_path / "src/target.py"
     target.write_text("dup\nmid\ndup\n")
     reply_f = tmp_path / "reply.raw"
     reply_f.write_text("<<<<<<< SEARCH\ndup\n=======\nDUP\n>>>>>>> REPLACE\n")
     r = subprocess.run(
-        [sys.executable, str(APPLY_BLOCKS), str(target), str(reply_f)],
-        capture_output=True, text=True,
+        [sys.executable, str(APPLY_BLOCKS), "src/target.py", str(reply_f)],
+        cwd=tmp_path, capture_output=True, text=True,
     )
     assert r.returncode == 1
     assert "ambiguous" in r.stderr
@@ -1690,7 +1692,8 @@ def test_apply_ambiguity_checked_against_original_not_mutated_text(tmp_path):
     """Audit find 2026-07-11: an anchor ambiguous in the ORIGINAL file must
     fail even when an earlier block in the same reply consumes one of its
     occurrences and makes it look unique in the mutated text."""
-    target = tmp_path / "target.py"
+    (tmp_path / "src").mkdir(exist_ok=True)
+    target = tmp_path / "src/target.py"
     original = "dup\nmid\ndup\n"
     target.write_text(original)
     reply_f = tmp_path / "reply.raw"
@@ -1699,8 +1702,8 @@ def test_apply_ambiguity_checked_against_original_not_mutated_text(tmp_path):
         "<<<<<<< SEARCH\ndup\n=======\nDUP\n>>>>>>> REPLACE\n"
     )
     r = subprocess.run(
-        [sys.executable, str(APPLY_BLOCKS), str(target), str(reply_f)],
-        capture_output=True, text=True,
+        [sys.executable, str(APPLY_BLOCKS), "src/target.py", str(reply_f)],
+        cwd=tmp_path, capture_output=True, text=True,
     )
     assert r.returncode == 1
     assert "ambiguous" in r.stderr
@@ -1711,7 +1714,8 @@ def test_apply_overlapping_blocks_fail_closed(tmp_path):
     """Two blocks whose anchors are each unique in the original but consume
     each other's text (here: identical repeated blocks) must abort with the
     target untouched, not half-apply."""
-    target = tmp_path / "target.py"
+    (tmp_path / "src").mkdir(exist_ok=True)
+    target = tmp_path / "src/target.py"
     original = "alpha\nbeta\ngamma\n"
     target.write_text(original)
     reply_f = tmp_path / "reply.raw"
@@ -1720,8 +1724,8 @@ def test_apply_overlapping_blocks_fail_closed(tmp_path):
         "<<<<<<< SEARCH\nbeta\n=======\nBETA2\n>>>>>>> REPLACE\n"
     )
     r = subprocess.run(
-        [sys.executable, str(APPLY_BLOCKS), str(target), str(reply_f)],
-        capture_output=True, text=True,
+        [sys.executable, str(APPLY_BLOCKS), "src/target.py", str(reply_f)],
+        cwd=tmp_path, capture_output=True, text=True,
     )
     assert r.returncode == 1
     assert "overlap" in r.stderr
@@ -1776,7 +1780,7 @@ def test_missing_contracts_is_usage_error(tmp_path):
     r = subprocess.run(
         [sys.executable, str(CHECK_SURFACE),
          "--tests-dir", str(tests_dir), "--contracts", str(tmp_path / "absent.json")],
-        capture_output=True, text=True,
+        cwd=tmp_path, capture_output=True, text=True,
     )
     assert r.returncode == 2
 
@@ -4971,7 +4975,7 @@ def test_plan_gate_brief_overflow_names_erd_mass(tmp_path):
 # --- refreeze.sh wires the preflight before approval (D-78) ------------------
 
 def refreeze_scripts(repo):
-    for name in ("validate-plan.py", "check-test-surface.py",
+    for name in ("validate-plan.py", "source_paths.py", "check-test-surface.py",
                  "check-swallowed-errors.py", "check-spec-delta.py",
                  "check-ac-postconditions.py", "check-test-direction.py",
                  "refreeze_delta.py", "contracts-merge.py",
@@ -6714,7 +6718,7 @@ def freezable_repo(tmp_path):
         "check-spec-delta.py",
         "check-ac-postconditions.py",
         "check-test-direction.py",
-        "validate-plan.py",
+        "validate-plan.py", "source_paths.py",
         "catch-ledger.py",
     ):
         target = tmp_path / "scripts" / name
@@ -6920,7 +6924,7 @@ def _install_refreeze_scripts(repo):
         "check-spec-delta.py",
         "check-ac-postconditions.py",
         "check-test-direction.py",
-        "validate-plan.py",
+        "validate-plan.py", "source_paths.py",
     ):
         target = repo / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())

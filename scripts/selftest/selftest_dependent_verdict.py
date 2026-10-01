@@ -8,6 +8,7 @@ orchestrate.sh's verdict block (driven through drive-verdict.sh).
 """
 
 import importlib.util
+import sys
 import json
 import os
 import re
@@ -22,6 +23,7 @@ def _vp():
     spec = importlib.util.spec_from_file_location("vp_dependent", SCRIPTS / "validate-plan.py")
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    sys.path.insert(0, str(SCRIPTS))
     spec.loader.exec_module(mod)
     return mod
 

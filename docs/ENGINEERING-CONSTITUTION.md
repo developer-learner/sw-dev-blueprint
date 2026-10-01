@@ -67,8 +67,8 @@ projections being coherent — which is why this canonical source exists.
 
 ## Where each principle is actually enforced (map, not aspiration)
 
-- **Structural (cannot be violated):** scope containment + one-file atomicity
-  (`phase-gate` INV-2, `validate-plan`); least-privilege/bounded work for the
+- **Structural within the trusted-host boundary:** scope containment + one-file atomicity
+  (`phase-gate` INV-2, `validate-plan`, `source_paths.py` at apply time, D-190); least-privilege/bounded work for the
   test run (`sandbox-run.sh`); test-observes-locked-surface (INV-4).
 - **Mechanically checked:** bare-except (ruff E722); silent-swallow
   (`check-swallowed-errors.py`, D-68); coverage floor; spec additivity/contract

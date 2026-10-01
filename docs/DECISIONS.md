@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-190 — 2026-09-30 — Source destination containment (security plan item 3)
+
+**Decision:** `source_paths.py` is shared by `validate-plan.py`, `run_coder`, and both coder write paths. Require canonical relative descendants of the configured build lane; refuse traversal and symlinked destinations or ancestors. Recheck at apply time and walk directory descriptors with `O_NOFOLLOW`. Write to an exclusive temporary file and atomically replace the destination, preserving existing permissions; a hard-linked destination cannot redirect the write into another file.
+
+**Reason:** A lexical `src/` prefix allowed `src/../tests/x.py`; a plan naming `src/link/x.py` could pass the lane gate while its host-side writer followed a link outside the lane. A post-write Git diff cannot prevent that write. Regression tests cover both entry-point checks and the actual filesystem operations, including a link introduced after initial validation.
+
+**Alternatives considered:** Resolve once at plan time — rejected because the path can change before apply. Reject hard links altogether — unnecessary for writes made by atomic replacement. The checkout root and lane configuration remain trusted host inputs; this does not defend against a malicious host moving an already-open directory outside the checkout.
+
+**Do not suggest:** Restoring prefix-only checks, following source symlinks, or using a direct truncating write after a one-time path check.
+
 ## D-189 — 2026-09-30 — Test verdict integrity and cache-symlink hardening (security plan items 1 and 2)
 
 **Decision:** The test report is untrusted input consumed by one host-side tool, `scripts/test-verdict.py`: it opens `.cache/test-report.json` without following symlinks (regular file, single link, ≤ 64 MiB), requires the report's `exitcode` to equal the runner status the host observed, requires summary counts to equal per-record counts, requires the reported node IDs to cover exactly the frozen `scripts/.approved/test-nodeids` set (or the selected subset), and requires every phase to be an ordinary pass; exit 3 (unavailable/inconsistent evidence) is never a green. Host-owned diagnostics move out of sandbox-writable storage: the red-check marker lives in `.pipeline-state` (blocklisted from `--rw`, read-only mount) instead of `.cache`, the red-check report is read no-follow, and the escalation bundle — which ships to the external web chat — copies the report via `test-verdict.py copy` (no-follow, `O_EXCL` temp + rename) instead of `cp`.
