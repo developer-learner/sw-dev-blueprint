@@ -66,6 +66,7 @@ TOKENS=(
   "through your y/N"                         # D-121: escalation routing
   "CEO approval"                             # D-121: removed approval step
   "approve.*the freeze"                      # D-121: removed approval step
+  "approval[- ]required by default"          # D-194: D-193's stop-by-default reversed
 )
 
 # CLAUDE.md embeds the correction log (historical table rows, verbatim).

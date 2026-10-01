@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-194 — 2026-10-01 — Template updates auto-apply again; a wrong --approve refuses before any mutation (security plan item 6, amends D-193)
+
+**Decision:** `update-template.sh` returns to the D-96 default: on green pre-diff checks the pull applies without a prompt. D-193's stop-and-print behavior becomes the opt-in `--require-approval`; `--auto` stays accepted as a no-op so existing invocations keep working. A supplied `--approve <sha>` is now verified before any mutation in every branch — previously the ref-advance-only branch ran ahead of the gate, so a wrong hash still rewrote `.template-version` and committed. D-193's `Template-Diff-SHA:` trailer on every `[template-update ...]` commit is kept unchanged.
+
+**Alternatives considered:** (a) Keep D-193's approval-required default — rejected by the CEO: a business owner is never asked to approve a technical diff, and an approval nobody can meaningfully read is the rubber stamp D-96 removed. (b) Gate auto-apply on a signature from the pinned provenance key — deferred with authenticated roles (security plan item 5); it is the machine check that would replace a human read if the template's trust ever needs defending. (c) Leave the ref-only branch ahead of the gate because it moves no code — rejected: a wrong hash must mean "nothing happens" in every branch, or the hash binding is not a binding.
+
+**Reason:** The threat model for this plan is a buggy local model, not a hostile one, and the template repo is the owner's own. The real defect in this area was the approval check's position, not the default.
+
+**Do not suggest:** restoring approval-required as the default; asking the CEO to read template diffs; removing the early hash check from the ref-only branch "because it only advances a ref".
+
 ## D-193 — 2026-10-01 — Template updates: approval-required default, recorded diff binding (security plan item 6)
 
 **Decision:** `update-template.sh` defaults to approval-required: the aggregate diff, the template's CLAIMS, and the DIFF-SHA are printed, nothing is applied, and the exact `--approve <sha>` command is shown. The D-96 auto-apply survives as opt-in `--auto`. A ref advance with no content or manifest changes still applies without approval (no code or control-plane input enters the child). Every `[template-update ...]` commit now carries a `Template-Diff-SHA:` trailer (via a new `SWBP_EXTRA_TRAILERS` hook in `swbp_commit`), so the byte-binding between an applied update and its reviewed diff lives in history, not just on the console.

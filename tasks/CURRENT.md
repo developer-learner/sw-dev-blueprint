@@ -24,13 +24,18 @@ designed D-176) + T11 rich-adoption (Phase 0 done D-175, v1 spec drafting)
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-01: **D-194 — template updates auto-apply again; wrong `--approve` refuses everywhere.**
+      The CEO ruled that a business owner is never asked to approve a
+      technical diff, so D-193's stop-by-default is reversed: the pull
+      applies automatically (D-96), `--require-approval` is the opt-in stop,
+      `--auto` is a compatibility no-op. A supplied `--approve` hash is now
+      verified before any mutation in every branch — the ref-advance-only
+      branch used to run ahead of the gate and committed on a wrong hash
+      (fail-before demonstrated). D-193's Template-Diff-SHA trailer stays.
 - 2026-10-01: **Security plan item 6 implemented (D-193), worktree `secplan-4-15`.**
-      Template updates are approval-required by default: the diff +
-      claims + DIFF-SHA print, nothing applies, and the exact --approve
-      command is shown. The D-96 auto-apply is now opt-in `--auto` (the
-      security-plan threat model does not assume the template repo is
-      trustworthy — the child's own gates are part of what the update
-      replaces). Every [template-update ...] commit records a
+      D-193 made template updates stop for approval by default (the diff +
+      claims + DIFF-SHA printed, nothing applied) with the D-96 auto-apply
+      behind `--auto`; superseded the same day by D-194. Every [template-update ...] commit records a
       Template-Diff-SHA: trailer (new SWBP_EXTRA_TRAILERS hook in
       swbp_commit). Validation: 682 control-plane selftests passed (680 +
       2 new); fail-before demonstrated (default auto-applied, no trailer).

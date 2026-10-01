@@ -9326,16 +9326,17 @@ def template_pull_pair(tmp_path):
     return child, clone
 
 
-def test_update_template_auto_flag_applies_without_terminal(template_pull_pair):
-    """--auto (opt-in D-96) applies the pull without a tty and prints the
-    audit line. Verifies the [template-update ...] commit lands (real apply,
-    not a dry-run degrade) and phase-gate integrity holds post-apply."""
+def test_update_template_default_applies_without_terminal(template_pull_pair):
+    """D-194: no mode flag, no tty — the pull applies (the D-96 default,
+    restored) and prints the audit line. Verifies the [template-update ...]
+    commit lands (real apply, not a dry-run degrade) and phase-gate
+    integrity holds post-apply."""
     child, clone = template_pull_pair
-    r = _run_ut(["bash", "scripts/update-template.sh", "--auto",
+    r = _run_ut(["bash", "scripts/update-template.sh",
                  "--from", str(clone)], child)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "auto-approved (D-96, via --auto)" in r.stdout, r.stdout
-    # The rubber-stamp prompt must not print in auto mode.
+    assert "auto-approved (D-96)" in r.stdout, r.stdout
+    # The rubber-stamp prompt must not print in the default auto mode.
     assert "Apply this template update?" not in r.stdout, r.stdout
     # A real commit landed — not a dry-run degrade.
     log = subprocess.run(
@@ -9347,20 +9348,20 @@ def test_update_template_auto_flag_applies_without_terminal(template_pull_pair):
     assert "new-content" in (child / "scripts" / "hello.sh").read_text()
 
 
-def test_update_template_default_requires_approval(template_pull_pair):
-    """D-193: no mode flag, no tty — the pull must NOT apply. The diff,
-    claims, and DIFF-SHA print; the exact --approve command is shown; no
-    commit lands and the child's file is untouched. Before D-193 (D-96
-    default) this same invocation auto-applied."""
+def test_update_template_require_approval_prints_and_stops(template_pull_pair):
+    """D-194: --require-approval (the D-193 default, now opt-in) — the pull
+    must NOT apply. The diff, claims, and DIFF-SHA print; the exact
+    --approve command is shown; no commit lands and the child's file is
+    untouched."""
     child, clone = template_pull_pair
     before = subprocess.run(
         ["git", "log", "-1", "--format=%H"], cwd=child,
         capture_output=True, text=True, check=True,
     ).stdout.strip()
-    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)],
-                child)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--require-approval",
+                 "--from", str(clone)], child)
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "approval required (D-193)" in r.stdout, r.stdout
+    assert "approval required" in r.stdout, r.stdout
     assert "--approve" in r.stdout, r.stdout
     assert "DIFF-SHA" in r.stdout, r.stdout
     # Nothing applied: no new commit, file still old content.
@@ -9368,8 +9369,77 @@ def test_update_template_default_requires_approval(template_pull_pair):
         ["git", "log", "-1", "--format=%H"], cwd=child,
         capture_output=True, text=True, check=True,
     ).stdout.strip()
-    assert before == after, "default mode must not commit"
+    assert before == after, "--require-approval must not commit"
     assert "old-content" in (child / "scripts" / "hello.sh").read_text()
+
+
+def test_update_template_wrong_approve_refuses_ref_only(template_pull_pair):
+    """D-194: in the ref-advance-only case (content + manifest already
+    match, only the recorded ref is stale) a wrong --approve hash must die
+    before ANY mutation: .template-version unchanged, HEAD unchanged.
+    Before the fix the ref-only branch ran BEFORE the approval gate, so a
+    wrong hash still advanced the ref and committed."""
+    child, clone = template_pull_pair
+    # Sync content AND manifest to the template so only the ref differs.
+    (child / "scripts" / "hello.sh").write_bytes(
+        (clone / "scripts" / "hello.sh").read_bytes())
+    (child / "scripts" / ".manifest-template").write_text(
+        (clone / "scripts" / ".manifest-template").read_text())
+    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "fixture: content matches, ref stale"],
+        cwd=child, check=True)
+    before_version = (child / ".template-version").read_text()
+    before_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    r = _run_ut(["bash", "scripts/update-template.sh",
+                 "--approve", "0" * 64, "--from", str(clone)], child)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "approval hash mismatch" in r.stderr, r.stderr
+    assert (child / ".template-version").read_text() == before_version, \
+        "a rejected approval hash must not advance the ref"
+    after_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert after_head == before_head, \
+        "a rejected approval hash must commit nothing"
+
+
+def test_update_template_wrong_approve_refuses_manifest_only(template_pull_pair):
+    """D-194: in the manifest-verbatim case (content matches, only the
+    template's file list changed) a wrong --approve hash must die before
+    ANY mutation: the child manifest unchanged, HEAD unchanged. Guards the
+    hash check's position in the manifest-verbatim branch (the gate was
+    already above it; this pins that it stays there)."""
+    child, clone = template_pull_pair
+    (child / "scripts" / "hello.sh").write_bytes(
+        (clone / "scripts" / "hello.sh").read_bytes())
+    (child / "scripts" / ".manifest-template").write_text(
+        "0" * 64 + "  scripts/hello.sh\n")
+    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "fixture: content matches, manifest stale"],
+        cwd=child, check=True)
+    before_manifest = (child / "scripts" / ".manifest-template").read_text()
+    before_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    r = _run_ut(["bash", "scripts/update-template.sh",
+                 "--approve", "0" * 64, "--from", str(clone)], child)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "approval hash mismatch" in r.stderr, r.stderr
+    assert (child / "scripts" / ".manifest-template").read_text() == \
+        before_manifest, "a rejected approval hash must not install the manifest"
+    after_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=child,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert after_head == before_head, \
+        "a rejected approval hash must commit nothing"
 
 
 def test_update_template_commit_records_diff_sha_trailer(template_pull_pair):
@@ -9443,7 +9513,7 @@ def test_update_template_applies_removal_only_update(template_pull_pair):
     )
 
     r = _run_ut(
-        ["bash", "scripts/update-template.sh", "--auto", "--from", str(clone)],
+        ["bash", "scripts/update-template.sh", "--from", str(clone)],
         child)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "scripts/obsolete.sh" in r.stdout
@@ -9485,7 +9555,7 @@ def test_update_template_manifest_only_drift(template_pull_pair):
     )
 
     r = _run_ut(
-        ["bash", "scripts/update-template.sh", "--auto", "--from", str(clone)],
+        ["bash", "scripts/update-template.sh", "--from", str(clone)],
         child)
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert repr(r.stdout).find("(manifest verbatim)") != -1, r.stdout

@@ -11,7 +11,7 @@
 # Usage:
 #   update-template.sh [--from <clone-dir>] [--ref <ref>] [--dry-run] [--review]
 #   update-template.sh --approve <sha> [--from <clone-dir>] [--ref <ref>]
-#   update-template.sh --auto [--from <clone-dir>] [--ref <ref>]
+#   update-template.sh --require-approval [--from <clone-dir>] [--ref <ref>]
 #   update-template.sh --interactive [--from <clone-dir>] [--ref <ref>]
 #   update-template.sh --stamp [--from <clone-dir>]
 #
@@ -35,22 +35,24 @@
 #              opt-in y/N prompt (the pre-D-96 default). For the rare case
 #              where the operator wants to eyeball this specific pull before
 #              it applies. Requires a terminal.
-#   --auto     opt-in D-96 behavior: on all pre-diff checks green (clone
-#              resolvable, template manifest present, diff computable), the
-#              pull applies without a prompt. The D-193 security-plan threat
-#              model does not assume the template repo is trustworthy (a
-#              compromised template commit flows into every child on the
-#              next update, and the child's own gates are part of what is
-#              being replaced), so auto-apply is no longer the default.
+#   --require-approval
+#              opt-in stop (the D-193 default, made opt-in by D-194): print
+#              the diff, the CLAIMS and the DIFF-SHA plus the exact --approve
+#              command, apply nothing. A ref advance with no content or
+#              manifest change still applies (no code enters the child).
+#   --auto     accepted for compatibility; a no-op (auto is the default).
 #   --stamp    only (re)write ref= in .template-version to the template's HEAD —
 #              retrofits a child created before D-33. No files are copied.
 #
-# Default is approval-required (D-193): the diff, the template's CLAIMS, and
-# the DIFF-SHA are printed, nothing is applied, and the exact --approve
-# command is shown. A ref advance with no content or manifest changes still
-# applies (no code or control-plane input enters the child). Every
-# [template-update ...] commit records a Template-Diff-SHA: trailer binding
-# the applied bytes to the reviewed diff (D-193).
+# Default is auto (D-96, restored by D-194): on all pre-diff checks green
+# (clone resolvable, template manifest present, diff computable), the pull
+# applies without a prompt. A business owner is never asked to approve a
+# technical diff; the material verdicts are the template's own selftests
+# upstream and the post-apply `phase-gate.sh manifest HEAD` downstream.
+# A supplied --approve hash is checked BEFORE any mutation in every branch,
+# ref-advance-only included (D-194). Every [template-update ...] commit
+# records a Template-Diff-SHA: trailer binding the applied bytes to the diff
+# (D-193).
 set -euo pipefail
 
 # Self-update safety: this script is itself template-owned, so an update can
@@ -85,7 +87,7 @@ if [ -f .template-link ]; then
   exec bash "$_linked_abs/scripts/link-template.sh" "$@"
 fi
 
-FROM=""; REF=""; DRY=0; STAMP=0; REVIEW=0; APPROVE=""; INTERACTIVE=0; AUTO=0
+FROM=""; REF=""; DRY=0; STAMP=0; REVIEW=0; APPROVE=""; INTERACTIVE=0; REQUIRE_APPROVAL=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --from)        FROM="${2:?--from needs a path}"; shift 2 ;;
@@ -94,7 +96,8 @@ while [ $# -gt 0 ]; do
     --review)      REVIEW=1; shift ;;
     --approve)     APPROVE="${2:?--approve needs the DIFF-SHA printed by --dry-run}"; shift 2 ;;
     --interactive) INTERACTIVE=1; shift ;;
-    --auto)        AUTO=1; shift ;;
+    --auto)        shift ;;  # D-194: auto is the default; kept for compatibility
+    --require-approval) REQUIRE_APPROVAL=1; shift ;;
     --stamp)       STAMP=1; shift ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -275,10 +278,10 @@ else
   echo "  Claims (the template's own commit messages for this update range):"
   echo "$CLAIMS"
   echo ""
-  echo "  D-193: approval required by default — nothing is applied until you"
-  echo "  approve the DIFF-SHA printed below (or --auto for the D-96"
-  echo "  auto-apply, --review for a second-model read, --interactive for"
-  echo "  opt-in y/N)."
+  echo "  D-194: default is auto — the pull applies after the diff prints."
+  echo "  To stop for approval instead: --require-approval (then --approve"
+  echo "  <DIFF-SHA>). For a second-model read: --review. For opt-in y/N:"
+  echo "  --interactive."
   echo "=============================================="
 fi
 
@@ -293,6 +296,14 @@ if [ "$DRY" = "1" ]; then
   fi
   exit 0
 fi
+# D-194: a supplied --approve hash is verified BEFORE any mutation, in every
+# branch. The ref-advance-only branch below used to run ahead of the gate, so
+# a wrong hash still advanced the ref and committed.
+if [ -n "$APPROVE" ] && [ "$APPROVE" != "$DIFF_SHA" ]; then
+  die "approval hash mismatch — expected current DIFF-SHA $DIFF_SHA
+  The template or this child changed since the diff was reviewed.
+  Re-run --dry-run, read the new diff, and approve its hash (D-61)."
+fi
 if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then
   # no content changes, removals, or manifest drift — advance the ref only
   # (no code or control-plane input enters the child, so no approval needed)
@@ -303,39 +314,29 @@ if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then
   exit 0
 fi
 
-# --- Approval gate (D-193): any content or manifest change requires an
-# explicit mode. The default prints and stops; --approve is hash-bound
-# (D-61); --interactive is the opt-in y/N; --auto is the opt-in D-96
-# auto-apply. One gate for both apply branches below, so neither can be
-# reached without passing it.
+# --- Apply mode (D-194): one gate for both apply branches below. The hash
+# itself was already verified above, before any mutation.
 if [ -n "$APPROVE" ]; then
-  # D-61: the hash IS the approval — it binds this apply to the exact diff
-  # the human read after --dry-run. Any drift on either side fails closed.
-  [ "$APPROVE" = "$DIFF_SHA" ] || die "approval hash mismatch — expected current DIFF-SHA $DIFF_SHA
-  The template or this child changed since the diff was reviewed.
-  Re-run --dry-run, read the new diff, and approve its hash (D-61)."
   echo "approval hash verified against the current diff (D-61) — applying"
 elif [ "$INTERACTIVE" = "1" ]; then
   # Opt-in eyeball path (pre-D-96 default). Terminal required.
-  [ -t 0 ] || die "--interactive requires a terminal — use --approve <sha> (D-61), --review for a second-model read, or --auto for the D-96 auto-apply"
+  [ -t 0 ] || die "--interactive requires a terminal — drop the flag (D-96 auto default), use --approve <sha> (D-61), or --review for a second-model read"
   printf 'Apply this template update? [y/N] '
   read -r ANSWER
   case "$ANSWER" in y|Y|yes|YES) ;; *) echo "aborted — nothing changed"; exit 1 ;; esac
-elif [ "$AUTO" = "1" ]; then
-  # D-96 auto, now opt-in: every pre-diff check has already passed to reach
-  # this line (clone resolvable, template manifest present, diff computed).
-  echo "auto-approved (D-96, via --auto): DIFF-SHA $DIFF_SHA — applying"
-else
-  # D-193 default: the security-plan threat model does not assume the
-  # template repo is trustworthy — a compromised template commit would flow
-  # into every child on the next update, and the child's own gates are part
-  # of what is being replaced. Print, stop, show the exact approve command.
+elif [ "$REQUIRE_APPROVAL" = "1" ]; then
+  # Opt-in stop (the D-193 default, made opt-in by D-194): print the exact
+  # approve command and apply nothing.
   echo ""
-  echo "approval required (D-193): nothing applied."
+  echo "approval required (--require-approval): nothing applied."
   echo "  read the diff above (--review for a second-model bundle), then:"
   echo "  scripts/update-template.sh --approve $DIFF_SHA${FROM:+ --from $FROM}${REF:+ --ref $REF}"
-  echo "  (or --auto to apply without approval for this run)"
   exit 0
+else
+  # D-96 auto (the default, restored by D-194): every pre-diff check has
+  # already passed to reach this line (clone resolvable, template manifest
+  # present, diff computed).
+  echo "auto-approved (D-96): DIFF-SHA $DIFF_SHA — applying"
 fi
 
 if [ -n "$MANIFEST_DRIFT" ] && [ -z "$CHANGED$REMOVED" ]; then
