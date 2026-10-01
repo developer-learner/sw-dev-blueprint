@@ -838,7 +838,7 @@ mark "run start (budget ${SWBP_RUN_BUDGET}s)"
 
 python3 --version >/dev/null 2>&1 || die "python3 required"
 git --version >/dev/null 2>&1    || die "git required"
-[ -x $PLANE_DIR/scripts/llm-call.sh ]       || die "$PLANE_DIR/scripts/llm-call.sh missing or not executable"
+[ -x "$PLANE_DIR/scripts/llm-call.sh" ]       || die "$PLANE_DIR/scripts/llm-call.sh missing or not executable"
 [ -f "$CONTEXT_BUDGET_TOOL" ]     || die "$CONTEXT_BUDGET_TOOL missing"
 [ -f "$COMPLETION_LEDGER_TOOL" ]    || die "$COMPLETION_LEDGER_TOOL missing"
 [ -f "$FLAKE_LEDGER_TOOL" ]       || die "$FLAKE_LEDGER_TOOL missing"
@@ -893,7 +893,7 @@ fi
 # already-empty directory" instruction.
 guard_task_state
 # Control-plane + frozen-artifact integrity (phase-gate verifies both, fail-closed)
-bash $PLANE_DIR/scripts/phase-gate.sh manifest HEAD
+bash "$PLANE_DIR/scripts/phase-gate.sh" manifest HEAD
 # The frozen spec is admitted only through scripts/refreeze.sh, which
 # auto-installs after every mechanical preflight passes (D-121). No
 # honor-string or separate human approval step exists in this lane.
@@ -934,7 +934,7 @@ export SWBP_RUN_ID
 # standing ERD; it never silently shrinks the EM's context.
 STANDING_SUMMARY="$STATE_DIR/standing-summary.md"
 if [ -f "$APPROVED/ERD.md" ] \
-  && python3 $PLANE_DIR/scripts/standing-summary.py "$APPROVED/ERD.md" > "$STANDING_SUMMARY" 2>/dev/null; then
+  && python3 "$PLANE_DIR/scripts/standing-summary.py" "$APPROVED/ERD.md" > "$STANDING_SUMMARY" 2>/dev/null; then
   python3 "$CONTEXT_BUDGET_TOOL" warn standing-summary "$STANDING_SUMMARY"
   echo "  standing context: generated summary ($(wc -l < "$STANDING_SUMMARY" | tr -d ' ') lines, vs $(wc -l < "$APPROVED/ERD.md" | tr -d ' ') in ERD.md)"
 else
@@ -1013,7 +1013,7 @@ export SWBP_ACTIVE_DELTA_FILES
 ACTIVE_ERD_CONTEXT="$APPROVED/ERD-DELTA.md"
 if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
   ACTIVE_ERD_CONTEXT="$STATE_DIR/active-erd-delta.md"
-  python3 $PLANE_DIR/scripts/validate-plan.py --active-erd-context \
+  python3 "$PLANE_DIR/scripts/validate-plan.py" --active-erd-context \
     "${ACTIVE_DELTA_FILES[@]}" > "$ACTIVE_ERD_CONTEXT" \
     || die "could not assemble complete active milestone instructions"
 fi
@@ -1021,7 +1021,7 @@ python3 "$CONTEXT_BUDGET_TOOL" warn active-erd-context "$ACTIVE_ERD_CONTEXT"
 
 ACTIVE_INVENTORY_LIST=""
 if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
-  ACTIVE_INVENTORY_LIST=$(python3 $PLANE_DIR/scripts/validate-plan.py --active-inventory \
+  ACTIVE_INVENTORY_LIST=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --active-inventory \
     "${ACTIVE_DELTA_FILES[@]}") \
     || die "could not assemble exact active milestone inventory"
 else
@@ -1039,7 +1039,7 @@ export SWBP_CONTRACT_FILES
 # inventory. DRIFT/SPEC-DEFECT consults still keep the full standing file.
 CONTRACTS_DELTA="$STATE_DIR/contracts-delta.json"
 if [ -f "$APPROVED/contracts.json" ] \
-  && python3 $PLANE_DIR/scripts/contracts-delta.py "$APPROVED/contracts.json" \
+  && python3 "$PLANE_DIR/scripts/contracts-delta.py" "$APPROVED/contracts.json" \
        > "$CONTRACTS_DELTA" 2>/dev/null; then
   echo "  contracts context: generated active-milestone slice ($(wc -c < "$CONTRACTS_DELTA" | tr -d ' ') bytes, vs $(wc -c < "$APPROVED/contracts.json" | tr -d ' ') in contracts.json)"
 else
@@ -1111,7 +1111,7 @@ em_smoke_probe() {
   fi
   # An unresolvable mapping is llm-call's own hard halt (D-52); no flag then.
   [ -n "$_em_model" ] && echo "  EM seat: expect model '$_em_model'"
-  if ! SMOKE_REPLY=$(printf 'SMOKE_OK' | $PLANE_DIR/scripts/llm-call.sh em "$_smoke_sys" --max-time "$SMOKE_MAX_TIME" ${_em_model:+--expect-model "$_em_model"} 2>/dev/null); then
+  if ! SMOKE_REPLY=$(printf 'SMOKE_OK' | "$PLANE_DIR/scripts/llm-call.sh" em "$_smoke_sys" --max-time "$SMOKE_MAX_TIME" ${_em_model:+--expect-model "$_em_model"} 2>/dev/null); then
     rm -f "$_smoke_sys"
     die "LLM smoke test failed — llm-call.sh could not complete the trivial probe within ${SMOKE_MAX_TIME}s (check SANDBOX_LLM_HOST=$SANDBOX_LLM_HOST, model mapping, model server; a cold large model may need SMOKE_MAX_TIME raised; a seat mismatch means the mapped model is not the one answering)"
   fi
@@ -1174,7 +1174,7 @@ em_call() {
   # T7 M1 (D-174): meta sidecar — the provider-returned model/call id the
   # [plan] broker commit prefers over the mapped env var (never fabricated).
   SWBP_LLM_META_OUT="$LOG_DIR/em-last.meta" \
-  timeout "$AGENT_TIMEOUT" $PLANE_DIR/scripts/llm-call.sh em "$sys_prompt" \
+  timeout "$AGENT_TIMEOUT" "$PLANE_DIR/scripts/llm-call.sh" em "$sys_prompt" \
         --schema "$schema" --max-time "$AGENT_TIMEOUT" \
     < "$LOG_DIR/em-last.prompt" \
     > "$LOG_DIR/em-last.raw" 2>> "$LOG_DIR/em-last.err" \
@@ -1201,7 +1201,7 @@ em_call() {
   cp "$LOG_DIR/em-last.raw" "$out"
   # Explicit die: em_call may run inside an if-condition (D-71), where set -e
   # is suppressed for the whole function body — the lane gate must stay fatal.
-  bash $PLANE_DIR/scripts/phase-gate.sh em "$phase_start" || die "EM lane/integrity gate failed"
+  bash "$PLANE_DIR/scripts/phase-gate.sh" em "$phase_start" || die "EM lane/integrity gate failed"
   type archive_em &>/dev/null && archive_em "$out" || true
   write_state phase ""
   mark "em-call done -> $out"
@@ -1231,7 +1231,7 @@ task_attempt_brief() {
       brief=""
     fi
   fi
-  [ -n "$brief" ] || brief=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field brief)
+  [ -n "$brief" ] || brief=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$id" --field brief)
   attempt_brief="$brief
 
 Write EXACTLY one file: $file — the gate rejects any other change, including new files. Before answering, check your change against the file content already in this message and confirm it satisfies every acceptance condition in this brief. You have no tools — do not emit tool calls."
@@ -1346,11 +1346,11 @@ prefetch_launch() {
     [ "$(counter "$cand" strikes)" = "0" ] || continue
     [ -d "$PREFETCH_DIR/$cand" ] && continue
     deps_ok=1
-    for dep in $(python3 $PLANE_DIR/scripts/validate-plan.py --task "$cand" --field depends_on); do
+    for dep in $(python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$cand" --field depends_on); do
       [ "$(tstat "$dep")" = "done" ] || { deps_ok=0; break; }
     done
     [ "$deps_ok" = "1" ] || continue
-    cfile=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$cand" --field file)
+    cfile=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$cand" --field file)
     ne=$(task_no_edit "$cand" "$cfile")
     [ "${ne%% *}" = "1" ] && continue
     d="$PREFETCH_DIR/$cand"
@@ -1363,7 +1363,7 @@ prefetch_launch() {
       trap - EXIT
       rc=0
       SWBP_MAX_OUTPUT="$ob" SWBP_LLM_META_OUT="$d/meta" \
-        timeout "$AGENT_TIMEOUT" $PLANE_DIR/scripts/llm-call.sh coder "$PLANE_DIR/.opencode/prompts/coder.md" \
+        timeout "$AGENT_TIMEOUT" "$PLANE_DIR/scripts/llm-call.sh" coder "$PLANE_DIR/.opencode/prompts/coder.md" \
           --max-time "$AGENT_TIMEOUT" < "$d/prompt" > "$d/raw" 2> "$d/log" || rc=$?
       printf '%s\n' "$rc" > "$d/rc"
     ) &
@@ -1504,7 +1504,7 @@ run_coder() {
     echo "  coder reply for $id arrived from a parallel prefetch (identical prompt)"
   else
     SWBP_MAX_OUTPUT="$out_budget" SWBP_LLM_META_OUT="$LOG_DIR/$id-a$attempt.meta" \
-      timeout "$AGENT_TIMEOUT" $PLANE_DIR/scripts/llm-call.sh coder "$PLANE_DIR/.opencode/prompts/coder.md" \
+      timeout "$AGENT_TIMEOUT" "$PLANE_DIR/scripts/llm-call.sh" coder "$PLANE_DIR/.opencode/prompts/coder.md" \
         --max-time "$AGENT_TIMEOUT" \
       < "$LOG_DIR/$id-a$attempt.prompt" \
       > "$LOG_DIR/$id-a$attempt.raw" 2> "$LOG_DIR/$id-a$attempt.log" \
@@ -1533,7 +1533,7 @@ run_coder() {
   }
   if [ -n "$existing" ]; then
     # D-59 edit-block path: fail-closed applier; target untouched on any error
-    if ! CODER_EVIDENCE=$(python3 $PLANE_DIR/scripts/apply-edit-blocks.py "$file" "$LOG_DIR/$id-a$attempt.raw" 2>&1); then
+    if ! CODER_EVIDENCE=$(python3 "$PLANE_DIR/scripts/apply-edit-blocks.py" "$file" "$LOG_DIR/$id-a$attempt.raw" 2>&1); then
       write_state phase ""
       return 1
     fi
@@ -1588,7 +1588,7 @@ PYEOF
   # D-68 swallowed-error gate, both apply modes: a silent error swallow is a
   # task failure (strike + retry brief), not a hard halt — the finding names
   # the line and the fix (handle it, or justify the swallow in a comment).
-  if ! SWALLOW_FINDINGS=$(python3 $PLANE_DIR/scripts/check-swallowed-errors.py "$file" 2>&1); then
+  if ! SWALLOW_FINDINGS=$(python3 "$PLANE_DIR/scripts/check-swallowed-errors.py" "$file" 2>&1); then
     CODER_EVIDENCE="swallowed-error gate (D-68): $SWALLOW_FINDINGS"
     # Reset the file to HEAD — apply-edit-blocks (or create-mode write)
     # succeeded before D-68 rejected the result, so the working tree
@@ -1607,7 +1607,7 @@ PYEOF
   # is suppressed for the whole function body — without this the gate's exit
   # code was silently discarded and the task committed anyway (same class as
   # em_call's D-71 fix). Violation = hard halt (D-15/D-22), never a strike.
-  bash $PLANE_DIR/scripts/phase-gate.sh task "$phase_start" "$file" \
+  bash "$PLANE_DIR/scripts/phase-gate.sh" task "$phase_start" "$file" \
     || die "task lane/integrity gate failed ($file) — hard halt (D-15/D-22)"
   write_state phase ""
   write_state task_target ""
@@ -1754,7 +1754,7 @@ PYMYPYHASH
     if [ -f "$mypy_green_marker" ]; then
       mark "mypy gate cached green ($mypy_label)"
     else
-      MYPY_OUT=$($PLANE_DIR/scripts/sandbox-run.sh -- mypy --explicit-package-bases \
+      MYPY_OUT=$("$PLANE_DIR/scripts/sandbox-run.sh" -- mypy --explicit-package-bases \
         --cache-dir=/tmp/mypy-cache "${mypy_targets[@]}" 2>&1) || MYPY_RC=$?
     fi
   fi
@@ -1821,7 +1821,7 @@ plan_subtree_prepare() {
     deltas+=("$APPROVED/DELTA-v$v.json")
   done
   cp tasks/plan.json "$STATE_DIR/plan-prior.json"
-  if ! python3 $PLANE_DIR/scripts/validate-plan.py --subtree-scope "$STATE_DIR/plan-prior.json" "${deltas[@]}" \
+  if ! python3 "$PLANE_DIR/scripts/validate-plan.py" --subtree-scope "$STATE_DIR/plan-prior.json" "${deltas[@]}" \
        > "$STATE_DIR/subtree-scope.json" 2> "$STATE_DIR/subtree-scope.err"; then
     echo "subtree re-plan unavailable ($(tr '\n' ' ' < "$STATE_DIR/subtree-scope.err")) — full emission"
     rm -f "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" "$STATE_DIR/subtree-scope.err"
@@ -1855,7 +1855,7 @@ ensure_plan() {
   NODEIDS_SCOPE=""
   if [ "${ACTIVE_DELTA_FILES+set}" = "set" ] && [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
     NODEIDS_SCOPE="$STATE_DIR/nodeids-scope.txt"
-    python3 $PLANE_DIR/scripts/validate-plan.py --milestone-scope "${ACTIVE_DELTA_FILES[@]}" \
+    python3 "$PLANE_DIR/scripts/validate-plan.py" --milestone-scope "${ACTIVE_DELTA_FILES[@]}" \
       > "$NODEIDS_SCOPE"
   fi
   while :; do
@@ -1864,9 +1864,9 @@ ensure_plan() {
     # when acyclic). Monotone and bounded — validate() runs next and is the
     # authority, so this can only turn a rejectable plan into a passing one it
     # was one edge away from, never mask a real defect. Prints each edge added.
-    [ -f tasks/plan.json ] && python3 $PLANE_DIR/scripts/validate-plan.py --repair-closures tasks/plan.json || true
-    [ -f tasks/plan.json ] && python3 $PLANE_DIR/scripts/validate-plan.py --repair-contracts tasks/plan.json || true
-    if [ -f tasks/plan.json ] && verrs=$(python3 $PLANE_DIR/scripts/validate-plan.py 2>&1); then
+    [ -f tasks/plan.json ] && python3 "$PLANE_DIR/scripts/validate-plan.py" --repair-closures tasks/plan.json || true
+    [ -f tasks/plan.json ] && python3 "$PLANE_DIR/scripts/validate-plan.py" --repair-contracts tasks/plan.json || true
+    if [ -f tasks/plan.json ] && verrs=$(python3 "$PLANE_DIR/scripts/validate-plan.py" 2>&1); then
       echo "plan ok (v$(python3 -c 'import json;print(json.load(open("tasks/plan.json"))["version"])'))"
       if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
         printf 'plan_gate=ok\n' >> "$LAST_ARCHIVE_ENTRY/meta.txt"
@@ -1903,7 +1903,7 @@ ensure_plan() {
       fi
       return 0
     fi
-    verrs=$(python3 $PLANE_DIR/scripts/validate-plan.py 2>&1 || true)
+    verrs=$(python3 "$PLANE_DIR/scripts/validate-plan.py" 2>&1 || true)
     if [ -n "$subtree_feedback" ]; then
       # a rejected merge is the actionable feedback; the on-disk plan is
       # still the stale prior, whose errors would only mislead the EM
@@ -1943,7 +1943,7 @@ ensure_plan() {
       # the inventory). If the spec is the defect, route straight to the TPM
       # bundle — no further EM strikes, no model swaps.
       local audit
-      if ! audit=$(python3 $PLANE_DIR/scripts/validate-plan.py --spec-preflight /dev/null "$APPROVED/contracts.json" 2>&1); then
+      if ! audit=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --spec-preflight /dev/null "$APPROVED/contracts.json" 2>&1); then
         echo ""
         echo "SPEC DEFECT (D-79): the frozen spec is unimplementable — the plan"
         echo "gate would reject EVERY decomposition. Swapping or escalating the"
@@ -1984,7 +1984,7 @@ $audit" "-"
       # no plan-revision budget, and let the full gate judge the artifact.
       echo "=== delta needs no re-decomposition — carried plan merged mechanically (no EM call) ==="
       SUBTREE_MODE=0   # one shot; if the merged plan fails the gate, full emission takes over
-      python3 $PLANE_DIR/scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" - "$STATE_DIR/subtree-scope.json" \
+      python3 "$PLANE_DIR/scripts/validate-plan.py" --merge-subtree "$STATE_DIR/plan-prior.json" - "$STATE_DIR/subtree-scope.json" \
         || echo "mechanical merge failed — falling back to full emission"
       continue
     fi
@@ -2002,8 +2002,8 @@ $audit" "-"
     if [ "${SUBTREE_MODE:-0}" = "1" ] && \
        [ "$(python3 -c "import json;print(int(json.load(open('$STATE_DIR/subtree-scope.json'))['trivial_construct']))")" = "1" ]; then
       echo "=== delta is one-file re-plan, no contract changes — subtree constructed mechanically (no EM call) ==="
-      if python3 $PLANE_DIR/scripts/validate-plan.py --construct-one-file "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" "${ACTIVE_DELTA_FILES[@]}" > tasks/plan-subtree.json 2> "$LOG_DIR/construct-one-file.err" \
-         && merge_out=$(python3 $PLANE_DIR/scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
+      if python3 "$PLANE_DIR/scripts/validate-plan.py" --construct-one-file "$STATE_DIR/plan-prior.json" "$STATE_DIR/subtree-scope.json" "${ACTIVE_DELTA_FILES[@]}" > tasks/plan-subtree.json 2> "$LOG_DIR/construct-one-file.err" \
+         && merge_out=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
         echo "$merge_out"
         SUBTREE_MODE=0                  # merged plan will validate on next loop iter
         continue
@@ -2036,7 +2036,7 @@ $audit" "-"
       # `> tasks/plan.json 2>&1` clobbered the plan with the error text AND made
       # synth_err capture nothing (both fds went to the file).
       synth_tmp="$STATE_DIR/synthesize-plan.$$"
-      if python3 $PLANE_DIR/scripts/validate-plan.py --synthesize-plan "${ACTIVE_DELTA_FILES[@]}" > "$synth_tmp" 2>&1; then
+      if python3 "$PLANE_DIR/scripts/validate-plan.py" --synthesize-plan "${ACTIVE_DELTA_FILES[@]}" > "$synth_tmp" 2>&1; then
         mv "$synth_tmp" tasks/plan.json
         PLAN_FROM_B3=1  # no EM produced this plan: its commit carries no model evidence
         echo "=== B3: plan synthesized mechanically from the TPM's ERD-DELTA briefs/DAG/pins (no EM call); full gate judges it next ==="
@@ -2063,7 +2063,7 @@ print('; '.join(parts))")
       em_call tasks/plan-subtree.json "$PLANE_DIR/scripts/schemas/plan.schema.json" \
         "Delta re-plan. The validated plan for the previous spec version is carried forward by the shell; its tasks are immutable and keep their ids (see the carried-plan context: id, file, depends_on only — briefs omitted deliberately). ERD-DELTA is the authoritative current-change slice when present; follow its explicit supersessions over standing ERD prose. The spec has advanced; you re-plan ONLY the delta. $EM_TASK_KEYS $EM_CONTRACT_ID_RULE Valid contract ids (copy verbatim): $(contract_ids) Reply with ONLY a plan JSON matching the schema whose tasks array contains EXACTLY one task per file in this list and NO others: $scope_files. A task for a re-planned file MUST reuse the stated keep id; tasks for new files use fresh T-ids not present in the carried plan. depends_on may reference carried task ids. Map ONLY node-ids from this list, each to exactly one of your tasks: $map_ids. If a listed node-id is not exercised by any file you are planning, OMIT it — the shell routes carried coverage itself; do NOT emit a 'regression' key (the validator rejects it), NO status fields. Placement is gate-owned, never yours: a node-id pinned by contracts.json's test_mapping is auto-placed by the gate at the task owning its pinned file; a node-id from a Playwright-importing test file with no mapping entry is auto-placed at the DAG's final task (D-64) — map every node-id where natural and add NO depends_on edges for this. Every brief self-contained per BLUEPRINT.md Rule 8 (exact path, signatures, inputs/outputs, acceptance; constraints first) — the coder sees only the brief. For a re-planned EXISTING file the brief describes ONLY the change from current behavior (the coder gets the file content and emits anchored edits per D-59 — carried behavior is structurally untouched, so do NOT restate what the file already does; the plan gate rejects an existing-file brief that backticks a symbol the file already defines but the ERD-DELTA never names as changed — D-133); for a NEW file the brief describes the whole file (target under 150 lines). Every contract id must already exist in contracts.json; when no registered id covers a file, use an empty contracts array and never invent one. Do NOT include a smoke_check field. Set erd_version to $FROZEN_V and version to any integer >= 1 — the shell renumbers the merged plan.${verrs:+ The previous attempt failed validation with these errors — fix all of them: $verrs}" \
         "standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}" "ERD-delta:${ACTIVE_ERD_CONTEXT:-$APPROVED/ERD-DELTA.md}" "contracts:${CONTRACTS_DELTA:-$APPROVED/contracts.json}" "carried-plan:$STATE_DIR/carried-summary.json" "subtree-being-revised:tasks/plan-subtree.json"
-      if ! subtree_feedback=$(python3 $PLANE_DIR/scripts/validate-plan.py --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
+      if ! subtree_feedback=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --merge-subtree "$STATE_DIR/plan-prior.json" tasks/plan-subtree.json "$STATE_DIR/subtree-scope.json" 2>&1); then
         echo "$subtree_feedback"
         continue
       fi
@@ -2129,7 +2129,7 @@ json.dump(entry, open(sys.argv[2], 'w'), indent=2)
       | grep -oE "${f}::[A-Za-z0-9_]+(\[[^]]*\])?" | sort -u || true)
     if [ "${#nids[@]}" -gt 0 ]; then
       local excerpt="$STATE_DIR/consult-excerpt-${id}-${f##*/}"
-      if python3 $PLANE_DIR/scripts/extract-test-functions.py "$f" "${nids[@]}" \
+      if python3 "$PLANE_DIR/scripts/extract-test-functions.py" "$f" "${nids[@]}" \
            > "$excerpt" 2>/dev/null && [ -s "$excerpt" ]; then
         ctx+=("failing-test-excerpt:$excerpt")
         continue
@@ -2152,7 +2152,7 @@ if isinstance(d, dict):
     d["task_id"] = sys.argv[1]
     json.dump(d, open(p, "w"), indent=2)
 ' "$id"
-      if DIAG_VERDICT=$(python3 $PLANE_DIR/scripts/validate-plan.py --diagnosis tasks/diagnosis.json 2> "$LOG_DIR/diag-last.err"); then
+      if DIAG_VERDICT=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --diagnosis tasks/diagnosis.json 2> "$LOG_DIR/diag-last.err"); then
         DIAG_FILE="$STATE_DIR/diagnosis-$id.json"
         mv tasks/diagnosis.json "$DIAG_FILE"
         if [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -d "$LAST_ARCHIVE_ENTRY" ]; then
@@ -2263,7 +2263,7 @@ PYEOF
         | grep -oE "${ef}::[A-Za-z0-9_]+(\[[^]]*\])?" | sort -u || true)
       local xf="$STATE_DIR/esc-excerpt-${id}-${ef##*/}"
       if [ "${#enids[@]}" -gt 0 ] \
-         && python3 $PLANE_DIR/scripts/extract-test-functions.py "$ef" "${enids[@]}" \
+         && python3 "$PLANE_DIR/scripts/extract-test-functions.py" "$ef" "${enids[@]}" \
               > "$xf" 2>/dev/null && [ -s "$xf" ]; then
         echo "Failing test function(s) from \`$ef\` — extracted: ${enids[*]}"
         echo '```python'
@@ -2396,7 +2396,7 @@ compute_active_delta_scope() {
   DELTA_SCOPED=0
   AFFECTED_IDS=""
   if [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
-    ACTIVE_AFFECTED=$(python3 $PLANE_DIR/scripts/validate-plan.py --affected \
+    ACTIVE_AFFECTED=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --affected \
       "${ACTIVE_DELTA_FILES[@]}") \
       || die "could not compute affected tasks across the active delta range"
     AFFECTED_IDS=" $(printf '%s' "$ACTIVE_AFFECTED" | tr '\n' ' ') "
@@ -2476,12 +2476,12 @@ if [ "$SWBP_PARALLEL_CODERS" -gt 1 ]; then
   echo "  parallel coder calls: up to $SWBP_PARALLEL_CODERS at once (D-187)"
 fi
 while :; do
-  TOPO=$(python3 $PLANE_DIR/scripts/validate-plan.py --topo) || die "plan invalidated mid-run"
+  TOPO=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --topo) || die "plan invalidated mid-run"
 
   # fingerprint check: plan entries changed since a task completed -> redo it
   for id in $TOPO; do
     if [ "$(tstat "$id")" = "done" ]; then
-      fp_now=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field fingerprint)
+      fp_now=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$id" --field fingerprint)
       fp_then=$(cat "$TASK_STATE/$id.fp" 2>/dev/null || true)
       if [ "$fp_now" != "$fp_then" ]; then
         echo "task $id changed in plan — resetting"
@@ -2496,7 +2496,7 @@ while :; do
   for id in $TOPO; do
     [ "$(tstat "$id")" = "pending" ] || continue
     deps_ok=1
-    for d in $(python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field depends_on); do
+    for d in $(python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$id" --field depends_on); do
       case "$(tstat "$d")" in
         done) ;;
         escalated|blocked) set_tstat "$id" blocked; deps_ok=0; break ;;
@@ -2510,10 +2510,10 @@ while :; do
 
   id="$NEXT"
   check_budget "task $id"
-  file=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field file)
+  file=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$id" --field file)
   # Read into an array so parametrized node-ids (containing spaces or '['..']')
   # aren't word-split or glob-expanded by an unquoted expansion.
-  mapped_out=$(python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field tests)
+  mapped_out=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$id" --field tests)
   mapped=()
   while IFS= read -r line; do
     [ -n "$line" ] && mapped+=("$line")
@@ -2622,7 +2622,7 @@ while :; do
       evidence=""
     fi
     if [ "$pass" = "1" ] && [ -n "$smoke" ]; then
-      if ! $PLANE_DIR/scripts/sandbox-run.sh -- sh -c "$smoke" >/dev/null 2>&1; then
+      if ! "$PLANE_DIR/scripts/sandbox-run.sh" -- sh -c "$smoke" >/dev/null 2>&1; then
         pass=0; evidence="smoke_check failed: $smoke"
       fi
     fi
@@ -2634,7 +2634,7 @@ while :; do
     echo "task $id: PASS"
     mark "task $id PASS"
     set_tstat "$id" done
-    python3 $PLANE_DIR/scripts/validate-plan.py --task "$id" --field fingerprint > "$TASK_STATE/$id.fp"
+    python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$id" --field fingerprint > "$TASK_STATE/$id.fp"
     rm -f "$TASK_STATE/$id.lastfail" "$TASK_STATE/$id.lintbase"
     continue
   fi

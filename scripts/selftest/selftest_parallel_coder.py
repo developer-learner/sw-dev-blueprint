@@ -142,8 +142,9 @@ echo "FILES=$(ls src/a.py src/b.py src/c.py 2>/dev/null | tr '\n' ',')"
 '''
 
 
-def _run(tmp_path: Path, par: int, scenario: str, env: dict | None = None) -> dict:
-    work = tmp_path / f"w-{par}-{scenario}"
+def _run(tmp_path: Path, par: int, scenario: str, env: dict | None = None,
+         dirname: str = "") -> dict:
+    work = tmp_path / (dirname or f"w-{par}-{scenario}")
     work.mkdir()
     script = work / "harness.sh"
     script.write_text(HARNESS)
@@ -289,3 +290,13 @@ def test_reap_kills_the_whole_call_tree(tmp_path):
     out = _run(tmp_path, 4, "reap", env={"HANG_MARK": mark})
     assert out["STARTED"] == "1", out
     assert out["SURVIVORS"] == "0", out
+
+
+def test_plane_paths_with_a_space_still_work(tmp_path):
+    """Helper paths are built from PLANE_DIR, which is a cache or checkout
+    path the operator does not control (e.g. a home directory with a space).
+    Every expansion must be quoted, or the coder call and the lane gate are
+    invoked with a split path."""
+    out = _run(tmp_path, 4, "overlap", dirname="plane dir with space")
+    assert out["CALLS"] == "2", out
+    assert out["FILES"] == "src/a.py,src/b.py,", out

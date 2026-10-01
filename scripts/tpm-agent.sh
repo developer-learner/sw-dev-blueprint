@@ -55,17 +55,17 @@ case "${1:-}" in
 esac
 
 mkdir -p .tpm/outbox
-ALLOWED_ARTIFACTS=$(python3 $PLANE_DIR/scripts/spec_artifacts.py describe) || {
+ALLOWED_ARTIFACTS=$(python3 "$PLANE_DIR/scripts/spec_artifacts.py" describe) || {
   echo "tpm-agent: shared spec-artifact policy unavailable" >&2
   exit 1
 }
 
 if [ "$MODE" = view ]; then
-  bash $PLANE_DIR/scripts/tpm-view.sh
+  bash "$PLANE_DIR/scripts/tpm-view.sh"
   cd .tpm/view
-  exec claude --settings $PLANE_DIR/scripts/tpm-view-settings.json \
+  exec claude --settings "$PLANE_DIR/scripts/tpm-view-settings.json" \
     "You are the TPM for this project, running in AGENT MODE with a MATERIALIZED VIEW (D-162). You are rooted at .tpm/view/ — a directory holding only the spec artifacts, the frozen tests, and the sanitized escalation evidence; src/ is NOT present, by construction (oracle independence, INV-1, is structural here, not a policy promise). Before anything else, read TPM-ROLE.md in full — it is your job description and its Agent mode section governs where you write. Read the spec artifacts here; escalations are at escalations/ (BATCH.md plus per-item bundles). Write only these spec artifacts ($ALLOWED_ARTIFACTS) under outbox/ with paths preserved; outbox is a symlink to .tpm/outbox for refreeze's pickup. You run nothing: the operator installs your outbox via scripts/refreeze.sh and drives the pipeline. When ready, tell the CEO you are and ask for the business intent."
 fi
 
-exec claude --settings $PLANE_DIR/scripts/tpm-agent-settings.json \
+exec claude --settings "$PLANE_DIR/scripts/tpm-agent-settings.json" \
   "You are the TPM for this project, running in AGENT MODE. Before anything else, read docs/TPM-ROLE.md in full — it is your job description and its Agent mode section governs where you write. Summary of your lane: read the repo freely EXCEPT src/ (never attempt it — oracle independence is the point of your role); write only these spec artifacts ($ALLOWED_ARTIFACTS) under .tpm/outbox/ with paths preserved; escalation bundles are at .pipeline-state/escalations/BATCH.md — read them yourself, no one will paste them. You run nothing: the operator installs your outbox via scripts/refreeze.sh and drives the pipeline. When ready, tell the CEO you are and ask for the business intent."

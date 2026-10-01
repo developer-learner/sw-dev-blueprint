@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-202 — 2026-10-01 — Every plane helper path is quoted (security plan item 12, quoting part)
+
+**Decision:** All 77 bare `$PLANE_DIR/...` expansions in `orchestrate.sh`, `refreeze.sh`, `tpm-pack.sh`, `tpm-agent.sh`, `tpm-view.sh` and `em-bench.sh` are quoted. `selftest_parallel_coder.py::test_plane_paths_with_a_space_still_work` runs the real coder path from a directory whose name contains a space.
+
+**Alternatives considered:** Adding shellcheck to CI in the same change — deferred: shellcheck is not installed on the development host, and wiring an unrun linter into CI risks a red line (D-85) on findings nobody has triaged. It lands once it can be run locally first.
+
+**Reason:** `PLANE_DIR` is a snapshot or checkout path the operator does not choose (it follows `$HOME` / `$XDG_CACHE_HOME`). Reproduced before the fix: from a path with a space, `python3` was handed a split path and the coder step died.
+
+**Do not suggest:** reintroducing unquoted helper paths "because the default cache path has no spaces".
+
 ## D-201 — 2026-10-01 — Plane snapshots are published atomically; app hooks survive a purged cache (security plan item 7)
 
 **Decision:** (1) `swbp` and `orchestrate.sh`'s entry guard (both the git-archive path and the copied-plane path) build a snapshot in a sibling stage directory, stamp it, and publish it with one `rename`. A published snapshot is never deleted or rewritten. A launcher that loses the rename waits (up to `SWBP_PLANE_PUBLISH_WAIT`, default 30 s) for the winner's stamp and discards its own stage; a root still unstamped after the wait is an abandoned leftover and is renamed aside, never deleted in place. (2) `swbp` no longer points a builder-targeted app's `core.hooksPath` into the cache. It writes small shims to `<git-dir>/swbp-hooks/` (per worktree) that `exec` the pinned snapshot's hook, or refuse with "plane snapshot missing" when it is gone. The cache location itself is unchanged.

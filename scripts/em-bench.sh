@@ -53,7 +53,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -f "$BRIEF" ] || { echo "em-bench: brief not found: $BRIEF" >&2; exit 1; }
-[ -x $PLANE_DIR/scripts/llm-call.sh ] || { echo "em-bench: $PLANE_DIR/scripts/llm-call.sh missing" >&2; exit 1; }
+[ -x "$PLANE_DIR/scripts/llm-call.sh" ] || { echo "em-bench: $PLANE_DIR/scripts/llm-call.sh missing" >&2; exit 1; }
 
 # A diagnosis entry is replayable if it succeeded (verdict=) or failed in a
 # way the bench can score a fix for (invalid_json / schema_invalid).
@@ -92,8 +92,8 @@ for ENTRY in "${ENTRIES[@]}"; do
   mkdir -p "$replay_dir"
   cp "$BRIEF" "$replay_dir/brief-used.md"
 
-  if ! timeout 300 $PLANE_DIR/scripts/llm-call.sh em "$BRIEF" \
-        --schema $PLANE_DIR/scripts/schemas/diagnosis.schema.json --max-time 300 \
+  if ! timeout 300 "$PLANE_DIR/scripts/llm-call.sh" em "$BRIEF" \
+        --schema "$PLANE_DIR/scripts/schemas/diagnosis.schema.json" --max-time 300 \
       < "$ENTRY/prompt.txt" \
       > "$replay_dir/reply.json" 2> "$replay_dir/stderr.log"; then
     echo "  RESULT: call_failed"

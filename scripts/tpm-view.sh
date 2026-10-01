@@ -91,7 +91,7 @@ fi
 # 5. The write lane: outbox symlink -> .tpm/outbox (refreeze's pickup).
 ln -s ../outbox "$VIEW/outbox"
 
-ALLOWED=$(python3 $PLANE_DIR/scripts/spec_artifacts.py describe) || {
+ALLOWED=$(python3 "$PLANE_DIR/scripts/spec_artifacts.py" describe) || {
   echo "tpm-view: shared spec-artifact policy unavailable" >&2
   exit 1
 }

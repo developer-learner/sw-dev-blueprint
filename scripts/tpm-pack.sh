@@ -57,7 +57,7 @@ cd "${SWBP_APP_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}"  # D-186: swbp sets 
 
 APPROVED="scripts/.approved"
 BUDGET_TOOL="$PLANE_DIR/scripts/context-budget.py"
-ALLOWED_ARTIFACTS=$(python3 $PLANE_DIR/scripts/spec_artifacts.py describe) || {
+ALLOWED_ARTIFACTS=$(python3 "$PLANE_DIR/scripts/spec_artifacts.py" describe) || {
   echo "tpm-pack: shared spec-artifact policy unavailable" >&2
   exit 1
 }
@@ -203,13 +203,13 @@ HDR
   fi
   rm -f "$role_slice"
   schema_slice="$(mktemp "${TMPDIR:-/tmp}/schema-slice.XXXXXX")"
-  if [ -f $PLANE_DIR/scripts/schemas/contracts.schema.json ] \
+  if [ -f "$PLANE_DIR/scripts/schemas/contracts.schema.json" ] \
     && python3 -c 'import json, sys; json.load(open(sys.argv[1])); json.dump(json.load(open(sys.argv[1])), sys.stdout, separators=(",", ":"), ensure_ascii=False)' \
-      $PLANE_DIR/scripts/schemas/contracts.schema.json > "$schema_slice" 2>/dev/null \
-    && accept_slice schema-slice "$schema_slice" $PLANE_DIR/scripts/schemas/contracts.schema.json; then
+      "$PLANE_DIR/scripts/schemas/contracts.schema.json" > "$schema_slice" 2>/dev/null \
+    && accept_slice schema-slice "$schema_slice" "$PLANE_DIR/scripts/schemas/contracts.schema.json"; then
     emit "$schema_slice" "scripts/schemas/contracts.schema.json (minified, review 2026-08-13)"
   else
-    [ -f $PLANE_DIR/scripts/schemas/contracts.schema.json ] && emit $PLANE_DIR/scripts/schemas/contracts.schema.json scripts/schemas/contracts.schema.json
+    [ -f "$PLANE_DIR/scripts/schemas/contracts.schema.json" ] && emit "$PLANE_DIR/scripts/schemas/contracts.schema.json" scripts/schemas/contracts.schema.json
     echo "tpm-pack: schema minification unavailable — shipped the full schema" >&2
   fi
   rm -f "$schema_slice"
@@ -227,7 +227,7 @@ HDR
       # full standing ERD loudly (stderr — the bundle stays clean).
       summary="$(mktemp "${TMPDIR:-/tmp}/standing-summary.XXXXXX")"
       if [ -f "$APPROVED/ERD.md" ] \
-        && python3 $PLANE_DIR/scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
+        && python3 "$PLANE_DIR/scripts/standing-summary.py" "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
         && accept_slice standing-summary "$summary" "$APPROVED/ERD.md"; then
         emit "$summary" "standing-summary.md (generated from ERD.md — standing rules + per-file map, D-117)"
       else
@@ -253,7 +253,7 @@ HDR
       # artifact remains the loud fallback if generation fails.
       summary="$(mktemp "${TMPDIR:-/tmp}/standing-summary.XXXXXX")"
       if [ -f "$APPROVED/ERD.md" ] \
-        && python3 $PLANE_DIR/scripts/standing-summary.py "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
+        && python3 "$PLANE_DIR/scripts/standing-summary.py" "$APPROVED/ERD.md" > "$summary" 2>/dev/null \
         && accept_slice standing-summary "$summary" "$APPROVED/ERD.md"; then
         emit "$summary" "standing-summary.md (generated from ERD.md — standing rules + per-file map, D-117)"
       else
@@ -264,7 +264,7 @@ HDR
     fi
     contracts_slice="$(mktemp "${TMPDIR:-/tmp}/contracts-delta.XXXXXX")"
     if [ -f "$APPROVED/contracts.json" ] \
-      && python3 $PLANE_DIR/scripts/contracts-delta.py --index "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null \
+      && python3 "$PLANE_DIR/scripts/contracts-delta.py" --index "$APPROVED/contracts.json" > "$contracts_slice" 2>/dev/null \
       && accept_slice interface-index "$contracts_slice" "$APPROVED/contracts.json"; then
       active_inv="$(python3 - "$APPROVED" <<'PY'
 """D-140 informational line: the EXECUTOR's active build inventory for the
@@ -348,7 +348,7 @@ you named.
 HDR
   slice="$(mktemp "${TMPDIR:-/tmp}/contracts-bodies.XXXXXX")"
   if SWBP_CONTRACT_FILES="$*" \
-    python3 $PLANE_DIR/scripts/contracts-delta.py "$APPROVED/contracts.json" > "$slice" 2>/dev/null \
+    python3 "$PLANE_DIR/scripts/contracts-delta.py" "$APPROVED/contracts.json" > "$slice" 2>/dev/null \
     && accept_slice contracts-body-slice "$slice" "$APPROVED/contracts.json"; then
     emit "$slice" "$APPROVED/contracts.json — full bodies for: $*"
   else
