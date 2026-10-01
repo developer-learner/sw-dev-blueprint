@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-198 — 2026-10-01 — The template updater refuses while unrelated changes are staged (security plan item 9)
+
+**Decision:** Before any write — the stamp, ref-advance-only and apply paths — `update-template.sh` checks `git diff --cached`; if anything is staged it dies, listing the staged paths, and leaves the index exactly as it was. `--dry-run` and `--review` are unaffected. `swbp_commit` itself is unchanged: other callers legitimately commit what they staged.
+
+**Alternatives considered:** (a) Commit only the updater's own paths (`git commit -- <paths>`) — rejected: it would change the broker's contract for every caller and still leaves the operator unaware of the stray staging. (b) Unstage automatically — rejected: silently rewriting someone's index is the opposite of the fix.
+
+**Reason:** `swbp_commit` commits the whole index, so anything another session or the operator had staged was swept into a `[template-update]` commit labelled as template content. Reproduced before the fix in both the apply and the ref-only branches.
+
+**Do not suggest:** auto-unstaging; weakening the check to warn-only.
+
 ## D-197 — 2026-10-01 — Cancelling a parallel coder call stops the call, not just its launcher (security plan item 8)
 
 **Decision:** `prefetch_reap` collects the whole process tree under each in-flight prefetch (subshell, `timeout`, `llm-call.sh`, its Python client) before signalling, sends TERM to all of it, and KILLs anything still alive after about 2 s. `selftest_parallel_coder.py::test_reap_kills_the_whole_call_tree` starts a prefetch whose fake call never returns and asserts that no process of it survives the reap.

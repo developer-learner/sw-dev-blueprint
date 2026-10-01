@@ -638,7 +638,8 @@ Children do not hand-port fixes — that is how control planes silently fork.
   inspect without applying; `--require-approval` stops after printing the
   diff and its DIFF-SHA; `--approve <sha>` is the D-61 hash-bound explicit
   path, and a wrong hash refuses before any mutation in every branch
-  (D-194); `--interactive` opts into y/N.
+  (D-194); `--interactive` opts into y/N. It refuses to write while
+  unrelated changes are staged, so they never ride into its commit (D-198).
 - Fixes discovered in a child get committed to the TEMPLATE first, then
   pulled into children. (See the 2026-06-30 correction-log entry in
   CLAUDE.md for the incident that forced this.)

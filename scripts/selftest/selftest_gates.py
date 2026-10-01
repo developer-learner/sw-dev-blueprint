@@ -9442,6 +9442,68 @@ def test_update_template_wrong_approve_refuses_manifest_only(template_pull_pair)
         "a rejected approval hash must commit nothing"
 
 
+def _stage_unrelated(child):
+    (child / "notes.txt").write_text("unrelated work in progress\n")
+    subprocess.run(["git", "add", "notes.txt"], cwd=child, check=True)
+
+
+def _head(child):
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=child,
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _staged(child):
+    return subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=child,
+                          capture_output=True, text=True, check=True).stdout.split()
+
+
+def test_update_template_refuses_with_unrelated_staged_changes(template_pull_pair):
+    """D-198: the updater commits through swbp_commit, which commits the whole
+    index — an unrelated staged file would ride into the [template-update]
+    commit. Refuse before any mutation; leave the staged file staged."""
+    child, clone = template_pull_pair
+    _stage_unrelated(child)
+    before = _head(child)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "notes.txt" in r.stderr, r.stderr
+    assert _head(child) == before, "nothing may be committed"
+    assert _staged(child) == ["notes.txt"], "the staged file must stay staged, alone"
+    assert "old-content" in (child / "scripts" / "hello.sh").read_text()
+
+
+def test_update_template_ref_only_refuses_with_unrelated_staged_changes(template_pull_pair):
+    """D-198: the ref-advance-only branch commits too, so the same refusal
+    applies there."""
+    child, clone = template_pull_pair
+    (child / "scripts" / "hello.sh").write_bytes(
+        (clone / "scripts" / "hello.sh").read_bytes())
+    (child / "scripts" / ".manifest-template").write_text(
+        (clone / "scripts" / ".manifest-template").read_text())
+    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture: ref stale only"],
+                   cwd=child, check=True)
+    before_version = (child / ".template-version").read_text()
+    _stage_unrelated(child)
+    before = _head(child)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert _head(child) == before
+    assert (child / ".template-version").read_text() == before_version
+    assert _staged(child) == ["notes.txt"]
+
+
+def test_update_template_dry_run_works_with_staged_changes(template_pull_pair):
+    """D-198: read-only modes are unaffected by a dirty index."""
+    child, clone = template_pull_pair
+    _stage_unrelated(child)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
+                 "--from", str(clone)], child)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "DIFF-SHA" in r.stdout
+    assert _staged(child) == ["notes.txt"]
+
+
 def test_update_template_commit_records_diff_sha_trailer(template_pull_pair):
     """D-193: the [template-update ...] commit must carry a
     Template-Diff-SHA: trailer equal to the DIFF-SHA the approval bound to —

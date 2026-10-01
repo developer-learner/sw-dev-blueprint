@@ -71,6 +71,16 @@ cd "$SWBP_UT_REEXEC"
 # T7 M1 (D-174): provenance broker — template commits carry Swbp-Role: human.
 source scripts/git-provenance.sh
 die() { echo "UPDATE-TEMPLATE FAIL: $*" >&2; exit 1; }
+# D-198: every write path ends in swbp_commit, which commits the WHOLE index.
+# Refuse while anything is already staged, so an unrelated change can never
+# ride into a [template-update] or [template-stamp] commit. Nothing is
+# unstaged or touched; read-only modes (--dry-run/--review) never call this.
+refuse_staged() {
+  local staged
+  staged=$(git diff --cached --name-only)
+  [ -z "$staged" ] || die "unrelated changes are staged — unstage them first; the updater never commits them:
+$(printf '%s\n' "$staged" | sed 's/^/  /')"
+}
 # Cross-platform sed -i (GNU vs BSD/macOS)
 sed_inplace() { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
 
@@ -127,6 +137,7 @@ TARGET=$(git -C "$CLONE" rev-parse "${REF:-HEAD}") || die "cannot resolve ref '$
 
 # --- Stamp-only mode ---
 if [ "$STAMP" = "1" ]; then
+  refuse_staged
   BIRTH=$(grep '^ref=' .template-version | cut -d= -f2)
   sed_inplace "s/^ref=.*/ref=$TARGET/" .template-version
   bash scripts/regen-manifest.sh scripts/.manifest-project
@@ -304,6 +315,7 @@ if [ -n "$APPROVE" ] && [ "$APPROVE" != "$DIFF_SHA" ]; then
   The template or this child changed since the diff was reviewed.
   Re-run --dry-run, read the new diff, and approve its hash (D-61)."
 fi
+refuse_staged
 if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then
   # no content changes, removals, or manifest drift — advance the ref only
   # (no code or control-plane input enters the child, so no approval needed)
