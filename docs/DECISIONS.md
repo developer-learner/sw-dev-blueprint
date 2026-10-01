@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-200 — 2026-10-01 — The template updater refuses unsafe destinations before any write (security plan item 3, updater)
+
+**Decision:** Every path in the template's manifest (and the manifest itself) is checked before anything is diffed or written: no traversal, no absolute path, no empty or doubled separator, nothing under `.git`, no backslash, and neither the destination nor any parent directory may be a symlink in the child. A failure dies with "unsafe template path" and leaves the child untouched.
+
+**Alternatives considered:** Rely on `git show` rejecting odd paths — rejected: it did refuse traversal and absolute paths, but only by accident and with a confusing message, and it does nothing about symlinks, which are on the child's side.
+
+**Reason:** Reproduced before the fix: with `ext -> <outside dir>` committed in the child and `ext/evil.sh` in the template, the updater wrote `evil.sh` into the outside directory through the link; `git add` refused only afterwards ("beyond a symbolic link"), leaving the stray file behind. The traversal and `.git` cases were already refused by `git show`; they now get an explicit, early refusal and stay pinned by tests.
+
+**Do not suggest:** resolving symlinks and writing to the target; checking only the path text.
+
 ## D-199 — 2026-10-01 — Template review survives large new files; exec-bit changes are real changes (security plan item 6b)
 
 **Decision:** (1) `update-template.sh` writes a new file's blob to a temp file before showing its first 40 lines, and says how many lines are not shown. `git show | head -40` under `pipefail` died with SIGPIPE — exit 141, no output at all — on any new file larger than the pipe buffer, so `--dry-run` and every apply failed silently. (2) A template-side exec-bit change with identical bytes now counts as a change: it is listed as `mode change: A -> B`, it is part of DIFF-SHA, and the apply sets or clears the bit to match the template. Before, such a file was reported as "already matches" and never synced.

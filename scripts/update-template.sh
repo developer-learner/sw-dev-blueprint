@@ -153,6 +153,29 @@ fi
 TFILES=$(git -C "$CLONE" show "$TARGET:scripts/.manifest-template" 2>/dev/null | awk '{print $2}' | grep . ) \
   || die "template@${TARGET:0:12} has no scripts/.manifest-template — pre-D-33 ref?"
 
+# --- D-200: the TEMPLATE's manifest decides where this script writes. Refuse
+# an unsafe destination before anything is diffed or written: traversal,
+# absolute paths, empty or doubled separators, anything under .git, and any
+# destination that is — or sits below — a symlink in this child (`> "$f"`
+# and `mkdir -p` follow links, so a linked directory would carry the write
+# outside the repo; `git add` only noticed afterwards).
+check_template_path() {
+  local p="$1" d
+  case "$p" in
+    ""|/*|..|../*|*/..|*/../*|*//*|.git|.git/*|*/.git|*/.git/*|*\\*)
+      die "unsafe template path: '$p' (must be a plain repo-relative path)" ;;
+  esac
+  [ ! -L "$p" ] || die "unsafe template path: '$p' (destination is a symlink)"
+  d=$(dirname "$p")
+  while [ "$d" != "." ]; do
+    [ ! -L "$d" ] || die "unsafe template path: '$p' (parent '$d' is a symlink)"
+    d=$(dirname "$d")
+  done
+}
+for f in $TFILES scripts/.manifest-template; do
+  check_template_path "$f"
+done
+
 # --- Claims: plain-language record of the update range (commit messages) ---
 BASE_REF=$(grep '^ref=' .template-version | cut -d= -f2)
 CLAIMS=$(git -C "$CLONE" log --reverse --format='— %s%n%b' "$BASE_REF..$TARGET" -- 2>/dev/null | sed -e 's/^/  /' -e 's/[[:space:]]*$//' | grep -v '^$' || true)

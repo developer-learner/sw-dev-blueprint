@@ -9577,6 +9577,52 @@ def test_update_template_exec_bit_change_is_a_change(template_pull_pair):
     assert os.access(child / "scripts" / "hello.sh", os.X_OK)
 
 
+def _pin_manifest_entry(clone, entry):
+    """Append a raw manifest entry to the template clone (no file needed)."""
+    m = clone / "scripts" / ".manifest-template"
+    m.write_text(m.read_text() + "0" * 64 + "  " + entry + "\n")
+    subprocess.run(["git", "add", "-A"], cwd=clone, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit",
+                    "-qm", f"pin {entry}"], cwd=clone, check=True)
+
+
+@pytest.mark.parametrize("entry", [
+    "../escape.sh", "/tmp/swbp-abs-escape.sh", "scripts/../../escape.sh",
+    ".git/hooks/pre-commit", "scripts//double.sh",
+])
+def test_update_template_refuses_unsafe_template_paths(template_pull_pair, entry):
+    """D-200: the template manifest decides where the updater writes; an
+    unsafe entry is refused before anything is diffed or written."""
+    child, clone = template_pull_pair
+    _pin_manifest_entry(clone, entry)
+    before = _head(child)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "unsafe template path" in r.stderr, r.stderr
+    assert _head(child) == before
+    assert "old-content" in (child / "scripts" / "hello.sh").read_text()
+    assert not (child.parent / "escape.sh").exists()
+    assert not Path("/tmp/swbp-abs-escape.sh").exists()
+
+
+def test_update_template_refuses_write_through_symlinked_dir(template_pull_pair, tmp_path):
+    """D-200: a template file whose destination parent is a symlink in the
+    child must not be written through the link to a directory outside it."""
+    child, clone = template_pull_pair
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (child / "ext").symlink_to(outside)
+    subprocess.run(["git", "add", "ext"], cwd=child, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture: symlinked dir"], cwd=child, check=True)
+    _clone_add_file(clone, "ext/evil.sh", "echo evil\n")
+    before = _head(child)
+    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "unsafe template path" in r.stderr, r.stderr
+    assert not (outside / "evil.sh").exists(), "wrote through the symlink"
+    assert _head(child) == before
+
+
 def test_update_template_commit_records_diff_sha_trailer(template_pull_pair):
     """D-193: the [template-update ...] commit must carry a
     Template-Diff-SHA: trailer equal to the DIFF-SHA the approval bound to —
