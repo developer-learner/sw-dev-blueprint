@@ -123,8 +123,10 @@ python3 scripts/selftest/selftest_plane_snapshot.py
 
 Steady-state cadence (D-28, D-75, D-112): each task's mapped frozen tests
 run right after that task; the delta's verdict run closes the milestone at
-run end — the mapped tests plus every DEPENDENT frozen test (its file imports
-a module the milestone created or modified, D-188) (the full frozen suite is an on-demand `--full-suite`
+run end — the mapped tests plus every DEPENDENT frozen test (its file
+reaches, directly or transitively through the import graph, a module the
+milestone created or modified, or sits under a modified conftest.py's
+directory, D-188/D-191) (the full frozen suite is an on-demand `--full-suite`
 regression check); the freeze itself verifies only the delta (the D-75
 red-before-green check, which is confined to the Linux sandbox and halts
 if it cannot obtain a readable report). A full-suite run
@@ -132,6 +134,14 @@ at freeze time is **catch-up only** — for freezes where `src/` changed
 outside the pipeline (the testchat v65 case). A steady-state freeze that
 re-runs the whole suite is duplicating the run's own closing gate, not
 adding safety.
+
+The dependent set is computed by `validate-plan.py --dependent-ids` from the
+plan, the frozen node-ids, and the actual tree. When that selection is
+UNCERTAIN — a frozen test file missing from the tree, a plan task file
+missing, or an unparseable file in the import graph — the command exits 1
+and the verdict block falls back to the full frozen suite (D-191). It never
+silently narrows to the mapped union: the silent exclusion of unparseable
+inputs is exactly how vortex v43 reached [success] with the full suite red.
 
 Every collected frozen test must finish with an ordinary `passed` outcome.
 Skipped, xfailed, xpassed, and xfail-marked passes are red acceptance results

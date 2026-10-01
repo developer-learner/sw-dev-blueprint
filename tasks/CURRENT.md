@@ -24,6 +24,15 @@ designed D-176) + T11 rich-adoption (Phase 0 done D-175, v1 spec drafting)
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-01: **Security plan item 4 implemented (D-191), worktree `secplan-4-15` (branched from main @ D-190).**
+      Dependent verdict coverage now follows the transitive import graph (two-hop
+      dependencies, `__init__` chains) and modified conftest.py directory subtrees.
+      The old fail-open `|| true` is gone: a missing or unparseable input makes
+      `--dependent-ids` exit 1 and the verdict block runs the full frozen suite.
+      Validation: 677 control-plane selftests passed (670 baseline + 7 new);
+      fail-before/passing-after demonstrated for all six new failure modes.
+      Items 5–15 continue in this worktree; the main tree stays free for the
+      dev-VM run.
 - 2026-09-30: **Security plan items 1–3 + 11 landed (D-189/D-190), committed 2026-10-01 as three commits (item 11 sandbox; items 1+2; item 3).**
       Host cache access refuses symlinks; test verdicts cross-check runner status,
       report consistency, and exact frozen coverage; plan/create/edit paths enforce

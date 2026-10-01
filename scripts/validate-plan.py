@@ -33,10 +33,18 @@ Modes:
   validate-plan.py --affected DELTA.json [DELTA.json ...]
                                             print ids invalidated across re-freezes
                                             delta, including transitive dependents
-  validate-plan.py --dependent-ids   frozen node-ids NOT mapped by the plan whose
-                                     test file imports a module an inventory
-                                     file defines (created or modified; src/
-                                     layout aware) — the D-112 verdict adds them
+  validate-plan.py --dependent-ids   frozen node-ids NOT mapped by the plan
+                                     whose test file reaches — directly or
+                                     transitively through the import graph,
+                                     or via a modified conftest.py's
+                                     directory subtree — a module an
+                                     inventory file defines (created or
+                                     modified; src/ layout aware) — the
+                                     D-112 verdict adds them. Exit 1 with a
+                                     reason on stderr when the selection is
+                                     uncertain (missing/unparseable input);
+                                     the verdict then runs the full frozen
+                                     suite (D-191)
   validate-plan.py --milestone-scope DELTA.json [DELTA.json ...]
                                             print the authoritative milestone
                                             node-id scope (sorted-unique, one per
@@ -1827,63 +1835,171 @@ def _inventory_modules(task_files):
     return mods
 
 
-def _file_imports_any(path, mods):
-    """True when a test file imports (anywhere in it, absolute imports only)
-    a module in `mods`, directly or as `from pkg import mod`."""
-    try:
-        tree = ast.parse(Path(path).read_text(), filename=path)
-    except (OSError, SyntaxError, ValueError):
-        return False
+class DependentLookupError(Exception):
+    """The dependent-test selection is UNCERTAIN: a frozen test file or a
+    source file in the import graph is missing or unparseable. The verdict
+    must fall back to the full frozen suite — never silently narrow to the
+    mapped union (D-191; the old silent exclusion is how vortex v43 reached
+    [success] with the full suite red)."""
+
+
+# Machine-generated / non-source directories the import graph never walks.
+# Anything else in the tree is parsed: an unparseable .py file at verdict
+# time is a signal, and a signal must not be swallowed (D-191).
+_GRAPH_SKIP_DIRS = {
+    ".git", ".cache", ".pytest_cache", ".ruff_cache", ".mypy_cache",
+    "__pycache__", ".pipeline-state", ".em-archive", ".tpm", ".measurement",
+    "node_modules", ".venv", "venv", "env",
+}
+
+
+def _import_targets(tree):
+    """Absolute import targets of a parsed tree, expanded to every module
+    that executing the import would load: `import a.b` loads a, a.b;
+    `from a.b import c` loads a, a.b and possibly a.b.c (c may be a module).
+    Relative imports and `import *` are not followed (they cannot name a
+    target without their package context)."""
+    names = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import) and any(a.name in mods for a in node.names):
-            return True
-        if (isinstance(node, ast.ImportFrom) and node.module and not node.level
-                and (node.module in mods
-                     or any(f"{node.module}.{a.name}" in mods for a in node.names))):
-            return True
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                names.add(a.name)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module)
+            for a in node.names:
+                if a.name != "*":
+                    names.add(f"{node.module}.{a.name}")
+    out = set()
+    for n in names:
+        parts = n.split(".")
+        for i in range(1, len(parts) + 1):
+            out.add(".".join(parts[:i]))
+    return out
+
+
+def _py_module_map(root):
+    """(name -> file, file -> import targets) for every .py file under root,
+    in both flat and src/-stripped spellings. Raises DependentLookupError on
+    an unparseable file — a selection that cannot be computed is uncertain,
+    not empty (D-191)."""
+    by_name = {}
+    imports_by_file = {}
+    for p in sorted(root.rglob("*.py")):
+        if any(part in _GRAPH_SKIP_DIRS for part in p.parts):
+            continue
+        rel = p.as_posix()
+        try:
+            tree = ast.parse(p.read_text(), filename=rel)
+        except (OSError, SyntaxError, ValueError) as exc:
+            raise DependentLookupError(f"cannot parse {rel}: {exc}") from exc
+        imports_by_file[rel] = _import_targets(tree)
+        dotted = rel[:-3].replace("/", ".").removesuffix(".__init__")
+        for name in {dotted, dotted.removeprefix("src.")}:
+            if name and name not in by_name:
+                by_name[name] = rel
+    return by_name, imports_by_file
+
+
+def _reaches_inventory(test_file, mods, by_name, imports_by_file):
+    """True when the transitive import closure of `test_file` reaches a
+    module in `mods`: the test imports a module that (transitively) imports
+    an inventory module — including through package __init__ chains, since
+    every import loads its parent packages."""
+    visited = set()
+    stack = [test_file]
+    while stack:
+        f = stack.pop()
+        if f in visited:
+            continue
+        visited.add(f)
+        for target in imports_by_file.get(f, ()):  # missing file: no edges
+            if target in mods:
+                return True
+            src = by_name.get(target)
+            if src is not None and src not in visited:
+                stack.append(src)
     return False
 
 
 def dependent_node_ids(task_files, nodeids, mapped=()):
-    """Frozen node-ids that DEPEND on this milestone but are not mapped to it:
-    their test file imports a module an inventory file defines, whether the
-    task created or MODIFIED it. D-112 judges a milestone by "what it can
-    touch" (dependent-based testing), but the mapped union only covers tests
-    the plan assigned, and the D-57 ownership projection counts only CREATED
-    modules — so a frozen test of a modified module (vortex v43: the Stop
-    Vortex confirm-order and stdlib-allowlist tests of edited ui.py and
-    discovery.py) was neither mapped nor run, and [success] landed with the
-    suite red. These ride the verdict as carried nodes (D-77 triage applies).
+    """Frozen node-ids that DEPEND on this milestone but are not mapped to it.
+    D-112 judges a milestone by "what it can touch" (dependent-based
+testing), but the mapped union only covers tests the plan assigned, and the
+    D-57 ownership projection counts only CREATED modules — so a frozen test
+    of a modified module (vortex v43: the Stop Vortex confirm-order and
+    stdlib-allowlist tests of edited ui.py and discovery.py) was neither
+    mapped nor run, and [success] landed with the suite red. These ride the
+    verdict as carried nodes (D-77 triage applies).
+
+    D-191 (security plan item 4): a test file DEPENDS on the milestone when
+    its transitive import closure reaches a module an inventory file defines
+    (created or MODIFIED; src/-layout aware), or when an inventory file is a
+    conftest.py and the test sits under that conftest's directory (pytest
+    loads conftest.py without an import edge — fixtures included). Raises
+    DependentLookupError when the selection is uncertain (a frozen test file
+    missing from the tree, or an unparseable file in the graph) instead of
+    silently dropping it; the verdict block turns that into the full-suite
+    fallback.
     """
     mods = _inventory_modules(task_files)
-    if not mods:
+    conftest_dirs = [f.rsplit("/", 1)[0] if "/" in f else ""
+                     for f in task_files
+                     if f.endswith(".py") and Path(f).name == "conftest.py"]
+    if not mods and not conftest_dirs:
         return []
+    by_name, imports_by_file = _py_module_map(Path("."))
+    missing = sorted({n.split("::")[0] for n in nodeids}
+                     - set(imports_by_file))
+    if missing:
+        raise DependentLookupError(
+            f"frozen test file(s) missing from tree: {', '.join(missing)}")
     mapped = set(mapped)
-    by_file = {}
     out = []
     for n in nodeids:
         if n in mapped:
             continue
         tf = n.split("::")[0]
-        if tf not in by_file:
-            by_file[tf] = _file_imports_any(tf, mods)
-        if by_file[tf] and n not in out:
+        under_conftest = any(
+            (not d and True) or tf == d or tf.startswith(d + "/")
+            for d in conftest_dirs)
+        if under_conftest or _reaches_inventory(tf, mods, by_name, imports_by_file):
             out.append(n)
     return out
 
 
 def cmd_dependent_ids():
     """Print dependent_node_ids for the current plan and frozen node-ids (one
-    per line). Prints nothing when either input is absent."""
-    if not PLAN.exists() or not NODEIDS.exists():
-        return
+    per line). Exit 0 with no output when the selection is certain and
+    empty; exit 1 with the reason on stderr when it is uncertain (missing or
+    unparseable input) — the verdict block falls back to the full frozen
+    suite (D-191)."""
+    if not PLAN.exists():
+        print(f"dependent-ids: uncertain — no plan at {PLAN}", file=sys.stderr)
+        return 1
+    if not NODEIDS.exists():
+        print(f"dependent-ids: uncertain — no frozen node-ids at {NODEIDS}",
+              file=sys.stderr)
+        return 1
     plan = load_json(PLAN, "plan")
     tasks = plan.get("tasks", [])
+    task_files = [t.get("file", "") for t in tasks]
+    missing = [f for f in task_files
+               if f.endswith(".py") and not Path(f).is_file()]
+    if missing:
+        print("dependent-ids: uncertain — plan task file(s) missing from "
+              f"tree: {', '.join(missing)}", file=sys.stderr)
+        return 1
     mapped = {n for t in tasks for n in t.get("tests", [])}
-    nodeids = [line.strip() for line in NODEIDS.read_text().splitlines() if line.strip()]
-    ids = dependent_node_ids([t.get("file", "") for t in tasks], nodeids, mapped)
+    nodeids = [line.strip() for line in NODEIDS.read_text().splitlines()
+               if line.strip()]
+    try:
+        ids = dependent_node_ids(task_files, nodeids, mapped)
+    except DependentLookupError as exc:
+        print(f"dependent-ids: uncertain — {exc}", file=sys.stderr)
+        return 1
     if ids:
         print("\n".join(ids))
+    return 0
 
 
 def _hit_task_ids(tasks, delta, test_slice=None):
@@ -2995,8 +3111,7 @@ def main(argv):
         cmd_affected(argv[1:])
         return
     if argv[0] == "--dependent-ids" and len(argv) == 1:
-        cmd_dependent_ids()
-        return
+        raise SystemExit(cmd_dependent_ids())
     if argv[0] == "--milestone-scope" and len(argv) >= 2:
         cmd_milestone_scope(argv[1:])
         return

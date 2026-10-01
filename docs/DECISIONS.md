@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-191 — 2026-10-01 — Dependent-test coverage: transitive graph, conftest subtrees, fail-closed fallback (security plan item 4)
+
+**Decision:** The D-112 dependent set now follows the import graph TRANSITIVELY (a test of `svc` is dependent when the milestone modified `core`, which `svc` imports — including through package `__init__` chains) and covers modified `conftest.py` files by their directory subtree (pytest loads conftest without an import edge, fixtures included). The graph is built by parsing every `.py` file in the tree outside machine-generated directories. When the selection is uncertain — a frozen test file or plan task file missing from the tree, or an unparseable file in the graph — `validate-plan.py --dependent-ids` exits 1 with the reason on stderr, and the verdict block runs the FULL frozen suite instead of the mapped union plus computable dependents.
+
+**Reason:** The direct-import check plus `2>/dev/null || true` in the verdict block was fail-open in three ways: two-hop dependencies were invisible, conftest/fixture dependencies were invisible, and any lookup error (missing or unparseable input) silently degraded to "no dependent tests" — narrowing the verdict to exactly the tests the plan chose to map. That is the vortex v43 failure mode (success with the full suite red) with an extra trigger. Running the full suite on uncertainty is the conservative fallback: it can only add tests, never remove them, and the D-77 flake triage still applies to every carried node.
+
+**Alternatives considered:** Hard-die on an uncertain lookup — rejected: a stale or odd file should slow the milestone (full suite), not stop it; the real defect still surfaces as a red verdict. Treating only the affected file as uncertain and keeping the rest of the selection — rejected: partial selections from a partially understood tree are the same fail-open class; the unit is the whole selection. Rejecting multi-link (hard-linked) source files in the graph — unnecessary: the graph is read-only.
+
+**Do not suggest:** Restoring `|| true` around `--dependent-ids` "to keep the pipeline moving"; skipping the parse of directories like `spike/` or `examples/` "for speed" (an unparseable `.py` in the tree at verdict time is a signal); narrowing the fallback to "mapped plus the parseable dependents"; making the fallback opt-in per repo.
+
 ## D-190 — 2026-09-30 — Source destination containment (security plan item 3)
 
 **Decision:** `source_paths.py` is shared by `validate-plan.py`, `run_coder`, and both coder write paths. Require canonical relative descendants of the configured build lane; refuse traversal and symlinked destinations or ancestors. Recheck at apply time and walk directory descriptors with `O_NOFOLLOW`. Write to an exclusive temporary file and atomically replace the destination, preserving existing permissions; a hard-linked destination cannot redirect the write into another file.

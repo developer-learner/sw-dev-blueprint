@@ -2673,20 +2673,34 @@ for t in p.get('tasks', []):
         if n not in ids:
             ids.append(n)
 print('\n'.join(ids))")
-  # Dependent tests (D-112 amend 2026-09-30): frozen tests NOT mapped to a
-  # task but whose file imports a module this milestone created or MODIFIED
-  # (src/-layout aware). "A feature is judged by what it can touch" — the
-  # mapped union alone missed these (vortex v43 reached [success] with the
-  # full suite 3 red). They ride the run as carried nodes, so the D-77 flake
-  # triage and the DRIFT routing below apply to them. Absent inputs (no plane
-  # path, no frozen node-ids) degrade to none — never to a failure.
+  # Dependent tests (D-112 amend 2026-09-30, D-191 2026-10-01): frozen tests
+  # NOT mapped to a task but whose file reaches — directly, TRANSITIVELY
+  # through the module graph, or via a modified conftest.py's directory
+  # subtree — a module this milestone created or MODIFIED (src/-layout
+  # aware). "A feature is judged by what it can touch" — the mapped union
+  # alone missed these (vortex v43 reached [success] with the full suite 3
+  # red). They ride the run as carried nodes, so the D-77 flake triage and
+  # the DRIFT routing below apply to them. An UNCERTAIN lookup (missing or
+  # unparseable input, exit 1 from --dependent-ids) must not silently narrow
+  # the verdict to the mapped union — it falls back to the full frozen suite
+  # (D-191). No plane path (selftest harness) still skips the lookup.
   DEP_IDS=()
+  DEP_LOOKUP="ok"
   if [ -n "${PLANE_DIR:-}" ] && [ -f "${PLANE_DIR:-}/scripts/validate-plan.py" ]; then
-    while IFS= read -r _did; do
-      [ -n "$_did" ] && DEP_IDS+=("$_did")
-    done < <(python3 "$PLANE_DIR/scripts/validate-plan.py" --dependent-ids 2>/dev/null || true)
+    if dep_out=$(python3 "$PLANE_DIR/scripts/validate-plan.py" --dependent-ids 2>&1); then
+      while IFS= read -r _did; do
+        [ -n "$_did" ] && DEP_IDS+=("$_did")
+      done <<< "$dep_out"
+    else
+      DEP_LOOKUP="uncertain"
+      echo "WARNING: dependent-test lookup uncertain — $dep_out"
+      echo "         verdict falls back to the full frozen suite (D-191)"
+    fi
   fi
-  if [ "${#VERDICT_IDS[@]}" -gt 0 ] || [ "${#DEP_IDS[@]}" -gt 0 ]; then
+  if [ "$DEP_LOOKUP" = "uncertain" ]; then
+    echo "=== Verdict: full frozen suite (dependent lookup uncertain, D-191) ==="
+    run_tests
+  elif [ "${#VERDICT_IDS[@]}" -gt 0 ] || [ "${#DEP_IDS[@]}" -gt 0 ]; then
     echo "=== Verdict: ${#VERDICT_IDS[@]} delta-mapped + ${#DEP_IDS[@]} dependent test(s) (D-112) ==="
     run_tests ${VERDICT_IDS[@]+"${VERDICT_IDS[@]}"} ${DEP_IDS[@]+"${DEP_IDS[@]}"}
   else

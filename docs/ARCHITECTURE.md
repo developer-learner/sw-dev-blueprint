@@ -206,6 +206,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-47**: External TPM review of D-40..D-46 adjudicated
 - **D-59**: The coder edits existing files through anchored blocks
 - **D-190**: Plan and coder paths share canonical lane validation and no-follow filesystem access; atomic replacement prevents writes through hard links.
+- **D-191**: Dependent verdict coverage follows the transitive import graph and modified conftest subtrees; an uncertain lookup exits 1 and the verdict falls back to the full frozen suite instead of narrowing to the mapped union (TESTING.md).
 - **D-76/D-84**: `project-trail/` running project record (né `postmortems/`) — unauthoritative, conductor- and human-authored, zero pipeline dependency, narrative never evidence
 
 ### Recent pipeline architecture (post-D-108 highlights)
