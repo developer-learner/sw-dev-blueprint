@@ -9219,6 +9219,33 @@ def test_ci_lints_template_owned_python_scripts():
     )
 
 
+def test_ci_shellchecks_template_owned_shell_scripts():
+    """D-203: the unconditional control-plane job runs shellcheck at error
+    severity over the shell half of the plane (orchestrate, refreeze, the
+    hooks, the selftest drivers). Error severity is clean today, so the step
+    gates new script errors without a backlog of style warnings."""
+    workflow = (SCRIPTS.parent / ".github" / "workflows" / "ci.yml").read_text()
+    assert re.search(
+        r"(?m)^\s*(?:run:\s*)?shellcheck -S error -e SC1090,SC1091 "
+        r"scripts/\*\.sh scripts/selftest/\*\.sh \.githooks/\*\s*$",
+        workflow,
+    ), "CI selftest job must shellcheck the control-plane shell scripts"
+
+
+def test_control_plane_shell_scripts_pass_shellcheck_errors():
+    """The same check, locally, whenever shellcheck is installed — so a
+    script error fails here before it reaches CI."""
+    import shutil as _sh
+    if _sh.which("shellcheck") is None:
+        pytest.skip("shellcheck not installed (CI runs it unconditionally)")
+    root = SCRIPTS.parent
+    files = sorted(str(p) for pat in ("scripts/*.sh", "scripts/selftest/*.sh",
+                                      ".githooks/*") for p in root.glob(pat))
+    r = subprocess.run(["shellcheck", "-S", "error", "-e", "SC1090,SC1091", *files],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-3000:]
+
+
 def test_plan_trivial_one_file_zero_em_calls(tmp_path):
     """Cut 2 through the REAL ensure_plan: a trivial one-file re-freeze
     takes ZERO EM calls, no plan-revision budget spent, gate green,

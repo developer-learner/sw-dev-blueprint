@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-203 — 2026-10-01 — CI shellchecks the control-plane shell scripts (security plan item 12, CI part)
+
+**Decision:** The unconditional CI `selftest` job runs `shellcheck -S error -e SC1090,SC1091` over `scripts/*.sh`, `scripts/selftest/*.sh` and `.githooks/*`. A selftest pins the step, and a second selftest runs the same check locally whenever shellcheck is installed.
+
+**Alternatives considered:** (a) Warning severity — rejected for now: 32 warnings exist, 23 of them unused variables; the rest were reviewed and are not bugs (a literal `done` argument, a reused variable name after its array use ends, `cd` without `|| exit` in operator scripts). Gating on them would turn CI red on style. (b) No type checking for `scripts/` — kept out: the Python half already has ruff, and the selftests exercise it.
+
+**Reason:** Quoting bugs (D-202) and similar shell errors were invisible to every existing check. Error severity is clean today, so the step can gate without a backlog.
+
+**Do not suggest:** lowering to `-S warning` in CI without first clearing the warnings; skipping the step in children (the same scripts run there).
+
 ## D-202 — 2026-10-01 — Every plane helper path is quoted (security plan item 12, quoting part)
 
 **Decision:** All 77 bare `$PLANE_DIR/...` expansions in `orchestrate.sh`, `refreeze.sh`, `tpm-pack.sh`, `tpm-agent.sh`, `tpm-view.sh` and `em-bench.sh` are quoted. `selftest_parallel_coder.py::test_plane_paths_with_a_space_still_work` runs the real coder path from a directory whose name contains a space.

@@ -51,6 +51,13 @@ jobs:
         run: pip install pytest pytest-json-report ruff
       - name: Lint control-plane Python
         run: ruff check --isolated --select E4,E7,E9,F scripts/
+      - name: Shellcheck control-plane shell scripts
+        # D-203: error severity only — clean today, so this gates new script
+        # errors without a backlog of style warnings. shellcheck ships on the
+        # ubuntu runner image; install only if a future image drops it.
+        run: |
+          command -v shellcheck >/dev/null || sudo apt-get install -y shellcheck
+          shellcheck -S error -e SC1090,SC1091 scripts/*.sh scripts/selftest/*.sh .githooks/*
       - name: Gate-script self-tests
         # Glob every selftest_*.py — NOT the bare directory: pytest's default
         # python_files is test_*.py, so `pytest scripts/selftest/` collects
