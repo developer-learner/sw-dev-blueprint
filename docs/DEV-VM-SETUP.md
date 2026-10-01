@@ -86,9 +86,14 @@ Podman becomes native.
    smoke-test debt in the correction log (2026-07-03) — plumbing bugs in
    the model path are invisible to static review; only a live round-trip
    catches them.
-6. **Live shared repo, no copy-in/out.** virtiofs mount preserves
-   `.pipeline-state` crash checkpointing (D-24) and git continuity.
-   Host-side results are visible immediately.
+6. **Live shared repo, no copy-in/out — narrowed mounts (D-196).** virtiofs
+   mounts preserve `.pipeline-state` crash checkpointing (D-24) and git
+   continuity; host-side results are visible immediately. The VM mounts only
+   the four working projects (`~/dev/sw-dev-blueprint`, `~/dev/vortex`,
+   `~/dev/testchat`, `~/dev/rich-adoption`), never `~/dev` wholesale — every
+   other project under `~/dev` (some hold `.env` secrets) is deliberately not
+   mounted. Copy-in/copy-out remains the scheduled stronger fix; the narrowed
+   live mount is the interim boundary.
 
 ## What NOT to change
 
@@ -168,7 +173,7 @@ Podman becomes native.
 - [x] New DECISIONS.md entry recording the D-53 partial reversal — D-55
       (2026-07-05) records the cross-boundary model-access reversal and
       the round-trip smoke that guards it.
-- [ ] Host filesystem outside the shared mount untouched by anything in
+- [ ] Host filesystem outside the shared mounts untouched by anything in
       the VM — **still open as a verified claim**: the provisioning
-      confines VM access to the virtiofs dev mount, but no recorded
-      session has probed an out-of-mount write attempt.
+      confines VM access to the four per-project virtiofs mounts (D-196),
+      but no recorded session has probed an out-of-mount write attempt.

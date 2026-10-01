@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-196 — 2026-10-01 — The dev VM mounts four projects, never ~/dev wholesale (security plan item 10, repo part)
+
+**Decision:** `lima/dev-vm.yaml` mounts exactly `~/dev/sw-dev-blueprint`, `~/dev/vortex`, `~/dev/testchat` and `~/dev/rich-adoption` writable, instead of all of `~/dev`. `scripts/selftest/selftest_lima_mounts.py` pins that set and refuses a whole-`~/dev` or home mount. This changes the repo file only; the live VM picks it up when the operator recreates or edits it.
+
+**Alternatives considered:** (a) Keep the `~/dev` mount — rejected: an allow-all agent in the VM could write every project, including ones that hold `.env` files, by accident. (b) Copy-in/copy-out (the VM works on its own clone and returns git commits) — the stronger fix, scheduled separately; it removes write access to host repos entirely, which narrowing does not.
+
+**Reason:** Under the buggy-not-hostile threat model the risk is an accidental write outside the project being built; narrowing the mount shrinks that blast radius from every project to four.
+
+**Do not suggest:** re-widening to `~/dev` for convenience; treating the narrowed mount as the final boundary (copy-in/copy-out is).
+
 ## D-195 — 2026-10-01 — The mypy green-cache fingerprint hashes the sandbox helper (security plan item 13)
 
 **Decision:** The D-142 mypy fingerprint in `run_tests` receives the sandbox helper's path through `SWBP_FP_SANDBOX` and hashes that file. The previous tuple entry `"$PLANE_DIR/scripts/sandbox-run.sh"` sat inside a quoted heredoc, so it was never expanded: Python looked for a file literally named `$PLANE_DIR/...`, found none, and silently left the helper out. A missing variable fails the fingerprint (and with it the run), never skips the input.

@@ -4,7 +4,7 @@
 # Design: see tasks/HANDOFF-dev-vm.md constraints 1-6.
 # - Persistent, headless Linux guest.
 # - Native Podman (replaces host podman-machine; same nesting depth).
-# - virtiofs mount of the dev directory (primary working-tree home).
+# - virtiofs mounts of the four working projects (primary working-tree home).
 # - Host-gateway networking so the VM reaches LM Studio on the Mac.
 
 images:
@@ -18,8 +18,17 @@ memory: "8GiB"
 disk: "50GiB"
 
 mountType: "virtiofs"
+# D-196: mount only the projects the VM works in — never ~/dev wholesale.
+# Every other project under ~/dev (some hold .env secrets) is deliberately
+# NOT mounted.
 mounts:
-  - location: "~/dev"
+  - location: "~/dev/sw-dev-blueprint"
+    writable: true
+  - location: "~/dev/vortex"
+    writable: true
+  - location: "~/dev/testchat"
+    writable: true
+  - location: "~/dev/rich-adoption"
     writable: true
 
 hostResolver:
