@@ -9246,6 +9246,25 @@ def test_control_plane_shell_scripts_pass_shellcheck_errors():
     assert r.returncode == 0, r.stdout[-3000:]
 
 
+def test_containerfile_pins_every_directly_installed_tool():
+    """D-204: the sandbox image's tools decide gate behavior (pytest and the
+    json-report plugin shape the verdict; ruff/mypy shape lint and type
+    gates). Every package the Containerfile pip-installs directly carries an
+    exact ==version, so a rebuild cannot silently change a gate. The base
+    image stays on its minor tag (OS patches) and `-r requirements.txt`
+    is the project's own pin file."""
+    text = (SCRIPTS.parent / "Containerfile").read_text()
+    joined = re.sub(r"\\\n\s*", " ", text)
+    unpinned = []
+    for m in re.finditer(r"pip install([^&\n]*)", joined):
+        for tok in m.group(1).split():
+            if tok.startswith("-") or tok.startswith("/") or tok == "&&":
+                continue
+            if "==" not in tok:
+                unpinned.append(tok)
+    assert not unpinned, f"unpinned sandbox tools: {unpinned}"
+
+
 def test_plan_trivial_one_file_zero_em_calls(tmp_path):
     """Cut 2 through the REAL ensure_plan: a trivial one-file re-freeze
     takes ZERO EM calls, no plan-revision budget spent, gate green,

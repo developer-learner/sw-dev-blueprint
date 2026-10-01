@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-204 — 2026-10-01 — The sandbox image pins its tool versions (security plan item 14)
+
+**Decision:** Every package the `Containerfile` installs directly carries an exact version, taken from what the current image resolved (pytest 8.4.2, pytest-json-report 1.5.0, ruff 0.16.4, mypy 2.3.1, playwright 1.62.0, and the rest). A selftest refuses an unpinned direct install. The base image stays on `python:3.12-slim`.
+
+**Alternatives considered:** Pinning the base image by digest — rejected: the locally available digest is the arm64-specific manifest, which would break the amd64 CI build, and a frozen base stops receiving OS security patches. The minor tag already fixes the Python version; the weekly clean build (D-112) catches a base that breaks.
+
+**Reason:** The verdict (D-189) parses pytest-json-report's output, and the lint/type gates run ruff and mypy from this image. Before, a rebuild pulled whatever was newest, so a gate could change behavior with no commit. The image tag is a hash of `Containerfile` + `requirements.txt`, so the pin change itself triggers one rebuild; the CI cold-build job verifies it.
+
+**Do not suggest:** a digest-pinned base without a multi-arch index digest; unpinning "to stay current" (bump the pins deliberately instead).
+
 ## D-203 — 2026-10-01 — CI shellchecks the control-plane shell scripts (security plan item 12, CI part)
 
 **Decision:** The unconditional CI `selftest` job runs `shellcheck -S error -e SC1090,SC1091` over `scripts/*.sh`, `scripts/selftest/*.sh` and `.githooks/*`. A selftest pins the step, and a second selftest runs the same check locally whenever shellcheck is installed.
