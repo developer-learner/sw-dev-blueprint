@@ -153,10 +153,10 @@ Podman becomes native.
       isolation surface directly (`sandbox-run.sh -- sh -c 'id -u'` → uid
       1000, empty CapEff, no-new-privileges; testchat `tasks/CURRENT.md`
       session notes).
-- [ ] Container process cap holds at runtime — `scripts/selftest/verify-sandbox-in-vm.sh`
+- [x] Container process cap holds at runtime — `scripts/selftest/verify-sandbox-in-vm.sh`
       check [7] reads `pids.max` inside the sandbox and expects
-      `${SANDBOX_PIDS_LIMIT:-1024}`. **Not yet run in the VM**; selftests only
-      prove the `--pids-limit` flag reaches a stubbed podman.
+      `${SANDBOX_PIDS_LIMIT:-1024}`. Verified in the VM on 2026-10-06 at
+      `bd36d47`: 12/12 checks passed, `pids.max is 1024`.
 - [x] `llm-call.sh` round-trip to the host model server passes from inside
       the VM — exercised by every milestone's pre-flight smoke since D-55,
       including Vortex's three `[success]` runs (v1 `a6f6ec6`, v2
@@ -179,7 +179,8 @@ Podman becomes native.
 - [x] New DECISIONS.md entry recording the D-53 partial reversal — D-55
       (2026-07-05) records the cross-boundary model-access reversal and
       the round-trip smoke that guards it.
-- [ ] Host filesystem outside the shared mounts untouched by anything in
-      the VM — **still open as a verified claim**: the provisioning
-      confines VM access to the four per-project virtiofs mounts (D-196),
-      but no recorded session has probed an out-of-mount write attempt.
+- [x] Host filesystem outside the shared mounts untouched by anything in
+      the VM — probed live on 2026-10-01 after the D-196 mount change: the VM
+      lists only the four projects under `~/dev`; writes to `mailwatch`,
+      `day-os`, `j-app`, `spark` and the `~/dev` root were all refused and
+      nothing appeared on the host; a write inside `vortex` still worked.
