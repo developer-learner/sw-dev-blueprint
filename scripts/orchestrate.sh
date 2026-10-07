@@ -942,13 +942,6 @@ else
   echo "  WARNING: standing summary generation failed — EM context falls back to the full standing ERD"
 fi
 
-# --- Parse .gate-paths for the build lane ---
-build_dir="src/"
-_raw=$(grep '^build=' .gate-paths | cut -d= -f2- || true)
-if [ -n "$_raw" ]; then
-  _raw="${_raw#./}"; _raw="${_raw%"${_raw##*[![:space:]]}"}"; build_dir="${_raw%/}/"
-fi
-
 # --- Re-freeze detection (the reset itself runs after the plan is fresh) ---
 # Success intentionally deletes the runtime state, including spec_version.
 # Recover that version from the validated durable ledger so a new freeze still
