@@ -44,9 +44,15 @@ commits, not `refreeze.sh` (children's specs still freeze there)
       path is quoted. VM pids-cap runtime check added, not yet run in the
       VM. T7 and T10 were coded by the local coder (Splash fan-out) and
       reviewed; the rest written directly (ad hoc rule). Suite 706 green.
-      Still open: shellcheck in CI (needs shellcheck locally first),
-      Containerfile pins (needs a VM build), live VM mount change,
-      copy-in/copy-out VM redesign, signed roles, report isolation.
+      Finished the same week: shellcheck in CI (D-203), Containerfile tool
+      pins (D-204, built in the VM), live VM narrowed to four mounts (probed:
+      other projects invisible/unwritable), VM sandbox verifier 12/12 incl.
+      pids cap — published at `43c4b3d`, CI green. All 32 shellcheck
+      warnings triaged: none is a bug (21 test-driver globals read by
+      extracted functions, 1 placeholder in `pre-push`, 1 dead `build_dir`
+      parse in orchestrate.sh, the rest reviewed in D-203). Deferred by
+      decision: copy-in/copy-out VM redesign, signed roles, test-oracle
+      isolation.
 - 2026-10-01: **D-194 — template updates auto-apply again; wrong `--approve` refuses everywhere.**
       The CEO ruled that a business owner is never asked to approve a
       technical diff, so D-193's stop-by-default is reversed: the pull
