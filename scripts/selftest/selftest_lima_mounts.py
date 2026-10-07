@@ -15,13 +15,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 LIMA_CONFIG = REPO / "lima" / "dev-vm.yaml"
 
-# The only paths the VM may mount writable (D-196).
-EXPECTED_WRITABLE = {
-    "~/dev/sw-dev-blueprint",
-    "~/dev/vortex",
-    "~/dev/testchat",
-    "~/dev/rich-adoption",
-}
+# D-205: the VM mounts no host project writable. Projects reach it only by
+# copy-in (scripts/vm-sync start) and come back only as checked commits
+# (vm-sync land). The builder checkout is mounted READ-ONLY so swbp and its
+# helpers can run inside the VM.
+EXPECTED_WRITABLE: set[str] = set()
+EXPECTED_READ_ONLY = {"~/dev/sw-dev-blueprint"}
 
 
 def _unquote(value: str) -> str:
@@ -86,9 +85,10 @@ def test_no_whole_dev_or_home_mount() -> None:
         assert whole not in locations, f"whole {whole} is mounted"
 
 
-def test_writable_true_only_for_the_four_projects() -> None:
-    """writable: true is exactly the four working projects — nothing else."""
-    writable = {m["location"] for m in _mounts() if m["writable"]}
-    assert writable == EXPECTED_WRITABLE, (
-        f"writable mounts {sorted(writable)} != expected {sorted(EXPECTED_WRITABLE)}"
-    )
+def test_no_host_project_is_writable_from_the_vm() -> None:
+    """D-205: nothing is mounted writable; only the builder, read-only."""
+    mounts = _mounts()
+    writable = {m["location"] for m in mounts if m["writable"]}
+    read_only = {m["location"] for m in mounts if m["writable"] is False}
+    assert writable == EXPECTED_WRITABLE, f"writable mounts: {sorted(writable)}"
+    assert read_only == EXPECTED_READ_ONLY, f"read-only mounts: {sorted(read_only)}"

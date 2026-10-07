@@ -26,6 +26,17 @@ rich-adoption (Phase 0 D-175).
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-06: **D-205 — copy-in / copy-out: the dev VM writes no host project.**
+      The VM's only mount is the blueprint, read-only; projects go in with
+      `scripts/vm-sync start` (committed HEAD only, onto the VM's disk) and
+      come back only via `scripts/vm-sync land`, which `scripts/vm_land.py`
+      checks before the host changes. 29 selftests, every check
+      mutation-killed; proven live through the Lima VM (round trip, refused
+      symlink, interrupted landing with the host untouched, resume after
+      restart, `swbp tpm-view` against a VM-disk vortex clone). The live VM
+      was reconfigured and its leftover empty mountpoint dirs removed.
+      Workflow change for VM work: start a run, work in the printed VM path,
+      land from the Mac.
 - 2026-10-01: **Security plan, remaining items landed (D-195..D-202), branch `secplan-4-15`.**
       Each with a test shown failing before the fix. D-195 mypy cache
       fingerprint really hashes the sandbox helper. D-196 the dev VM mounts
@@ -51,8 +62,8 @@ commits, not `refreeze.sh` (children's specs still freeze there)
       warnings triaged: none is a bug (21 test-driver globals read by
       extracted functions, 1 placeholder in `pre-push`, 1 dead `build_dir`
       parse in orchestrate.sh, the rest reviewed in D-203). Deferred by
-      decision: copy-in/copy-out VM redesign, signed roles, test-oracle
-      isolation.
+      decision: signed roles, test-oracle isolation (copy-in/copy-out landed
+      as D-205).
 - 2026-10-01: **D-194 — template updates auto-apply again; wrong `--approve` refuses everywhere.**
       The CEO ruled that a business owner is never asked to approve a
       technical diff, so D-193's stop-by-default is reversed: the pull

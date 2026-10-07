@@ -7,8 +7,10 @@
 > authoring, no VM split.
 >
 > **macOS:** the build step hard-requires Linux; set up the Lima VM first
-> (`docs/DEV-VM-SETUP.md`), then run the steps below inside it. On a bare
-> Linux box everything runs in one place — this page assumes that.
+> (`docs/DEV-VM-SETUP.md`), copy the project in with `scripts/vm-sync start
+> <project>`, run the steps below inside the VM path it prints, and bring the
+> result back with `scripts/vm-sync land` (D-205). On a bare Linux box
+> everything runs in one place — this page assumes that.
 
 ## Step 0 — what you need
 

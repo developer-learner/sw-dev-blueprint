@@ -23,9 +23,10 @@ Mac host
 └─ Lima VM (Linux, persistent, headless)
      ├─ Claude Code, OpenCode, Kilo Code (via VS Code Remote-SSH)
      │    — all run with permissions bypassed / full-auto
-     ├─ git repo (shared with host via virtiofs mount;
-     │    VM is the PRIMARY working-tree home — host side is read-mostly
-     │    to avoid dual-edit conflicts)
+     ├─ per-run project clones on the VM's own disk
+     │    (~/swbp-runs/<project>/<run>/ws) — copied in from the host's
+     │    committed HEAD, returned only as checked commits (D-205)
+     ├─ sw-dev-blueprint mounted READ-ONLY (swbp + helpers)
      ├─ Podman (native — D-30 inner sandbox runs unchanged)
      └─ scripts/orchestrate.sh — runs directly, no wrapper
 ```
@@ -35,15 +36,38 @@ Two boundaries, two jobs:
 - **D-30 Podman lanes** (inside the VM, unchanged) protect the control
   plane — tests, gates, frozen spec — from generated code.
 
-### Shared-checkout Git setup
+### Getting work into and out of the VM (D-205)
 
-The virtiofs checkout can retain a host UID that differs from the guest user.
-Run `scripts/bootstrap.sh` from the project inside the VM: it detects Git's
-`dubious ownership` refusal and trusts only that checkout's canonical path.
-It deliberately does not trust `*` or the whole shared mount. Git authorship
-cannot be inferred safely; if the guest has no identity, bootstrap stops before
-dependency installation and prints the two scoped `git config --global`
-commands to run before retrying.
+The VM mounts no host project. Every run goes through `scripts/vm-sync`,
+run **on the Mac**:
+
+```bash
+scripts/vm-sync start ~/dev/vortex                 # prints a run id + the VM path
+scripts/vm-sync exec  ~/dev/vortex <run> -- <cmd>  # or work in that path inside the VM
+scripts/vm-sync land  ~/dev/vortex <run>           # bring the run's commits back
+scripts/vm-sync list  ~/dev/vortex
+scripts/vm-sync discard ~/dev/vortex <run>
+```
+
+- `start` clones the current branch's **committed** HEAD onto the VM's disk.
+  Uncommitted and ignored host files (`.env`, drafts) do not go across unless
+  named with `--copy-file`, and a copied file never comes back.
+- Inside the VM the run is an ordinary checkout on branch `swbp-run`; run the
+  pipeline there as before (`swbp orchestrate --app <that path>`). An
+  interrupted run stays on the VM's disk and can simply continue.
+- `land` pulls back ONE bundle holding only the run's new commits and
+  `scripts/vm_land.py` checks it before anything on the host changes: linear
+  history on top of the recorded base; no symlinks, submodules, `.git`/`..`
+  paths or host-ignored files; the host branch has not moved; no uncommitted
+  host edits to the touched files. The base and branch come from the host's
+  own record in `.git/swbp-vm/`, never from the VM. Anything else is
+  refused with the host untouched.
+- The VM can never push to the host. Landing is always a host-side action.
+
+The guest needs a Git identity for its commits (`git config --global
+user.name/user.email` inside the VM); the clones are VM-owned, so the old
+`dubious ownership` workaround for shared checkouts no longer applies to
+projects.
 
 No VM-in-VM concern: Podman on macOS already runs inside a hidden Linux VM
 (`podman machine`) today. This swaps the hidden VM for a visible one the
@@ -86,16 +110,13 @@ Podman becomes native.
    smoke-test debt in the correction log (2026-07-03) — plumbing bugs in
    the model path are invisible to static review; only a live round-trip
    catches them.
-6. **Live shared repo, no copy-in/out — narrowed mounts (D-196).** virtiofs
-   mounts preserve `.pipeline-state` crash checkpointing (D-24) and git
-   continuity; host-side results are visible immediately. The VM mounts only
-   the four working projects (`~/dev/sw-dev-blueprint`, `~/dev/vortex`,
-   `~/dev/testchat`, `~/dev/rich-adoption`), never `~/dev` wholesale — every
-   other project under `~/dev` (some hold `.env` secrets) is deliberately not
-   mounted. Copy-in/copy-out remains the scheduled stronger fix; the narrowed
-   live mount is the interim boundary. VM-side helpers that used to live
-   elsewhere under `~/dev` moved into this repo (`lima/splash-relay.py`, the
-   VM's relay to the host Splash server).
+6. **Copy-in / copy-out, no writable host mounts (D-205, supersedes D-196's
+   four-project mount).** The only mount is `~/dev/sw-dev-blueprint`,
+   read-only, so `swbp`, its helpers and `lima/splash-relay.py` run in the
+   VM. Projects come in through `scripts/vm-sync start` and go back only
+   through `scripts/vm-sync land` (see "Getting work into and out of the VM").
+   Crash checkpointing (D-24) still works: `.pipeline-state` lives in the
+   run's VM-disk clone, which survives a VM restart.
 
 ## What NOT to change
 
@@ -179,8 +200,12 @@ Podman becomes native.
 - [x] New DECISIONS.md entry recording the D-53 partial reversal — D-55
       (2026-07-05) records the cross-boundary model-access reversal and
       the round-trip smoke that guards it.
-- [x] Host filesystem outside the shared mounts untouched by anything in
-      the VM — probed live on 2026-10-01 after the D-196 mount change: the VM
-      lists only the four projects under `~/dev`; writes to `mailwatch`,
-      `day-os`, `j-app`, `spark` and the `~/dev` root were all refused and
-      nothing appeared on the host; a write inside `vortex` still worked.
+- [x] No host project writable from the VM (D-205) — verified live on
+      2026-10-06: the only virtiofs mount is `~/dev/sw-dev-blueprint` and a
+      write to it is refused; no other project is visible. Through the real
+      VM, a `vm-sync` round trip landed one commit on the recorded base
+      (the VM never saw the host's `.env`); a symlink commit was refused with
+      the host byte-identical; landing with the VM stopped failed with the
+      host byte-identical and no quarantine ref; after restart the same run
+      landed. `swbp tpm-view` ran from the read-only builder against a
+      VM-disk clone of vortex.

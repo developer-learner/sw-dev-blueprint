@@ -210,6 +210,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-192**: The app guard inspects merge-introduced diffs (first-parent, line-authorized) and ratchets enforcement — a hand downgrade of `guard=enforce` cannot demote the check that catches it; the authenticated-role claim waits on the M2b provenance gate (CEO decision).
 - **D-193**: Every `[template-update ...]` commit records the `Template-Diff-SHA:` trailer binding the applied bytes to the reviewed diff. (Its approval-only default was reversed by D-194.)
 - **D-194**: Template updates apply automatically again (D-96); `--require-approval` is the opt-in stop, and a supplied `--approve` hash is verified before any mutation in every branch, ref-advance-only included.
+- **D-205**: The dev VM mounts no host project writable (only the builder, read-only). Runs work on VM-disk clones made by `scripts/vm-sync start`; their commits return only through `vm-sync land`, which `scripts/vm_land.py` checks (base from the host's own record, linear history, no symlink/submodule/`.git`/ignored paths, host branch unmoved, no dirty touched files) before the host changes. Supersedes D-196's four-project mount.
 - **D-76/D-84**: `project-trail/` running project record (né `postmortems/`) — unauthoritative, conductor- and human-authored, zero pipeline dependency, narrative never evidence
 
 ### Recent pipeline architecture (post-D-108 highlights)

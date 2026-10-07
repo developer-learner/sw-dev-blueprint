@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# vm-sync — copy-in / copy-out between host projects and the dev VM (D-205).
+#
+# The dev VM mounts no host project. A run works on its own clone on the VM's
+# disk; the host pulls back only the run's commits and lands them after
+# vm_land.py has checked them. Nothing in the VM can write a host project.
+#
+#   vm-sync start   <project> [--copy-file REL]...   snapshot HEAD into a new VM run
+#   vm-sync exec    <project> <run> -- <cmd...>       run a command in the run's clone
+#   vm-sync land    <project> <run>                   pull the run's commits back, check, land
+#   vm-sync list    <project>                         runs recorded on the host
+#   vm-sync discard <project> <run>                   delete the run's VM clone
+#
+# start snapshots the CURRENT BRANCH's committed HEAD. Uncommitted or ignored
+# host files never go across unless named with --copy-file (e.g. a .env the
+# app's tests need); copied files never come back. The host records each
+# run's base commit and branch in <git-dir>/swbp-vm/<run>; land trusts that
+# record, never anything the VM says.
+#
+# Inside the VM a run lives at ~/swbp-runs/<project>/<run>/ws on branch
+# swbp-run. Agents in the VM work there (e.g. `swbp orchestrate --app <ws>`).
+#
+# Environment: SWBP_VM_NAME (default dev-vm). SWBP_VM_FAKE_HOME runs the "VM"
+# side locally under that directory instead of through limactl (selftests).
+set -euo pipefail
+
+die() { echo "vm-sync: $*" >&2; exit 1; }
+usage() { sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+self="$0"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case $link in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
+done
+HERE="$(cd "$(dirname "$self")" && pwd -P)"
+VM="${SWBP_VM_NAME:-dev-vm}"
+
+# --- transport: the only three ways this script touches the VM -------------
+vm_sh() {  # vm_sh <bash script> — run inside the VM
+  if [ -n "${SWBP_VM_FAKE_HOME:-}" ]; then
+    HOME="$SWBP_VM_FAKE_HOME" bash -c "$1"
+  else
+    limactl shell "$VM" -- bash -lc "$1"
+  fi
+}
+vm_put() {  # vm_put <host file> <absolute VM path>
+  if [ -n "${SWBP_VM_FAKE_HOME:-}" ]; then cp "$1" "$2"
+  else limactl copy "$1" "$VM:$2"; fi
+}
+vm_get() {  # vm_get <absolute VM path> <host file>
+  if [ -n "${SWBP_VM_FAKE_HOME:-}" ]; then cp "$1" "$2"
+  else limactl copy "$VM:$1" "$2"; fi
+}
+q() { printf '%q' "$1"; }
+
+# --- arguments ---------------------------------------------------------------
+[ $# -ge 2 ] || usage
+CMD="$1"; PROJECT_ARG="$2"; shift 2
+[ -d "$PROJECT_ARG" ] || die "project not found: $PROJECT_ARG"
+PROJECT="$(cd "$PROJECT_ARG" && pwd -P)"
+[ "$(git -C "$PROJECT" rev-parse --show-toplevel 2>/dev/null || true)" = "$PROJECT" ] \
+  || die "project must be the root of a git repository: $PROJECT"
+NAME="$(basename "$PROJECT")"
+case "$NAME" in *[!A-Za-z0-9._-]*|.*|"") die "unsupported project directory name: $NAME" ;; esac
+RECORDS="$(git -C "$PROJECT" rev-parse --absolute-git-dir)/swbp-vm"
+
+valid_run() {
+  case "$1" in ""|*[!A-Za-z0-9._-]*|.*) die "invalid run id: $1" ;; esac
+  [ -f "$RECORDS/$1" ] || die "no host record of run $1 for $NAME"
+}
+record_get() { sed -n "s/^$2=//p" "$RECORDS/$1" | head -1; }
+vm_home() { vm_sh 'printf %s "$HOME"'; }
+
+case "$CMD" in
+  start)
+    COPY_FILES=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --copy-file) [ $# -ge 2 ] || usage; COPY_FILES+=("$2"); shift 2 ;;
+        *) usage ;;
+      esac
+    done
+    BRANCH="$(git -C "$PROJECT" symbolic-ref --quiet --short HEAD)" \
+      || die "host checkout is on a detached HEAD; check out a branch first"
+    BASE="$(git -C "$PROJECT" rev-parse --verify HEAD)"
+    for f in ${COPY_FILES[@]+"${COPY_FILES[@]}"}; do
+      case "/$f/" in */../*|*//*|*/./*) die "--copy-file must be a plain relative path: $f" ;; esac
+      case "$f" in /*) die "--copy-file must be relative: $f" ;; esac
+      [ -f "$PROJECT/$f" ] && [ ! -L "$PROJECT/$f" ] \
+        || die "--copy-file is not a regular file: $f"
+    done
+    if [ -n "$(git -C "$PROJECT" status --porcelain)" ]; then
+      echo "vm-sync: note — uncommitted host changes are NOT in the snapshot (committed HEAD only)" >&2
+    fi
+    RUN="$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
+    TMP="$(mktemp -d "${TMPDIR:-/tmp}/vm-sync.XXXXXX")"
+    trap 'rm -rf "$TMP"' EXIT
+    git -C "$PROJECT" bundle create -q "$TMP/in.bundle" "$BRANCH"
+    VHOME="$(vm_home)"
+    RDIR="$VHOME/swbp-runs/$NAME/$RUN"
+    vm_sh "mkdir -p $(q "$RDIR")"
+    vm_put "$TMP/in.bundle" "$RDIR/in.bundle"
+    vm_sh "set -e; cd $(q "$RDIR")
+git clone -q --branch $(q "$BRANCH") in.bundle ws
+git -C ws checkout -q -b swbp-run
+git -C ws remote remove origin
+rm -f in.bundle
+printf 'base=%s\nbranch=%s\n' $(q "$BASE") $(q "$BRANCH") > meta"
+    for f in ${COPY_FILES[@]+"${COPY_FILES[@]}"}; do
+      vm_sh "mkdir -p $(q "$(dirname "$RDIR/ws/$f")")"
+      vm_put "$PROJECT/$f" "$RDIR/ws/$f"
+    done
+    mkdir -p "$RECORDS"
+    printf 'base=%s\nbranch=%s\nvm_path=%s\ncreated=%s\nstate=open\n' \
+      "$BASE" "$BRANCH" "$RDIR/ws" "$(date -u +%FT%TZ)" > "$RECORDS/$RUN"
+    echo "run $RUN started: $NAME@$BRANCH ${BASE:0:12} -> VM $RDIR/ws"
+    echo "$RUN"
+    ;;
+
+  exec)
+    [ $# -ge 1 ] || usage
+    RUN="$1"; shift
+    valid_run "$RUN"
+    [ "${1:-}" = "--" ] && shift
+    [ $# -ge 1 ] || usage
+    WS="$(record_get "$RUN" vm_path)"
+    cmd=""
+    for a in "$@"; do cmd="$cmd $(q "$a")"; done
+    vm_sh "cd $(q "$WS") &&$cmd"
+    ;;
+
+  land)
+    [ $# -eq 1 ] || usage
+    RUN="$1"; valid_run "$RUN"
+    [ "$(record_get "$RUN" state)" = "open" ] || die "run $RUN is $(record_get "$RUN" state), not open"
+    BASE="$(record_get "$RUN" base)"; BRANCH="$(record_get "$RUN" branch)"
+    WS="$(record_get "$RUN" vm_path)"
+    count="$(vm_sh "git -C $(q "$WS") rev-list --count $(q "$BASE")..swbp-run")" \
+      || die "could not read the run's history in the VM"
+    if [ "$count" = "0" ]; then
+      echo "vm-sync: run $RUN has no new commits — nothing to land"
+      exit 0
+    fi
+    TMP="$(mktemp -d "${TMPDIR:-/tmp}/vm-sync.XXXXXX")"
+    trap 'rm -rf "$TMP"' EXIT
+    vm_sh "git -C $(q "$WS") bundle create -q $(q "$WS/../out.bundle") swbp-run ^$(q "$BASE")" \
+      || die "could not bundle the run's commits in the VM"
+    vm_get "$(dirname "$WS")/out.bundle" "$TMP/out.bundle" || die "could not copy the bundle out of the VM"
+    python3 "$HERE/vm_land.py" --repo "$PROJECT" --bundle "$TMP/out.bundle" \
+      --base "$BASE" --branch "$BRANCH" --run "$RUN"
+    tip="$(git -C "$PROJECT" rev-parse "refs/heads/$BRANCH")"
+    sed -i.bak "s/^state=.*/state=landed $tip/" "$RECORDS/$RUN" && rm -f "$RECORDS/$RUN.bak"
+    ;;
+
+  list)
+    [ -d "$RECORDS" ] || { echo "no VM runs recorded for $NAME"; exit 0; }
+    for r in "$RECORDS"/*; do
+      [ -f "$r" ] || continue
+      printf '%s  %s@%s  base %s  %s\n' "$(basename "$r")" "$NAME" \
+        "$(sed -n 's/^branch=//p' "$r")" "$(sed -n 's/^base=//p' "$r" | cut -c1-12)" \
+        "$(sed -n 's/^state=//p' "$r")"
+    done
+    ;;
+
+  discard)
+    [ $# -eq 1 ] || usage
+    RUN="$1"; valid_run "$RUN"
+    WS="$(record_get "$RUN" vm_path)"
+    vm_sh "rm -rf $(q "$(dirname "$WS")")"
+    sed -i.bak "s/^state=.*/state=discarded/" "$RECORDS/$RUN" && rm -f "$RECORDS/$RUN.bak"
+    echo "run $RUN discarded (VM clone removed; host untouched)"
+    ;;
+
+  *) usage ;;
+esac

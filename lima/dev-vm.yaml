@@ -4,7 +4,7 @@
 # Design: see tasks/HANDOFF-dev-vm.md constraints 1-6.
 # - Persistent, headless Linux guest.
 # - Native Podman (replaces host podman-machine; same nesting depth).
-# - virtiofs mounts of the four working projects (primary working-tree home).
+# - No writable project mounts: runs work on VM-disk clones (scripts/vm-sync, D-205).
 # - Host-gateway networking so the VM reaches LM Studio on the Mac.
 
 images:
@@ -18,18 +18,14 @@ memory: "8GiB"
 disk: "50GiB"
 
 mountType: "virtiofs"
-# D-196: mount only the projects the VM works in — never ~/dev wholesale.
-# Every other project under ~/dev (some hold .env secrets) is deliberately
-# NOT mounted.
+# D-205: no host project is mounted writable. A project reaches the VM only
+# by copy-in (`scripts/vm-sync start <project>` clones its committed HEAD onto
+# the VM's own disk) and comes back only as commits that pass the host-side
+# landing checks (`scripts/vm-sync land`). The builder checkout is mounted
+# READ-ONLY so swbp, its helpers and lima/splash-relay.py run inside the VM.
 mounts:
   - location: "~/dev/sw-dev-blueprint"
-    writable: true
-  - location: "~/dev/vortex"
-    writable: true
-  - location: "~/dev/testchat"
-    writable: true
-  - location: "~/dev/rich-adoption"
-    writable: true
+    writable: false
 
 hostResolver:
   enabled: true

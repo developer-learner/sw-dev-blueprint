@@ -155,7 +155,9 @@ path.
 > and requires a Linux environment (Lima VM on Apple Silicon, or bare
 > Linux). Refreeze may inspect and hash files anywhere, but generated-test
 > collection and execution go through the Linux sandbox; run operational
-> refreezes inside the VM. See `docs/DEV-VM-SETUP.md`.
+> refreezes inside the VM. Projects reach the VM only through
+> `scripts/vm-sync` (copy-in / checked copy-out, D-205); the VM mounts no host
+> project writable. See `docs/DEV-VM-SETUP.md`.
 
 > `docs/SANDBOX-VALIDATION.md` is a historical validation record from
 > 2026-06-07 (pre-D-53); kept for provenance, not current setup guidance.
