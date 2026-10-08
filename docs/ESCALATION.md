@@ -13,6 +13,8 @@
 | Rung | Trigger | Actor | Bounded by |
 |------|---------|-------|-----------|
 | retry | task fails once | coder (same brief + failure appended) | `MAX_TASK_STRIKES` (2) |
+| repair progress (D-210) | a retry fails on a strict subset of the previous attempt's failing tests | one more attempt even at the strike cap — progress is new evidence | `SWBP_REPAIR_ATTEMPTS` per brief (default 4) |
+| no progress (D-210) | the same failure again with the file unchanged | skips the remaining retries: straight to the EM consult (matters when `MAX_TASK_STRIKES` > 2) | — |
 | spec report (D-207) | coder replies `=== SPEC PROBLEM: <reason> ===` — the brief cannot be done as written | skips the retry: straight to the EM consult with the coder's reason as evidence (the EM judges brief vs frozen spec) | the consult's own caps |
 | consult | task fails twice | EM writes schema-bound diagnosis (verdict+reason only — the shell stamps `task_id`); an invalid reply earns one retry carrying the validator's errors (D-71) | 1 retry, then halt |
 | `brief_wrong` | EM verdict | revised brief, strikes reset | `MAX_BRIEF_REVISIONS` (default 1) |

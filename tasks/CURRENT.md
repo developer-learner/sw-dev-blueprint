@@ -26,6 +26,14 @@ rich-adoption (Phase 0 D-175).
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-08: **D-209 + D-210 — seat admission test; evidence-driven repair loop.**
+      Rule 1 is now `scripts/seat-check.sh` (complete artifact in content,
+      reasoning models allowed when they pass); test retirement needs
+      positive evidence, not silence. Repair loop: a retry that cuts the
+      failing tests earns one more attempt (cap 4 per brief), a repeat with
+      no change goes to the EM, failure details point at the coder's own
+      lines. Proven in unit tests (7/7 mutants) and live in the e2e
+      simulation. Real-model value still to be measured.
 - 2026-10-08: **D-208 — full milestone simulated end to end; pending gates proven.**
       `scripts/selftest/e2e-sim.sh` ran a scripted-model milestone through
       the real pipeline in the VM: E2E PASS (catches came home, spec report
