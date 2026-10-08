@@ -109,6 +109,26 @@ def expected_ids(selectors: list[str]) -> set[str]:
     return selected
 
 
+def source_frames(phases: list[dict], limit: int = 3) -> str:
+    """D-210: where in the IMPLEMENTATION a failure happened — the traceback
+    frames under src/, innermost last — so a retry brief can point the coder
+    at its own lines without showing it the frozen test's code."""
+    frames: list[str] = []
+    for p in phases:
+        tb = p.get("traceback")
+        if not isinstance(tb, list):
+            continue
+        for entry in tb:
+            if not isinstance(entry, dict):
+                continue
+            path, line = entry.get("path"), entry.get("lineno")
+            if isinstance(path, str) and path.startswith("src/") and isinstance(line, int):
+                frame = f"{path}:{line}"
+                if frame not in frames:
+                    frames.append(frame)
+    return ", ".join(frames[-limit:])
+
+
 def tail(value: object, limit: int = 240) -> str:
     text = re.sub(r"\s+", " ", str(value)).strip()
     return text if len(text) <= limit else "..." + text[-limit:]
@@ -169,7 +189,8 @@ def verdict(r: dict, runner: int, expected: set[str]) -> int:
             if crash.get("message") or p.get("longrepr"):
                 reason = tail(crash.get("message") or p["longrepr"])
                 break
-        details.append(f"{t['nodeid']}: {reason}")
+        where = source_frames(phases)
+        details.append(f"{t['nodeid']}: {reason}" + (f" [at {where}]" if where else ""))
     if failed_collectors:
         failed.append("COLLECTION_ERROR (see .cache/test-report.json)")
         details.append("collection: " + tail(failed_collectors[0].get("longrepr", "")))

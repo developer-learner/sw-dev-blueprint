@@ -90,14 +90,15 @@ def test_both_coder_modes_offer_the_report(tmp_path):
 
 FAIL_HARNESS = EXTRACT + r'''
 set -euo pipefail
-PLANE_DIR="$REPO"; FROZEN_V=7; MAX_TASK_STRIKES=2
+PLANE_DIR="$REPO"; FROZEN_V=7; MAX_TASK_STRIKES="${MAXS:-2}"
 TASK_STATE=state; mkdir -p "$TASK_STATE"
 counter()     { [ -f "$TASK_STATE/$1.$2" ] && cat "$TASK_STATE/$1.$2" || echo 0; }
 set_counter() { printf '%s\n' "$3" > "$TASK_STATE/$1.$2"; }
+meas() { printf '%s\n' "$1" >> meas.log; }
 eval "$(extract record_catch)"
 eval "$(extract fail_attempt)"
 CODER_SPEC_REPORT="$SPEC"
-fail_attempt T1 "some evidence" "$GATE"
+fail_attempt T1 "some evidence" "$GATE" "${SIG:-}" "${FILE:-}"
 echo "STRIKES=$(counter T1 strikes)"
 '''
 
@@ -218,3 +219,77 @@ def test_ledger_merge_is_a_validated_idempotent_union(tmp_path):
     r = subprocess.run(cl + ["merge", "--ledger", str(a), "--from", str(bad)], capture_output=True, text=True)
     assert r.returncode == 1
     assert json.loads(a.read_text())["gates"] == gates, "a rejected merge must not change the ledger"
+
+
+# --- D-210: more attempts follow new evidence, never a repeat ------------------
+
+def _attempt(tmp_path, sig, file_text=None, **env):
+    if file_text is not None:
+        (tmp_path / "app.py").write_text(file_text)
+    return _shell(FAIL_HARNESS, tmp_path, ORCH=str(ORCHESTRATE), REPO=str(REPO),
+                  SPEC="0", GATE="test-verdict", SIG=sig, FILE="app.py", **env)
+
+
+def _strikes(r):
+    m = re.search(r"STRIKES=(\d+)", r.stdout)
+    assert m, (r.stdout, r.stderr)
+    return int(m[1])
+
+
+def test_same_failure_and_unchanged_file_goes_straight_to_the_em(tmp_path):
+    """Matters when the strike budget is above two (with the default two the
+    second failure reaches the EM anyway): a repeat of the same request with
+    no change must not burn the remaining retries."""
+    assert _strikes(_attempt(tmp_path, "tests:a|b", "x = 1\n", MAXS="3")) == 1
+    r = _attempt(tmp_path, "tests:a|b", "x = 1\n", MAXS="3")
+    assert "no progress on T1" in r.stdout and _strikes(r) == 3
+    assert "repair-stuck T1" in (tmp_path / "meas.log").read_text()
+
+
+def test_same_failure_after_a_real_change_is_an_ordinary_retry(tmp_path):
+    _attempt(tmp_path, "tests:a|b", "x = 1\n")
+    (tmp_path / "state" / "T1.strikes").write_text("0\n")  # first strike only
+    r = _attempt(tmp_path, "tests:a|b", "x = 2\n")
+    assert "no progress" not in r.stdout and _strikes(r) == 1
+
+
+def test_fewer_failing_tests_earns_another_attempt(tmp_path):
+    _attempt(tmp_path, "tests:a|b|c", "x = 1\n")              # strike 1
+    r = _attempt(tmp_path, "tests:a", "x = 2\n")              # strike 2, but progress
+    assert "progress on T1" in r.stdout
+    assert _strikes(r) == 1, "progress must hold the strike count below the cap"
+
+
+def test_progress_extension_is_capped_per_brief(tmp_path):
+    _attempt(tmp_path, "tests:a|b|c|d", "v1\n", SWBP_REPAIR_ATTEMPTS="2")
+    r = _attempt(tmp_path, "tests:a|b|c", "v2\n", SWBP_REPAIR_ATTEMPTS="2")
+    assert "progress" not in r.stdout and _strikes(r) == 2
+
+
+def test_a_different_failure_is_not_progress(tmp_path):
+    _attempt(tmp_path, "tests:a|b", "x = 1\n")
+    r = _attempt(tmp_path, "tests:c", "x = 2\n")
+    assert "progress" not in r.stdout and _strikes(r) == 2
+
+
+def test_failure_detail_points_at_implementation_lines_not_test_code(tmp_path):
+    import json as _json
+    report = {
+        "exitcode": 1, "summary": {"total": 1, "failed": 1}, "collectors": [],
+        "tests": [{"nodeid": "tests/test_a.py::test_a", "outcome": "failed",
+                   "setup": {"outcome": "passed"}, "teardown": {"outcome": "passed"},
+                   "call": {"outcome": "failed",
+                            "crash": {"message": "AssertionError: wrong status"},
+                            "traceback": [{"path": "tests/test_a.py", "lineno": 4},
+                                          {"path": "src/app.py", "lineno": 6}]}}],
+    }
+    (tmp_path / ".cache").mkdir()
+    (tmp_path / ".cache" / "test-report.json").write_text(_json.dumps(report))
+    (tmp_path / "scripts/.approved").mkdir(parents=True)
+    (tmp_path / "scripts/.approved/test-nodeids").write_text("tests/test_a.py::test_a\n")
+    r = subprocess.run(["python3", str(SCRIPTS / "test-verdict.py"), "1", "tests/"],
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 1
+    assert "[at src/app.py:6]" in r.stdout, r.stdout
+    assert "test_a.py:4" not in r.stdout, "test-file frames must not leak to the coder"
+

@@ -11,11 +11,12 @@ as one JSON line so the harness can assert what the pipeline asked and when.
 
 The script deliberately misbehaves first, to drive every D-207 path:
   planner  : plan #1 omits a task (plan gate must reject), plan #2 is valid
-  coder    : src/storage.py — first a SPEC PROBLEM report, then (after the
-             EM consult revises the brief) the correct file
-             src/api.py — first prose with no file block (reply-format
-             gate), then a file that fails the frozen tests (test verdict),
-             then (after the consult) an anchored edit that fixes it
+  coder    : src/storage.py — a SPEC PROBLEM report; after the EM consult
+             revises the brief, prose with no file block (reply-format
+             gate), then the correct file
+             src/api.py — a file with two bugs (test verdict), an anchored
+             edit fixing one (fewer failures: a D-210 progress extension,
+             no EM consult), then an edit fixing the other
   consults : always brief_wrong with a revised brief
 """
 
@@ -33,6 +34,8 @@ from pathlib import Path
 
 GOOD_ROUTE = '@app.post("/api/v1/bookmarks", status_code=201)'
 BAD_ROUTE = '@app.post("/api/v1/bookmarks", status_code=200)'
+GOOD_404 = 'raise HTTPException(status_code=404, detail="bookmark not found")\n    return bookmark'
+BAD_404 = 'raise HTTPException(status_code=404, detail="not found")\n    return bookmark'
 
 
 def build_state(ws: Path, src: Path) -> dict:
@@ -43,8 +46,10 @@ def build_state(ws: Path, src: Path) -> dict:
         "from fastapi import FastAPI, HTTPException, Path, Depends, Query",
         "from fastapi import FastAPI, HTTPException, Query").replace(
         "from pydantic import BaseModel, Field", "from pydantic import BaseModel")
-    buggy_api = api.replace(GOOD_ROUTE, BAD_ROUTE)
-    assert buggy_api != api, "could not derive the buggy api.py"
+    # two independent bugs: the create status (breaks several tests) and the
+    # GET-by-id 404 text (breaks one) — fixing the first is real progress
+    buggy_api = api.replace(GOOD_ROUTE, BAD_ROUTE).replace(GOOD_404, BAD_404, 1)
+    assert BAD_ROUTE in buggy_api and BAD_404 in buggy_api, "could not derive the buggy api.py"
     return {
         "ws": ws,
         "plans": ["incomplete", "valid"],
@@ -52,13 +57,16 @@ def build_state(ws: Path, src: Path) -> dict:
             "src/storage.py": [
                 "=== SPEC PROBLEM: the brief names the storage functions but not the "
                 "LINKBOX_DB environment variable the frozen tests set ===",
+                "Sure! Here is how I would implement the storage module.",
                 f"=== FILE: src/storage.py ===\n{storage}\n=== END FILE ===",
             ],
             "src/api.py": [
-                "Sure! Here is how I would implement the API module.",
                 f"=== FILE: src/api.py ===\n{buggy_api}\n=== END FILE ===",
-                # the buggy file is now committed: the fix is an anchored edit
+                # the buggy file is committed: fixes are anchored edits. The
+                # first fixes one bug (fewer failing tests = progress, D-210),
+                # the second fixes the other.
                 f"<<<<<<< SEARCH\n{BAD_ROUTE}\n=======\n{GOOD_ROUTE}\n>>>>>>> REPLACE",
+                f"<<<<<<< SEARCH\n{BAD_404}\n=======\n{GOOD_404}\n>>>>>>> REPLACE",
             ],
         },
         "lock": threading.Lock(),

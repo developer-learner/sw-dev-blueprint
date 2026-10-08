@@ -1441,21 +1441,59 @@ prefetch_reap() {
 # coder_instr <file> <brief> — the coder instruction text for one call. Shared
 # by run_coder and prefetch_launch so a prefetched prompt is byte-identical to
 # the one the sequential loop would build for the same task state.
-# fail_attempt <id> <evidence> <catch-gate> — D-207 bookkeeping for one
-# failed task attempt: keep the evidence for the retry brief, record which
-# gate caught the local model (if any), count the strike. A coder report that
-# the brief cannot be done as written jumps straight to the EM consult:
-# retrying the same brief cannot help, and a spent retry is wasted time.
+# fail_attempt <id> <evidence> <catch-gate> [<signature> <file>] — bookkeeping
+# for one failed task attempt: keep the evidence for the retry brief, record
+# which gate caught the local model (D-207), count the strike, and apply the
+# repair-loop rules (D-210). More attempts follow NEW evidence, never a repeat:
+#   - spec report (D-207): straight to the EM consult;
+#   - no progress — the same failure signature as the previous attempt AND an
+#     unchanged file: retrying the same request cannot help, straight to the
+#     EM consult;
+#   - progress — the failing tests are a strict subset of the previous
+#     attempt's: one more attempt even at the strike cap, up to
+#     SWBP_REPAIR_ATTEMPTS attempts per brief (default 4).
 fail_attempt() {
-  local id="$1" evidence="$2" gate="$3" strikes
+  local id="$1" evidence="$2" gate="$3" sig="${4:-}" file="${5:-}"
+  local strikes prev_sig prev_hash cur_hash brief_attempts cap
   printf '%s\n' "$evidence" > "$TASK_STATE/$id.lastfail"
   [ -z "$gate" ] || record_catch "$gate"
   strikes=$(( $(counter "$id" strikes) + 1 ))
+  brief_attempts=$(( $(counter "$id" brief_attempts) + 1 ))
+  cap="${SWBP_REPAIR_ATTEMPTS:-4}"
+  prev_sig=$(cat "$TASK_STATE/$id.lastsig" 2>/dev/null || true)
+  prev_hash=$(cat "$TASK_STATE/$id.lasthash" 2>/dev/null || true)
+  if [ -n "$file" ] && [ -f "$file" ]; then
+    cur_hash=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$file")
+  else
+    cur_hash="absent"
+  fi
   if [ "${CODER_SPEC_REPORT:-0}" = "1" ] && [ "$strikes" -lt "$MAX_TASK_STRIKES" ]; then
     echo "coder reported a spec problem for $id — skipping the retry, consulting the EM"
     strikes=$MAX_TASK_STRIKES
+  elif [ -n "$sig" ] && [ "$sig" = "$prev_sig" ] && [ "$cur_hash" = "$prev_hash" ] \
+       && [ "$strikes" -lt "$MAX_TASK_STRIKES" ]; then
+    echo "no progress on $id (same failure, file unchanged) — consulting the EM instead of repeating"
+    meas "repair-stuck $id"
+    strikes=$MAX_TASK_STRIKES
+  elif [ "$strikes" -ge "$MAX_TASK_STRIKES" ] && [ "$brief_attempts" -lt "$cap" ] \
+       && python3 - "$prev_sig" "$sig" <<'PYPROGRESS'
+import sys
+prev, cur = sys.argv[1], sys.argv[2]
+if not (prev.startswith("tests:") and cur.startswith("tests:")):
+    sys.exit(1)
+before = {t for t in prev[6:].split("|") if t}
+after = {t for t in cur[6:].split("|") if t}
+sys.exit(0 if after and after < before else 1)
+PYPROGRESS
+  then
+    echo "progress on $id (fewer failing tests) — one more repair attempt ($brief_attempts/$cap this brief)"
+    meas "repair-progress $id"
+    strikes=$((MAX_TASK_STRIKES - 1))
   fi
   set_counter "$id" strikes "$strikes"
+  set_counter "$id" brief_attempts "$brief_attempts"
+  printf '%s\n' "$sig" > "$TASK_STATE/$id.lastsig"
+  printf '%s\n' "$cur_hash" > "$TASK_STATE/$id.lasthash"
 }
 
 # smoke_gate <smoke-cmd> — the TPM-authored smoke_check for a task, run in
@@ -2483,7 +2521,7 @@ reset_active_delta_tasks() {
     for id in $ACTIVE_AFFECTED; do
       echo "  reset: $id"
       set_tstat "$id" pending
-      rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true
+      rm -f "$TASK_STATE/$id."{strikes,revisions,fp,lastsig,lasthash,brief_attempts} "$BRIEF_DIR/$id" "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true
     done
   fi
   # escalated/blocked tasks get a fresh chance under the revised spec/plan
@@ -2558,7 +2596,7 @@ while :; do
       if [ "$fp_now" != "$fp_then" ]; then
         echo "task $id changed in plan — resetting"
         set_tstat "$id" pending
-        rm -f "$TASK_STATE/$id."{strikes,revisions,fp} "$BRIEF_DIR/$id" "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true
+        rm -f "$TASK_STATE/$id."{strikes,revisions,fp,lastsig,lasthash,brief_attempts} "$BRIEF_DIR/$id" "$BRIEF_DIR/$id.spec_version" 2>/dev/null || true
       fi
     fi
   done
@@ -2592,7 +2630,12 @@ while :; do
   done <<< "$mapped_out"
   smoke=$(python3 -c "import json,sys; cs=json.load(open('scripts/.approved/contracts.json')).get('smoke_checks',{}); print(cs.get(sys.argv[1],''))" "$file")
   strikes=$(counter "$id" strikes)
-  echo "--- Task $id -> $file (strike $((strikes + 1))/$MAX_TASK_STRIKES) ---"
+  # D-210: attempt numbers are monotonic per task (logs, archive, evidence
+  # entries); strikes are the retry budget, which a repair extension can
+  # hold below the cap — so the two can no longer share a number.
+  attempt=$(( $(counter "$id" attempts) + 1 ))
+  set_counter "$id" attempts "$attempt"
+  echo "--- Task $id -> $file (attempt $attempt, strike $((strikes + 1))/$MAX_TASK_STRIKES) ---"
 
   # D-74 diff-scoped lint baseline: the file's pre-task state (HEAD before the
   # FIRST attempt) is the legacy line set the coder inherits and — under D-59
@@ -2623,7 +2666,7 @@ while :; do
   if [ "$no_edit" = "1" ]; then
     echo "  no-edit file ($no_edit_reason) — coder not invoked; running acceptance only"
     coder_ok=1
-  elif run_coder "$id" "$file" "$attempt_brief" "$((strikes + 1))"; then
+  elif run_coder "$id" "$file" "$attempt_brief" "$attempt"; then
     coder_ok=1
   else
     coder_ok=0
@@ -2637,14 +2680,14 @@ while :; do
       # archive holds identical bytes) by sha256.
       # T7 M2 (D-184): Swbp-Call-Id from the sidecar + durable evidence
       # committed atomically (entry: <task>-a<attempt>).
-      SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/$id-a$((strikes + 1)).meta" 2>/dev/null | head -1)" \
-      SWBP_PROV_CALL_ID="$(sed -n 's/^call_id=//p' "$LOG_DIR/$id-a$((strikes + 1)).meta" 2>/dev/null | head -1)" \
-      SWBP_PROV_META_FILE="$LOG_DIR/$id-a$((strikes + 1)).meta" \
-      SWBP_PROV_ENTRY="$id-a$((strikes + 1))" \
+      SWBP_PROV_MODEL="$(sed -n 's/^model=//p' "$LOG_DIR/$id-a$attempt.meta" 2>/dev/null | head -1)" \
+      SWBP_PROV_CALL_ID="$(sed -n 's/^call_id=//p' "$LOG_DIR/$id-a$attempt.meta" 2>/dev/null | head -1)" \
+      SWBP_PROV_META_FILE="$LOG_DIR/$id-a$attempt.meta" \
+      SWBP_PROV_ENTRY="$id-a$attempt" \
       SWBP_PROV_TASK="$id" \
-      SWBP_PROV_PROMPT_FILE="$LOG_DIR/$id-a$((strikes + 1)).prompt" \
-      SWBP_PROV_REPLY_FILE="$LOG_DIR/$id-a$((strikes + 1)).raw" \
-        swbp_commit coder "[task $id] attempt $((strikes + 1))" "$file"
+      SWBP_PROV_PROMPT_FILE="$LOG_DIR/$id-a$attempt.prompt" \
+      SWBP_PROV_REPLY_FILE="$LOG_DIR/$id-a$attempt.raw" \
+        swbp_commit coder "[task $id] attempt $attempt" "$file"
     fi
     # D-74: lint the one file the coder wrote, BEFORE the mapped tests — lint
     # findings are exact-location retry feedback (the D-71 validator-fed
@@ -2710,13 +2753,20 @@ while :; do
     mark "task $id PASS"
     set_tstat "$id" done
     python3 "$PLANE_DIR/scripts/validate-plan.py" --task "$id" --field fingerprint > "$TASK_STATE/$id.fp"
-    rm -f "$TASK_STATE/$id.lastfail" "$TASK_STATE/$id.lintbase"
+    rm -f "$TASK_STATE/$id.lastfail" "$TASK_STATE/$id.lintbase" \
+      "$TASK_STATE/$id.lastsig" "$TASK_STATE/$id.lasthash" "$TASK_STATE/$id.brief_attempts"
     continue
   fi
 
   echo "task $id: FAIL — $evidence"
   mark "task $id FAIL (strike $((strikes + 1)))"
-  fail_attempt "$id" "$evidence" "$task_catch"
+  # D-210: what this failure looks like, for the no-repeat / progress rules.
+  if [ "$task_catch" = "test-verdict" ]; then
+    fail_sig="tests:$FAILING"
+  else
+    fail_sig="${task_catch:-other}:$(printf '%s' "$evidence" | head -c 300)"
+  fi
+  fail_attempt "$id" "$evidence" "$task_catch" "$fail_sig" "$file"
   strikes=$(counter "$id" strikes)
   [ "$strikes" -lt "$MAX_TASK_STRIKES" ] && continue   # plain retry with failure appended
 
@@ -2749,7 +2799,7 @@ while :; do
     set_tstat "$id" escalated
     continue
   fi
-  consult_em "$id" "failed $strikes attempts on $file. $evidence. Coder log tail: $(tail -5 "$LOG_DIR/$id-a$strikes.log" 2>/dev/null | tr '\n' ' ')"
+  consult_em "$id" "failed $strikes attempts on $file. $evidence. Coder log tail: $(tail -5 "$LOG_DIR/$id-a$attempt.log" 2>/dev/null | tr '\n' ' ')"
   case "$DIAG_VERDICT" in
     brief_wrong)
       set_counter "$id" revisions $((revs + 1))
@@ -2759,7 +2809,7 @@ d = json.load(open('$DIAG_FILE'))
 sys.stdout.write(d['revised_brief'])" > "$BRIEF_DIR/$id"
       write_state "briefs/$id.spec_version" "$FROZEN_V"
       set_counter "$id" strikes 0
-      rm -f "$TASK_STATE/$id.lastfail"
+      rm -f "$TASK_STATE/$id.lastfail" "$TASK_STATE/$id.lastsig" "$TASK_STATE/$id.lasthash" "$TASK_STATE/$id.brief_attempts"
       echo "brief revised for $id (revision $((revs + 1))/$MAX_BRIEF_REVISIONS)"
       ;;
     decomposition_wrong)
@@ -2778,7 +2828,7 @@ sys.stdout.write(d['revised_brief'])" > "$BRIEF_DIR/$id"
         compute_active_delta_scope
         reset_active_delta_tasks
         set_counter "$id" strikes 0
-        rm -f "$TASK_STATE/$id.lastfail"
+        rm -f "$TASK_STATE/$id.lastfail" "$TASK_STATE/$id.lastsig" "$TASK_STATE/$id.lasthash" "$TASK_STATE/$id.brief_attempts"
       fi
       ;;
     contract_or_test_wrong)

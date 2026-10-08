@@ -134,10 +134,15 @@ import json, sys
 roles = [json.loads(l)["role"] for l in open(sys.argv[1])]
 i = roles.index("coder:src/storage.py")
 assert roles[i + 1] == "em:consult", roles
-assert roles.count("coder:src/storage.py") == 2, roles
+assert roles.count("coder:src/storage.py") == 3, roles
+assert roles.count("coder:src/api.py") == 3, roles
+assert roles.count("em:consult") == 1, "T2's progress must earn a retry, not a consult"
 print("  model calls:", " -> ".join(roles))
 PY
 ok "spec report went straight to the EM consult (no wasted retry)"
+grep -q "progress on T2 (fewer failing tests) — one more repair attempt" "$TMP/orchestrate.log" \
+  || fail "T2's partial fix did not earn a repair attempt (D-210)"
+ok "a partial fix earned one more attempt instead of a consult (D-210)"
 
 bash "$VS" discard "$APP" "$RUN" >/dev/null 2>&1 || true
 echo "E2E PASS"
