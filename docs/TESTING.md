@@ -312,3 +312,16 @@ revision sites recompute and reapply scope before work continues.
 - Mock email sending
 - **Do not mock the database** — use a real test DB with transactions
 - **Do not mock your own services** — if you need to mock it, split the dependency
+
+## End-to-end simulation and gate teeth (D-208)
+
+- `scripts/selftest/e2e-sim.sh` runs one full milestone through the real
+  pipeline in the dev VM with scripted models (`e2e_fake_llm.py`) and checks
+  that the gates fire, the catch ledger comes home, and a coder spec report
+  reaches the EM. Run it after changing orchestrate, refreeze, vm-sync or the
+  gates: it needs the VM running and takes a few minutes. It proves the
+  plumbing, not model quality.
+- `docs/mutation/<gate>.tsv` holds the curated mutants that prove each
+  run-time gate's tests catch a planted defect. Re-run one with
+  `scripts/mutation-pass.sh --repo . --mutants docs/mutation/<gate>.tsv --suite "<pytest command>"`.
+

@@ -1,0 +1,5 @@
+scripts/test-verdict.py	if type(r.get("exitcode")) is not int or r["exitcode"] != runner:	if False:	exitcode cross-check off
+scripts/test-verdict.py	if type(summary.get("total")) is not int or summary["total"] != len(tests):	if False:	summary/record consistency off
+scripts/test-verdict.py	if not failed_collectors and set(ids) != expected:	if False:	frozen coverage check off
+scripts/test-verdict.py	and not any("wasxfail" in p for p in [t, *phases])	and True	xfail treated as pass
+scripts/test-verdict.py	and all(p.get("outcome") == "passed" for p in phases))	and True)	non-ordinary phases treated as pass

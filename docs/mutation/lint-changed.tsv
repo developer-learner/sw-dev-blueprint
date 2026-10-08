@@ -1,0 +1,4 @@
+scripts/lint-changed.py	return any(r in rows for r in range(start, end + 1))	return True	diff scoping off
+scripts/lint-changed.py	_ALWAYS_REPORT = {"E999", "invalid-syntax", "E902"}	_ALWAYS_REPORT = set()	syntax errors scoped away
+scripts/lint-changed.py	    return list(CORE_RULES)	    return []	rule pin off
+scripts/lint-changed.py	    return [f for f in findings if _in_scope(f, rows)]	    return []	gate never reports

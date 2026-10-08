@@ -1,0 +1,3 @@
+scripts/orchestrate.sh	if got_path != path:	if False:	wrong path accepted
+scripts/orchestrate.sh	if not content.strip():	if False:	empty file accepted
+scripts/orchestrate.sh	  if [ "$spec_report" = "MIXED" ]; then	  if false; then	mixed report accepted

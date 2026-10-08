@@ -1,0 +1,2 @@
+scripts/orchestrate.sh	  elif [ -n "$spec_report" ]; then	  elif false; then	report not recognised
+scripts/orchestrate.sh	  if [ "${CODER_SPEC_REPORT:-0}" = "1" ] && [ "$strikes" -lt "$MAX_TASK_STRIKES" ]; then	  if false; then	report does not skip the retry

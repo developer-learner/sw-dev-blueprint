@@ -26,6 +26,13 @@ rich-adoption (Phase 0 D-175).
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-08: **D-208 — full milestone simulated end to end; pending gates proven.**
+      `scripts/selftest/e2e-sim.sh` ran a scripted-model milestone through
+      the real pipeline in the VM: E2E PASS (catches came home, spec report
+      reached the EM). It found two defects, now fixed: ruff 0.16's 413
+      default rules silently changed both lint gates for projects without a
+      ruff config (testchat, rich-adoption), and the bundled example spec
+      could no longer be frozen. All six pending gates mutation-proven.
 - 2026-10-08: **D-207 — prove the checks; coder can report a bad spec.**
       Run-time gates now record catches in `.catch-ledger.json` (vm-sync
       brings them home, including from discarded runs); gate-tiering lists

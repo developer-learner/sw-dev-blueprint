@@ -16,13 +16,13 @@ refreeze-delta	scripts/refreeze_delta.py	hard	proven
 spec-artifacts	scripts/spec_artifacts.py	hard	proven
 validate-plan	scripts/validate-plan.py	hard	proven
 apply-edit-blocks	scripts/apply-edit-blocks.py	hard	proven
-lint-changed	scripts/lint-changed.py	hard	pending
-mypy	scripts/orchestrate.sh	hard	pending
-test-verdict	scripts/test-verdict.py	hard	pending
-smoke-check	scripts/orchestrate.sh	hard	pending
-coder-reply-format	scripts/orchestrate.sh	hard	pending
+lint-changed	scripts/lint-changed.py	hard	proven
+mypy	scripts/orchestrate.sh	hard	proven
+test-verdict	scripts/test-verdict.py	hard	proven
+smoke-check	scripts/orchestrate.sh	hard	proven
+coder-reply-format	scripts/orchestrate.sh	hard	proven
 source-paths	scripts/source_paths.py	hard	proven
-coder-spec-report	scripts/orchestrate.sh	advisory	pending
+coder-spec-report	scripts/orchestrate.sh	advisory	proven
 bootstrap	scripts/bootstrap.sh	tool	proven
 catch-ledger	scripts/catch-ledger.py	tool	n/a	python3 scripts/catch-ledger.py report
 completion-ledger	scripts/completion-ledger.py	tool	n/a	python3 scripts/completion-ledger.py latest
