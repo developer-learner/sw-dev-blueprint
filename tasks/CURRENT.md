@@ -26,6 +26,12 @@ rich-adoption (Phase 0 D-175).
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-08: **D-207 — prove the checks; coder can report a bad spec.**
+      Run-time gates now record catches in `.catch-ledger.json` (vm-sync
+      brings them home, including from discarded runs); gate-tiering lists
+      them. The coder's `=== SPEC PROBLEM ===` reply skips the retry and
+      goes straight to the EM. Next: ~10 milestones of data, then
+      `python3 scripts/gate-tiering.py` per app to decide what to demote.
 - 2026-10-07: **D-206 — security plan gaps closed.** VM provisioning pinned
       and verified (dated image + digest, NodeSource key fingerprint, no
       `curl | bash`, pinned Claude Code and OpenCode with checksum).

@@ -433,6 +433,14 @@ MEAS_DIR=".measurement"
 mkdir -p "$MEAS_DIR" 2>/dev/null || true
 [ -f "$MEAS_DIR/.gitignore" ] || printf '*\n' > "$MEAS_DIR/.gitignore" 2>/dev/null || true
 meas() { printf '%s\t%s\n' "$(date -u +%FT%TZ)" "$1" >> "$MEAS_DIR/counters" 2>/dev/null || true; }
+# record_catch <gate> — D-207: a run-time gate rejected the local model's
+# output. One event per gate per spec version in .catch-ledger.json (the
+# D-170 ledger refreeze.sh already writes for the freeze gates); gate-tiering
+# reads it. Best-effort: the ledger is the witness, never the verdict.
+record_catch() {
+  python3 "$PLANE_DIR/scripts/catch-ledger.py" record --gate "$1" \
+    --spec-version "${FROZEN_V:-0}" >/dev/null 2>&1 || true
+}
 # Terminal attribution for the exit row (Vortex backlog: fault_role): which
 # seat does the operator look at after this run? Set at the terminal halt
 # sites below; the default names the harness itself. Values:
@@ -1433,6 +1441,23 @@ prefetch_reap() {
 # coder_instr <file> <brief> — the coder instruction text for one call. Shared
 # by run_coder and prefetch_launch so a prefetched prompt is byte-identical to
 # the one the sequential loop would build for the same task state.
+# fail_attempt <id> <evidence> <catch-gate> — D-207 bookkeeping for one
+# failed task attempt: keep the evidence for the retry brief, record which
+# gate caught the local model (if any), count the strike. A coder report that
+# the brief cannot be done as written jumps straight to the EM consult:
+# retrying the same brief cannot help, and a spent retry is wasted time.
+fail_attempt() {
+  local id="$1" evidence="$2" gate="$3" strikes
+  printf '%s\n' "$evidence" > "$TASK_STATE/$id.lastfail"
+  [ -z "$gate" ] || record_catch "$gate"
+  strikes=$(( $(counter "$id" strikes) + 1 ))
+  if [ "${CODER_SPEC_REPORT:-0}" = "1" ] && [ "$strikes" -lt "$MAX_TASK_STRIKES" ]; then
+    echo "coder reported a spec problem for $id — skipping the retry, consulting the EM"
+    strikes=$MAX_TASK_STRIKES
+  fi
+  set_counter "$id" strikes "$strikes"
+}
+
 coder_instr() {
   local file="$1" brief="$2"
   # D-59: existing files are EDITED via anchored blocks, never retyped —
@@ -1453,8 +1478,9 @@ Rules:
 - Never include any line containing a think tag in a SEARCH section — anchor on nearby tag-free lines instead.
 - In new code, never write the think tag as one literal string — construct it by concatenation, e.g. '<' + 'think>'.
 - If the file already satisfies the brief, reply with exactly this line and nothing else: === NO CHANGES ===
+- If the brief cannot be done as written (it contradicts the file or itself, names something that does not exist, or could only pass by faking a result), reply with exactly one line and nothing else: === SPEC PROBLEM: <one sentence naming the problem> === — reporting is always better than working around the brief, and is never counted against you.
 - Verify each SEARCH against the file one more time before answering.
-- Your reply's VERY FIRST line must be '<<<<<<< SEARCH' (or the NO CHANGES line). Do not analyze, plan, or explain anything — every design decision is already made in the brief. Prose before the blocks burns your output budget and truncates the edit mid-block.
+- Your reply's VERY FIRST line must be '<<<<<<< SEARCH' (or the NO CHANGES or SPEC PROBLEM line). Do not analyze, plan, or explain anything — every design decision is already made in the brief. Prose before the blocks burns your output budget and truncates the edit mid-block.
 - Every block must be COMPLETE working code — never a stub, placeholder, or '...' body. If the brief needs a new function, write its full body in the block."
   else
     printf '%s' "$brief
@@ -1463,7 +1489,11 @@ Reply with ONLY this, nothing before or after it:
 === FILE: $file ===
 <the complete file content>
 === END FILE ===
-Your reply's VERY FIRST line must be the === FILE: line. Do not analyze,
+Your reply's VERY FIRST line must be the === FILE: line — unless the brief
+cannot be done as written: then reply with exactly one line and nothing else,
+=== SPEC PROBLEM: <one sentence naming the problem> ===, which is always
+better than working around the brief and is never counted against you.
+Do not analyze,
 plan, or explain anything — every design decision is already made in the
 brief; transcribe it into working code immediately."
   fi
@@ -1471,8 +1501,11 @@ brief; transcribe it into working code immediately."
 
 run_coder() {
   local id="$1" file="$2" brief="$3" attempt="$4"
+  CODER_CATCH=""        # D-207: which gate rejected this attempt, if any
+  CODER_SPEC_REPORT=0   # D-207: the coder reported the brief as undoable
   python3 "$PLANE_DIR/scripts/source_paths.py" "$file" \
-    || die "unsafe coder destination ($file) — hard halt before any model call or write"
+    || { record_catch source-paths
+         die "unsafe coder destination ($file) — hard halt before any model call or write"; }
   local phase_start; phase_start=$(git rev-parse HEAD)
   write_state phase task
   write_state task_target "$file"
@@ -1524,9 +1557,39 @@ run_coder() {
     cp "$LOG_DIR/$id-a$attempt.meta" \
        "$CODER_ARCHIVE_DIR/$FROZEN_V.$id.$coder_revs.$attempt.meta" || true
   }
+  # D-207: the coder's sanctioned report that the brief cannot be done as
+  # written. The reply must be that one line and nothing else; it never
+  # touches the file and goes straight to the EM consult (task loop).
+  local spec_report
+  spec_report=$(python3 - "$LOG_DIR/$id-a$attempt.raw" <<'PYSPEC'
+import re
+import sys
+
+LINE = re.compile(r"\s*=== SPEC PROBLEM: (.+?) ===\s*")
+lines = [ln for ln in open(sys.argv[1]).read().splitlines() if ln.strip()]
+if any(LINE.fullmatch(ln) for ln in lines):
+    if len(lines) != 1:
+        print("MIXED")
+    else:
+        print(LINE.fullmatch(lines[0]).group(1).strip()[:500] or "MIXED")
+PYSPEC
+)
+  if [ "$spec_report" = "MIXED" ]; then
+    CODER_EVIDENCE="reply mixed a SPEC PROBLEM report with other content — send the report line alone, or the change alone"
+    CODER_CATCH="coder-reply-format"
+    write_state phase ""
+    return 1
+  elif [ -n "$spec_report" ]; then
+    CODER_EVIDENCE="coder reported a spec problem: $spec_report"
+    CODER_CATCH="coder-spec-report"
+    CODER_SPEC_REPORT=1
+    write_state phase ""
+    return 1
+  fi
   if [ -n "$existing" ]; then
     # D-59 edit-block path: fail-closed applier; target untouched on any error
     if ! CODER_EVIDENCE=$(python3 "$PLANE_DIR/scripts/apply-edit-blocks.py" "$file" "$LOG_DIR/$id-a$attempt.raw" 2>&1); then
+      CODER_CATCH="apply-edit-blocks"
       write_state phase ""
       return 1
     fi
@@ -1574,6 +1637,7 @@ except (OSError, ValueError) as exc:
     sys.exit(f"unsafe coder destination: {exc}")
 PYEOF
   ); then
+    CODER_CATCH="coder-reply-format"
     write_state phase ""
     CODER_EVIDENCE="$CODER_EVIDENCE"
     return 1
@@ -1583,6 +1647,7 @@ PYEOF
   # the line and the fix (handle it, or justify the swallow in a comment).
   if ! SWALLOW_FINDINGS=$(python3 "$PLANE_DIR/scripts/check-swallowed-errors.py" "$file" 2>&1); then
     CODER_EVIDENCE="swallowed-error gate (D-68): $SWALLOW_FINDINGS"
+    CODER_CATCH="check-swallowed-errors"
     # Reset the file to HEAD — apply-edit-blocks (or create-mode write)
     # succeeded before D-68 rejected the result, so the working tree
     # carries the failed attempt. Without this, a downstream EM consult
@@ -1601,7 +1666,8 @@ PYEOF
   # code was silently discarded and the task committed anyway (same class as
   # em_call's D-71 fix). Violation = hard halt (D-15/D-22), never a strike.
   bash "$PLANE_DIR/scripts/phase-gate.sh" task "$phase_start" "$file" \
-    || die "task lane/integrity gate failed ($file) — hard halt (D-15/D-22)"
+    || { record_catch phase-gate
+         die "task lane/integrity gate failed ($file) — hard halt (D-15/D-22)"; }
   write_state phase ""
   write_state task_target ""
   return 0
@@ -1897,6 +1963,9 @@ ensure_plan() {
       return 0
     fi
     verrs=$(python3 "$PLANE_DIR/scripts/validate-plan.py" 2>&1 || true)
+    # D-207: a rejection of a plan the EM emitted in this run is a catch (a
+    # stale prior plan failing on the first pass is not).
+    [ -n "${LAST_ARCHIVE_ENTRY:-}" ] && [ -f tasks/plan.json ] && record_catch validate-plan
     if [ -n "$subtree_feedback" ]; then
       # a rejected merge is the actionable feedback; the on-disk plan is
       # still the stale prior, whose errors would only mislead the EM
@@ -2538,6 +2607,9 @@ while :; do
   # script abort, so it's captured rather than left to `set -e`.
   pass=1
   CODER_EVIDENCE=""
+  CODER_CATCH=""
+  CODER_SPEC_REPORT=0
+  task_catch=""   # D-207: the gate that rejected this attempt, if any
   if [ "$no_edit" = "1" ]; then
     echo "  no-edit file ($no_edit_reason) — coder not invoked; running acceptance only"
     coder_ok=1
@@ -2592,6 +2664,7 @@ while :; do
             die "coder-output lint gate (D-74) tooling error: $(printf '%s' "$LINT_OUT" | tr '\n' ' ' | head -c 300)"
           elif [ "${lint_rc:-0}" -ne 0 ]; then
             pass=0
+            task_catch="lint-changed"
             evidence="lint failed (D-74): $(printf '%s' "$LINT_OUT" | tr '\n' ' ' | head -c 600)"
           fi
           ;;
@@ -2610,17 +2683,20 @@ while :; do
         *)    run_tests "${mapped[@]}" ;;
       esac
       [ "$TESTS_RC" -eq 0 ] || { pass=0; }
+      if [ "$TESTS_RC" -eq 1 ]; then
+        case "$FAILING" in mypy:*) task_catch="mypy" ;; *) task_catch="test-verdict" ;; esac
+      fi
       evidence="mapped tests failing: ${FAILING:-no verdict (rc=$TESTS_RC)}${FAIL_DETAIL:+ — $FAIL_DETAIL}"
     else
       evidence=""
     fi
     if [ "$pass" = "1" ] && [ -n "$smoke" ]; then
       if ! "$PLANE_DIR/scripts/sandbox-run.sh" -- sh -c "$smoke" >/dev/null 2>&1; then
-        pass=0; evidence="smoke_check failed: $smoke"
+        pass=0; evidence="smoke_check failed: $smoke"; task_catch="smoke-check"
       fi
     fi
   else
-    pass=0; evidence="$CODER_EVIDENCE"
+    pass=0; evidence="$CODER_EVIDENCE"; task_catch="$CODER_CATCH"
   fi
 
   if [ "$pass" = "1" ]; then
@@ -2634,9 +2710,8 @@ while :; do
 
   echo "task $id: FAIL — $evidence"
   mark "task $id FAIL (strike $((strikes + 1)))"
-  printf '%s\n' "$evidence" > "$TASK_STATE/$id.lastfail"
-  strikes=$((strikes + 1))
-  set_counter "$id" strikes "$strikes"
+  fail_attempt "$id" "$evidence" "$task_catch"
+  strikes=$(counter "$id" strikes)
   [ "$strikes" -lt "$MAX_TASK_STRIKES" ] && continue   # plain retry with failure appended
 
   # --- Fail-fast (MAX_TASK_STRIKES=1, opt-in since D-70) ---

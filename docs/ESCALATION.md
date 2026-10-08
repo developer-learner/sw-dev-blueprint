@@ -13,6 +13,7 @@
 | Rung | Trigger | Actor | Bounded by |
 |------|---------|-------|-----------|
 | retry | task fails once | coder (same brief + failure appended) | `MAX_TASK_STRIKES` (2) |
+| spec report (D-207) | coder replies `=== SPEC PROBLEM: <reason> ===` — the brief cannot be done as written | skips the retry: straight to the EM consult with the coder's reason as evidence (the EM judges brief vs frozen spec) | the consult's own caps |
 | consult | task fails twice | EM writes schema-bound diagnosis (verdict+reason only — the shell stamps `task_id`); an invalid reply earns one retry carrying the validator's errors (D-71) | 1 retry, then halt |
 | `brief_wrong` | EM verdict | revised brief, strikes reset | `MAX_BRIEF_REVISIONS` (default 1) |
 | `decomposition_wrong` | EM verdict | EM re-emits plan, re-validated | `MAX_PLAN_REVISIONS` (2) |

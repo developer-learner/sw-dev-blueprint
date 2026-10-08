@@ -63,6 +63,11 @@ scripts/vm-sync discard ~/dev/vortex <run>
   own record in `.git/swbp-vm/`, never from the VM. Anything else is
   refused with the host untouched.
 - The VM can never push to the host. Landing is always a host-side action.
+- `land` and `discard` also bring home the run's telemetry (D-207): exactly
+  `.catch-ledger.json` and `.measurement/metrics.tsv`, validated and merged
+  into the host copies, and only where the project's `.gitignore` covers
+  them. A discarded run's catches count too — gates catch the local model
+  mostly in runs that fail. Bad telemetry warns; it never blocks landing.
 
 The guest needs a Git identity for its commits (`git config --global
 user.name/user.email` inside the VM); the clones are VM-owned, so the old

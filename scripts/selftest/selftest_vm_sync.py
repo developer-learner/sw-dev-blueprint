@@ -16,6 +16,7 @@ Acceptance (from the review that commissioned this):
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -308,3 +309,90 @@ def test_discard_removes_the_vm_clone_and_blocks_landing(env):
 ])
 def test_path_policy(path, ok):
     assert (path_problem(path) is None) is ok
+
+
+# --- D-207: run telemetry comes home (catch ledger + metrics), nothing else ---
+
+def _ignore_telemetry(host: Path) -> None:
+    (host / ".gitignore").write_text(".env\n.catch-ledger.json\n.measurement/\n")
+    git(host, "add", ".gitignore")
+    git(host, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "ignore telemetry")
+
+
+def _vm_telemetry(ws: Path, ledger: str | None, metrics: str | None) -> None:
+    if ledger is not None:
+        (ws / ".catch-ledger.json").write_text(ledger)
+    if metrics is not None:
+        (ws / ".measurement").mkdir(exist_ok=True)
+        (ws / ".measurement" / "metrics.tsv").write_text(metrics)
+
+
+LEDGER = '{"schema_version": 1, "gates": {"test-verdict": [{"spec_version": 4}]}}'
+METRICS = "milestone\tfeature\nabc123\tv4\n"
+
+
+def test_land_brings_home_the_runs_telemetry(env):
+    host, _vm, e = env
+    _ignore_telemetry(host)
+    run, ws = start(host, e)
+    commit_file(ws, "app.py", "x = 2\n")
+    _vm_telemetry(ws, LEDGER, METRICS)
+    (ws / "unlisted.log").write_text("never returns\n")
+    r = vm_sync(e, "land", str(host), run)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert json.loads((host / ".catch-ledger.json").read_text())["gates"] == \
+        {"test-verdict": [{"spec_version": 4}]}
+    assert (host / ".measurement" / "metrics.tsv").read_text() == METRICS
+    assert not (host / "unlisted.log").exists()
+
+
+def test_discarded_run_still_brings_home_its_catches(env):
+    """Gates catch the local model mostly in runs that fail — those runs are
+    discarded, and their evidence must not go with them."""
+    host, _vm, e = env
+    _ignore_telemetry(host)
+    run, ws = start(host, e)
+    _vm_telemetry(ws, LEDGER, None)
+    r = vm_sync(e, "discard", str(host), run)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "test-verdict" in (host / ".catch-ledger.json").read_text()
+
+
+def test_telemetry_is_merged_not_overwritten(env):
+    host, _vm, e = env
+    _ignore_telemetry(host)
+    (host / ".catch-ledger.json").write_text(
+        '{"schema_version": 1, "gates": {"mypy": [{"spec_version": 2}]}}')
+    (host / ".measurement").mkdir()
+    (host / ".measurement" / "metrics.tsv").write_text("milestone\tfeature\nold999\tv2\n")
+    run, ws = start(host, e)
+    _vm_telemetry(ws, LEDGER, METRICS)
+    vm_sync(e, "discard", str(host), run)
+    gates = json.loads((host / ".catch-ledger.json").read_text())["gates"]
+    assert set(gates) == {"mypy", "test-verdict"}
+    assert (host / ".measurement" / "metrics.tsv").read_text() == \
+        "milestone\tfeature\nold999\tv2\nabc123\tv4\n"
+
+
+def test_bad_telemetry_warns_and_never_blocks_landing(env):
+    host, _vm, e = env
+    _ignore_telemetry(host)
+    run, ws = start(host, e)
+    tip = commit_file(ws, "app.py", "x = 2\n")
+    _vm_telemetry(ws, '{"schema_version": 1, "gates": {"x": [{"spec_version": 0}]}}',
+                  "other\theader\nrow\tvalue\n")
+    r = vm_sync(e, "land", str(host), run)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert git(host, "rev-parse", "HEAD") == tip
+    assert "catch ledger was rejected" in r.stderr
+    assert not (host / ".catch-ledger.json").exists()
+
+
+def test_telemetry_the_project_does_not_ignore_is_not_written(env):
+    host, _vm, e = env  # fixture .gitignore covers only .env
+    run, ws = start(host, e)
+    _vm_telemetry(ws, LEDGER, METRICS)
+    r = vm_sync(e, "discard", str(host), run)
+    assert "not in proj's .gitignore" in r.stderr, r.stderr
+    assert not (host / ".catch-ledger.json").exists()
+    assert not (host / ".measurement").exists()

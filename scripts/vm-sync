@@ -11,6 +11,12 @@
 #   vm-sync list    <project>                         runs recorded on the host
 #   vm-sync discard <project> <run>                   delete the run's VM clone
 #
+# land and discard also bring home the run's telemetry (D-207): exactly two
+# named files, .catch-ledger.json (which gates caught the local model) and
+# .measurement/metrics.tsv, each validated and MERGED into the host copy —
+# never anything else, and only where the project's .gitignore covers them.
+# Telemetry is evidence, not code: a telemetry problem warns, never blocks.
+#
 # start snapshots the CURRENT BRANCH's committed HEAD. Uncommitted or ignored
 # host files never go across unless named with --copy-file (e.g. a .env the
 # app's tests need); copied files never come back. The host records each
@@ -63,6 +69,53 @@ PROJECT="$(cd "$PROJECT_ARG" && pwd -P)"
 NAME="$(basename "$PROJECT")"
 case "$NAME" in *[!A-Za-z0-9._-]*|.*|"") die "unsupported project directory name: $NAME" ;; esac
 RECORDS="$(git -C "$PROJECT" rev-parse --absolute-git-dir)/swbp-vm"
+
+# pull_telemetry <vm workspace> — D-207 (see header). Best-effort.
+pull_telemetry() {
+  local ws="$1" tdir rel
+  tdir="$(mktemp -d "${TMPDIR:-/tmp}/vm-sync-telemetry.XXXXXX")"
+  for rel in .catch-ledger.json .measurement/metrics.tsv; do
+    vm_sh "test -f $(q "$ws/$rel") && test ! -L $(q "$ws/$rel")" 2>/dev/null || continue
+    if ! git -C "$PROJECT" check-ignore -q "$rel"; then
+      echo "vm-sync: warning — $rel is not in $NAME's .gitignore; run telemetry not brought home" >&2
+      continue
+    fi
+    if ! vm_get "$ws/$rel" "$tdir/in" 2>/dev/null || [ ! -f "$tdir/in" ] \
+       || [ "$(wc -c < "$tdir/in" | tr -d ' ')" -gt 1048576 ]; then
+      echo "vm-sync: warning — could not read the run's $rel (missing or over 1 MiB)" >&2
+      continue
+    fi
+    case "$rel" in
+      .catch-ledger.json)
+        python3 "$HERE/catch-ledger.py" merge --ledger "$PROJECT/$rel" --from "$tdir/in" \
+          || echo "vm-sync: warning — the run's catch ledger was rejected; host ledger unchanged" >&2 ;;
+      .measurement/metrics.tsv)
+        python3 - "$tdir/in" "$PROJECT/$rel" <<'PYMETRICS' \
+          || echo "vm-sync: warning — the run's metrics were rejected; host metrics unchanged" >&2
+import sys
+from pathlib import Path
+
+src, dst = Path(sys.argv[1]), Path(sys.argv[2])
+rows = src.read_text().splitlines()
+if not rows or "\t" not in rows[0]:
+    sys.exit("metrics: missing header")
+header, width = rows[0], rows[0].count("\t")
+if any(r.count("\t") != width for r in rows[1:] if r):
+    sys.exit("metrics: ragged row")
+old = dst.read_text().splitlines() if dst.exists() else [header]
+if old and old[0] != header:
+    sys.exit("metrics: header differs from the host's")
+new = [r for r in rows[1:] if r and r not in set(old)]
+dst.parent.mkdir(parents=True, exist_ok=True)
+dst.write_text("\n".join(old + new) + "\n")
+print(f"metrics: merged {len(new)} new row(s)")
+PYMETRICS
+        ;;
+    esac
+    rm -f "$tdir/in"
+  done
+  rm -rf "$tdir"
+}
 
 valid_run() {
   case "$1" in ""|*[!A-Za-z0-9._-]*|.*) die "invalid run id: $1" ;; esac
@@ -135,6 +188,7 @@ printf 'base=%s\nbranch=%s\n' $(q "$BASE") $(q "$BRANCH") > meta"
     [ "$(record_get "$RUN" state)" = "open" ] || die "run $RUN is $(record_get "$RUN" state), not open"
     BASE="$(record_get "$RUN" base)"; BRANCH="$(record_get "$RUN" branch)"
     WS="$(record_get "$RUN" vm_path)"
+    pull_telemetry "$WS"
     count="$(vm_sh "git -C $(q "$WS") rev-list --count $(q "$BASE")..swbp-run")" \
       || die "could not read the run's history in the VM"
     if [ "$count" = "0" ]; then
@@ -166,6 +220,7 @@ printf 'base=%s\nbranch=%s\n' $(q "$BASE") $(q "$BRANCH") > meta"
     [ $# -eq 1 ] || usage
     RUN="$1"; valid_run "$RUN"
     WS="$(record_get "$RUN" vm_path)"
+    pull_telemetry "$WS"
     vm_sh "rm -rf $(q "$(dirname "$WS")")"
     sed -i.bak "s/^state=.*/state=discarded/" "$RECORDS/$RUN" && rm -f "$RECORDS/$RUN.bak"
     echo "run $RUN discarded (VM clone removed; host untouched)"

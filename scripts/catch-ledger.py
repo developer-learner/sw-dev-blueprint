@@ -6,8 +6,9 @@ The ledger is the witness that tiering + cost accounting reads — the
 retirement instrument that replaces retire-on-silence, because silence
 alone cannot distinguish a dead gate from a dormant one.
 
-A "catch" is recorded by the live path (refreeze.sh) when a hard gate
-rejects a staged delta. Selftest fixture failures are teeth-proving, not
+A "catch" is recorded by the live path when a hard gate rejects a staged
+delta (refreeze.sh) or the local model's output during a run (orchestrate.sh,
+D-207). Selftest fixture failures are teeth-proving, not
 catches: they invoke the gate scripts directly and never run through
 refreeze.sh, so they never reach this ledger. The two measurements stay
 separate on purpose.
@@ -112,6 +113,29 @@ def record(args):
     print(f"catch ledger: {args.gate} has {len(events)} catch(es)")
 
 
+def merge(args):
+    """Union another ledger into this one (D-207). The run that produced
+    `--from` happened on a VM-disk clone (D-205); its catches come home here.
+    The incoming file is validated exactly like the local one; one event per
+    gate per spec version, so merging the same run twice changes nothing."""
+    incoming = load_ledger(args.source, missing_ok=False)
+    ledger = load_ledger(args.ledger)
+    added = 0
+    for gate, events in incoming["gates"].items():
+        validate_gate(gate)
+        mine = ledger["gates"].setdefault(gate, [])
+        have = {event["spec_version"] for event in mine}
+        for event in events:
+            if event["spec_version"] not in have:
+                mine.append({"spec_version": event["spec_version"]})
+                have.add(event["spec_version"])
+                added += 1
+        mine.sort(key=lambda event: event["spec_version"])
+        del mine[:-MAX_EVENTS_PER_GATE]
+    atomic_write(args.ledger, ledger)
+    print(f"catch ledger: merged {added} new catch event(s) from {args.source}")
+
+
 def count(args):
     validate_gate(args.gate)
     ledger = load_ledger(args.ledger)
@@ -143,6 +167,10 @@ def parse_args(argv):
     record_parser.add_argument("--gate", required=True)
     record_parser.add_argument("--spec-version", type=int, required=True)
 
+    merge_parser = subparsers.add_parser("merge")
+    merge_parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
+    merge_parser.add_argument("--from", dest="source", type=Path, required=True)
+
     report_parser = subparsers.add_parser("report")
     report_parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
 
@@ -155,7 +183,8 @@ def parse_args(argv):
 def main(argv=None):
     args = parse_args(argv)
     try:
-        {"record": record, "count": count, "report": report}[args.action](args)
+        {"record": record, "count": count, "report": report,
+         "merge": merge}[args.action](args)
     except LedgerError as exc:
         print(f"catch-ledger: {exc}", file=sys.stderr)
         return 1

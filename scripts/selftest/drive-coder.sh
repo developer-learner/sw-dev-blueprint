@@ -119,7 +119,7 @@ if run_coder "$TASK_ID" "$TASK_FILE" "test brief" 1; then
 else
   rc=1
 fi
-echo "RC=$rc COMMITS=$(git rev-list --count HEAD) EVIDENCE=${CODER_EVIDENCE:--}"
+echo "RC=$rc COMMITS=$(git rev-list --count HEAD) CATCH=${CODER_CATCH:--} SPEC=${CODER_SPEC_REPORT:-0} EVIDENCE=${CODER_EVIDENCE:--}"
 if [ -n "$BUDGET" ] && [ -f envlog ]; then
   echo "ENVLOG:"
   cat envlog
