@@ -67,6 +67,9 @@ TOKENS=(
   "CEO approval"                             # D-121: removed approval step
   "approve.*the freeze"                      # D-121: removed approval step
   "approval[- ]required by default"          # D-194: D-193's stop-by-default reversed
+  "swap to non-thinking"                     # D-209: Rule 1 is an admission test, not a model ban
+  "must be non-thinking"                     # D-209: same, rule wording
+  "not failed for five consecutive"          # D-209: silence is not a retirement signal
 )
 
 # CLAUDE.md embeds the correction log (historical table rows, verbatim).

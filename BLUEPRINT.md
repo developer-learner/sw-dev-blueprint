@@ -93,12 +93,12 @@ The full stack this system runs on. Know every object before operating it.
 | **GitHub** | The remote. Off-machine backup, host for `gh repo create --template`, and the fleet's drift-check CI (D-33). |
 | **venv** | Per-project dependency isolation. NOT a security sandbox — it stops dependency collisions, not destructive commands. |
 | **podman** | The sandbox pytest/smoke_check runs in. `scripts/sandbox-run.sh` mounts the repo read-only, disables the network, and grants `.cache/` read-write for the test report (D-30). Post-D-53 nothing agent-side runs *inside* the sandbox — the EM and coder are host-side HTTP calls, and their output is guarded by shell-owned lanes (phase-gate.sh), not by container mounts. The sandbox exists so untrusted **generated code** executes in isolation, not to contain the agents that produced it. |
-| **LM Studio** | The local inference server (`localhost:1234`) for the coder tier (and, typically, the EM tier). Most common failure point — verify the correct non-thinking model is loaded (Pre-Flight Step 0). |
+| **LM Studio** | The local inference server (`localhost:1234`) for the coder tier (and, typically, the EM tier). Most common failure point — verify the seated model passes the Rule 1 seat check (`scripts/seat-check.sh`). |
 | **scripts/llm-call.sh** | The ONLY way the pipeline talks to a model (D-53): one bare HTTP completion per call, no harness, no tools, no memory between calls. Mapping + hard-halt semantics: Model Configuration below. |
 | **A conductor (any chat agent)** | The CEO's single interface (D-40): runs the scripts, shuttles TPM I/O, reports back; the CEO runs no commands. Why it is never trust-critical: the execution model above. Choice of tool is preference, not architecture. |
 | **TPM (CEO-assigned seat)** | Authors the spec + test suite, answers escalation batches. Who holds the seat per session is the CEO's call (D-139). Never touches the repo — output enters only via `scripts/refreeze.sh`. |
 | **EM (mid-tier LLM)** | One `llm-call.sh` completion, no tools: decomposes the frozen spec into `tasks/plan.json`, diagnoses failures on consult. Advisory — the shell validates, decides, and writes. |
-| **Coder (local LLM)** | One `llm-call.sh` completion, no tools; MUST be non-thinking (Rule 1). Replies with the one file its task names, sentinel-wrapped; the shell writes it. Model identity lives outside this repo — see Model Configuration. |
+| **Coder (local LLM)** | One `llm-call.sh` completion, no tools; must pass the Rule 1 seat check (complete artifact in `content`). Replies with the one file its task names, sentinel-wrapped; the shell writes it. Model identity lives outside this repo — see Model Configuration. |
 | **pytest / CI** | The test harness = **binding automated completion evidence**, machine-readable via `.cache/test-report.json`. The suite is TPM-authored and frozen; the shell runs it. |
 | **The docs** | The memory layer for stateless LLMs (this file + CLAUDE.md + CONVENTIONS.md + docs/ + tasks/). |
 | **AGENTS.md** | Symlink to CLAUDE.md. OpenCode's preferred filename, kept for CEOs who use OpenCode as their conductor; symlink keeps content in sync with no duplication. |
@@ -171,20 +171,30 @@ path.
 > human is awake to catch them. Do not override without explicit human
 > instruction in `tasks/CURRENT.md`.
 
-### Rule 1 — The coder model must NOT be a thinking model
+### Rule 1 — A model seat must return a complete artifact in `content`
 
-A thinking model emits its output into `reasoning_content` and leaves `content`
-empty, which breaks agent parsing (empty/invalid response → silent failure or
-JSON error).
+A model/backend combination may hold the EM or coder seat only if it reliably
+returns a **complete, parseable artifact in the reply's `content`, within its
+configured output budget** (D-209). The failure this rule exists for is a
+backend that puts the whole answer into `reasoning_content` and leaves
+`content` empty, or one that runs out of budget mid-artifact — both silently
+break parsing.
 
-- The active coder model MUST be non-thinking.
-- Which specific model that is, is the CEO's choice — never hardcoded in
-  this blueprint or anywhere in the repo; it lives in the CEO's own
-  `~/.config/sw-dev-blueprint/models.env` (D-53). Avoid any model with
-  "thinking" or "reasoner" in the name.
-- Frontier models (Claude, GPT) are safe — they are not thinking models.
-- Verify before relying: see Pre-Flight Step 0 — confirm `content` is
-  populated and `reasoning_content` is empty or absent.
+- Reasoning ("thinking") models are allowed when the backend still delivers
+  the final answer as `content` within budget. Per-model handling lives in
+  `~/.config/sw-dev-blueprint/model-profiles.toml` (`enable_thinking`,
+  `extra_body` such as `reasoning_effort`, `max_output_tokens`,
+  `strip_think_tags`).
+- **Admission test:** `scripts/seat-check.sh coder` and `scripts/seat-check.sh em`
+  run the seat through the real `llm-call.sh` with a small representative task
+  and admit it only on a complete, parseable artifact that finished
+  naturally (`finish_reason=stop`). Run both before seating a new model,
+  quantization, server or profile.
+- **At runtime** `llm-call.sh` still fails closed on empty or reasoning-only
+  replies, and a truncated (`finish_reason=length`) reply never counts as an
+  artifact.
+- Which model holds a seat is never hardcoded in this repo; it lives in
+  `~/.config/sw-dev-blueprint/models.env` (D-53).
 
 ### Rule 2 — Escalation is bounded and climbs the ladder (never loops sideways)
 
@@ -367,7 +377,7 @@ admission rule governs only the advisory/never-blocking layer.
 > Do not write code or instantiate until all checks pass. Fail LOUDLY if any
 > check fails — a silent wrong-model is the most common and most expensive failure.
 
-**1. LM Studio reachable + correct (non-thinking) coder model loaded:**
+**1. LM Studio reachable + a seat-compatible coder model loaded (Rule 1):**
 
 ```bash
 # discover whatever model the CEO has loaded (never hardcode one)
@@ -383,8 +393,10 @@ PASS only if BOTH:
 - `content` is populated (e.g. `"OK"`) and `reasoning_content` is absent or empty.
 
 If no model is listed → nothing loaded, fix in LM Studio.
-If `content` is empty and `reasoning_content` is populated → thinking model
-loaded, swap to non-thinking (Rule 1).
+If `content` is empty and `reasoning_content` is populated → the backend is
+returning the answer as reasoning only; fix the model's profile (Rule 1) or
+seat another model. Before relying on a new seat, run
+`scripts/seat-check.sh coder` and `scripts/seat-check.sh em` (Rule 1 admission).
 
 **2. git available and identity configured:**
 ```bash
@@ -725,8 +737,8 @@ everything built on it is wrong. Update after every schema change.
 **Skipping DECISIONS.md** — Every unlogged decision gets re-litigated next
 session. The LLM has no memory; this is the only thing carrying context forward.
 
-**Loading a thinking model** — Silent failure. Always verify with Pre-Flight
-Step 0 before a session.
+**Seating a model that returns reasoning but no content** — Silent failure.
+Always run `scripts/seat-check.sh` (Rule 1) before seating a new model.
 
 **Working around the freeze** — If the spec is wrong, the move is a TPM delta
 through `refreeze.sh`, never editing frozen files in place (the gate fails

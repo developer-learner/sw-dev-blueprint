@@ -23,11 +23,12 @@
 | A local LLM server | `curl -sf http://localhost:1234/v1/models` | LM Studio, llama.cpp server, vLLM — anything OpenAI-compatible. Port 1234 assumed below; override with `SANDBOX_LLM_PORT` |
 | `gh` CLI (optional) | `gh auth status` | only used to stamp the template birth SHA; bootstrap warns and continues without it |
 
-The model matters more than the server: a **~27B-class dense, non-thinking
-model with 32K context** is the proven floor here — smaller or heavily-MoE
-models failed real task work in this repo's own history (D-12/D-14/D-66),
-and a thinking model breaks reply parsing outright (Rule 1). Verify
-non-thinking in 20 seconds:
+The model matters more than the server: a **~27B-class dense model with
+32K context** is the proven floor here — smaller or heavily-MoE models failed
+real task work in this repo's own history (D-12/D-14/D-66). It must return
+its answer in `content`, not only as reasoning (Rule 1). Quick check in 20
+seconds (the full admission test is `scripts/seat-check.sh coder` and
+`scripts/seat-check.sh em`):
 
 ```bash
 MODEL=$(curl -s http://localhost:1234/v1/models | python3 -c \
@@ -37,8 +38,9 @@ curl -s http://localhost:1234/v1/chat/completions \
   -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with just OK\"}],\"max_tokens\":5}"
 ```
 
-PASS: `content` says OK and `reasoning_content` is absent or empty. If it is
-the other way around, a thinking model is loaded — swap it before going on.
+PASS: `content` says OK. If `content` is empty and `reasoning_content` holds
+the answer, the backend returns reasoning only — fix the model's profile or
+load another model before going on.
 
 ## Step 1 — create a project
 
@@ -173,7 +175,7 @@ The green suite is the proof, but the app is real: serve it with
 | Symptom | Meaning | Move |
 |---------|---------|------|
 | pre-flight: no LLM reachable | server down or wrong port | start it, or `SANDBOX_LLM_PORT=8000 scripts/orchestrate.sh` |
-| empty smoke reply / JSON parse errors | thinking model loaded | Rule 1 — swap to non-thinking, re-run the Step 0 probe |
+| empty smoke reply / JSON parse errors | the seat returns reasoning but no content | Rule 1 — run `scripts/seat-check.sh`; fix the profile or seat another model |
 | pre-flight: working tree not clean | uncommitted changes | commit or stash, re-run |
 | hard halt: role has no model mapping | models.env missing or typo'd | Step 2 — the id must match `/v1/models` exactly |
 | exit 2 + `.pipeline-state/escalations/BATCH.md` | the pipeline says the SPEC is wrong | the TPM escalation loop — `docs/ESCALATION.md`. You won't hit it on the example spec. |

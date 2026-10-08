@@ -177,7 +177,8 @@ content = (msg.get("content") or "").strip()
 reasoning = (msg.get("reasoning_content") or "").strip()
 if not content and reasoning:
     sys.exit(f"llm-call FAIL: model '{model}' for role '{role}' returned "
-             f"reasoning but no content — thinking model loaded (Hard Rule 1).")
+             f"reasoning but no content — this model/backend fails Hard Rule 1 (a seat must "
+             f"return its artifact as content); fix its profile or run scripts/seat-check.sh.")
 if not content:
     sys.exit(f"llm-call FAIL: empty content from model '{model}'.")
 

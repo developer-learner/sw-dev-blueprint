@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-209 — 2026-10-08 — Rule 1 becomes a seat admission test; test retirement needs positive evidence
+
+**Decision:** (1) BLUEPRINT.md Rule 1 no longer bans "thinking" models. A model/backend combination may hold the EM or coder seat only if it reliably returns a complete, parseable artifact in `content` within its configured budget. Reasoning models are allowed when they do. `scripts/seat-check.sh <coder|em>` is the admission test: it runs the seat through the real `llm-call.sh` with a small representative task (a compilable file block; a schema-valid diagnosis) and admits it only on a complete artifact with `finish_reason=stop`. At runtime `llm-call.sh` still fails closed on empty or reasoning-only replies, and truncation never counts. Docs and the `llm-call.sh` error message now say this. (2) TESTING.md test retirement: "has not failed for five milestones" is removed. A good regression test is supposed to stay green; a frozen test becomes a retirement candidate only on positive evidence — lost relevance, redundancy, a mutation pass showing it kills nothing unique, or upkeep that outweighs what only it catches.
+
+**Alternatives considered:** Keep the ban — rejected: it generalized one integration failure (a backend that put the answer only in reasoning) into a rule about a whole model class, and it said "frontier models are not thinking models", which is false. Admit models on a name or vendor list — rejected: what breaks parsing is the model + backend + profile combination, which only a real call shows.
+
+**Reason:** Both came from the October 2026 review: the old Rule 1 named the wrong property, and silence is weak evidence that a test is unnecessary. `doc-consistency.sh` now flags the retired phrasings.
+
+**Do not suggest:** a model-name ban list; retiring a test because it never failed.
+
 ## D-208 — 2026-10-08 — A full milestone runs end to end with scripted models; the pending gates are proven
 
 **Decision:** (1) `scripts/selftest/e2e-sim.sh` (run on the Mac; builds in the dev VM) drives one complete milestone through the REAL pipeline — `vm-sync start`, `swbp refreeze`, `swbp orchestrate`, the real gates and Podman sandbox, `vm-sync land` — with `scripts/selftest/e2e_fake_llm.py` standing in for the local model server. The script deliberately misbehaves (a plan missing a task, a coder SPEC PROBLEM report, a reply with no file block, code that fails the frozen tests) and the harness checks the milestone still reaches `[success]`, the catch ledger comes home with every expected gate, and the spec report goes straight to the EM consult. It is builder-only and not part of the pytest suite (it needs the VM). (2) The six gates marked `pending` in `gate-inventory.tsv` were mutation-tested with `scripts/mutation-pass.sh`; all are now `proven`. The curated mutant lists live in `docs/mutation/*.tsv` for re-running. (3) Fixes the simulation and the mutation pass forced: both lint gates (refreeze's staged-test lint, D-67, and coder-output lint, D-74) pin the core rule set `E4,E7,E9,F` when a project has no ruff config of its own; `examples/minimal-spec` gains the `test_mapping` the freeze pin gate requires; `smoke_gate` is a function so the smoke check is testable; new tests cover an XPASS never counting as green and an empty file block being refused.

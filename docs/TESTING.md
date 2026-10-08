@@ -45,15 +45,25 @@ edit).
 
 ## Test retirement (spec-delta only)
 
-A frozen test that has not failed for five consecutive milestones, or that
-no longer maps to a current acceptance criterion or locked surface, is a
-retirement candidate: the TPM flags it at the next refreeze, and it leaves
-through the same `refreeze.sh` delta path as any other spec change — never
-by direct edit. This is advisory TPM guidance, not a mechanical gate: the
-per-node failure history that would mechanize it is not yet tracked, and a
-check with no consumer is decoration (D-85). The standing question at every
-freeze: if a test could not fail under any plausible regression, it is
-ceremony, not coverage.
+A test that has never failed is not evidence that it is useless — a good
+regression test is SUPPOSED to stay green (D-209). Silence alone never makes
+a retirement candidate. A frozen test becomes a candidate only on positive
+evidence, judged by the TPM:
+
+- **Relevance:** it no longer maps to a current acceptance criterion or
+  locked surface (the requirement changed or was removed).
+- **Redundancy:** another frozen test checks the same behavior at least as
+  strictly.
+- **Discrimination:** a mutation pass (`scripts/mutation-pass.sh`) shows it
+  kills no mutant that the rest of the suite does not also kill.
+- **Cost:** it is slow, flaky, or brittle enough that its upkeep outweighs
+  what only it catches.
+
+A candidate leaves through the same `refreeze.sh` delta path as any other
+spec change — never by direct edit. This is advisory TPM guidance, not a
+mechanical gate. The standing question at every freeze: if a test could not
+fail under any plausible regression, it is ceremony, not coverage — and the
+way to show that is a mutation pass, not a quiet history.
 
 ---
 

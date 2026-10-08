@@ -76,7 +76,7 @@ container-image builds and model downloads.
 | macOS (Apple Silicon) host + a **Linux VM** (Lima works), or bare Linux | Both orchestration and refreeze test execution belong in Linux — see `docs/DEV-VM-SETUP.md` | The Mac remains the UI/model-server host; generated tests never execute there |
 | **Podman** | The sandbox that runs the frozen suite over generated code (`--network none`, read-only repo). Mandatory — no unsandboxed fallback (D-30/D-114) | Pre-warm inside Linux with `scripts/sandbox-run.sh -- true` |
 | **LM Studio** (or any OpenAI-compatible local server) | Serves the EM and coder seats | Map roles in `~/.config/sw-dev-blueprint/models.env` — the repo never names models (D-41) |
-| A **~27B-class dense local model, non-thinking, 32K context** | The proven floor for the coder/EM seats — smaller or heavily-MoE models failed task-level work in this repo's own history (D-12/D-14/D-66). Quantization: 4-bit is the CEO default (D-72); keep an 8-bit variant loadable for reactive escalation on the D-72 trigger signals | "Non-thinking" is a hard rule (BLUEPRINT.md Rule 1) |
+| A **~27B-class dense local model, 32K context, passing the Rule 1 seat check** | The proven floor for the coder/EM seats — smaller or heavily-MoE models failed task-level work in this repo's own history (D-12/D-14/D-66). Quantization: 4-bit is the CEO default (D-72); keep an 8-bit variant loadable for reactive escalation on the D-72 trigger signals | Rule 1 (BLUEPRINT.md): the seat must return its artifact in `content` — check with `scripts/seat-check.sh` |
 | **ruff** inside Linux | `refreeze.sh` lints staged tests at the freeze door and fails closed without it (D-67) | Install it in the dev VM |
 | **python3, git**; `gh` optional | Gate scripts, version control, template drift-check | — |
 | A **frontier LLM** (any — web chat, agent CLI, or the LLM already on the job) | Plays the TPM seat you name per session (D-139): writes the spec + tests you freeze | No API needed — the filesystem is the only integration (D-29) |
@@ -243,9 +243,9 @@ if a role has no mapping. `scripts/orchestrate.sh` reads the same endpoint
 settings before its reachability probe; explicit per-run environment values
 win independently for host and port (D-180).
 
-> ⚠️ **Rule 1:** Do NOT use a thinking model for any agent tier.
-> Verify with Pre-Flight Step 0 that `content` is populated and
-> `reasoning_content` is empty.
+> ⚠️ **Rule 1:** a model may hold a seat only if it returns a complete
+> artifact in `content` within budget. Reasoning models are fine when they
+> do. Check with `scripts/seat-check.sh coder` and `scripts/seat-check.sh em`.
 
 `opencode.json` at the project root is unrelated to model mapping — it only
 configures OpenCode if you happen to use it as your conductor.

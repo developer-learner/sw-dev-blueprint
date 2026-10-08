@@ -125,7 +125,7 @@ Testing:      pytest
 - **TPM/milestone runs are inform-first (D-139).** Diagnosing a fix as needing a TPM round-trip or a milestone (orchestrate) run is NOT a launch: stop and ask the CEO — including who will take the TPM seat. The seat may be a web-chat model, a `scripts/tpm-agent.sh` agent, or the same LLM already on the job, by the CEO's assignment; never assume "the TPM is someone else" or that the run proceeds on an agent's judgment alone.
 
 **Operating guardrails (from hard-won failures — see BLUEPRINT.md):**
-- **Do not set a thinking model as the active model.** Thinking models leave `content` empty and put output in `reasoning_content`, which breaks parsing. The model must be non-thinking local OR frontier.
+- **Seat only models that pass the Rule 1 admission test.** A seat must return a complete, parseable artifact in `content` within its budget; a backend that leaves `content` empty (reasoning only) or truncates breaks parsing. Reasoning models are fine when they pass. Check with `scripts/seat-check.sh coder` / `scripts/seat-check.sh em` before seating a new model (D-209).
 - **CARDINAL RULE — an EM/coder failure is never re-run blind.** If an EM or coder call fails, stop and troubleshoot the root cause — read the failure message, fix the harness/context/spec — never re-run the same call expecting the model to succeed next time. One attempt per run per call; a re-run is legitimate ONLY after a root-cause fix (then exactly one clean run). Measure and test through the pipeline's own machinery (`llm-call.sh` + schema + profile budget), never a hand-rolled copy of it.
 - **Do not trust your own "it works" — only passing tests confirm success.** Run `pytest`. The tests are binding automated completion evidence, not your assessment. Do not mark a task done on self-judgment.
 - **Do not proceed past an unreachable LM Studio or a missing service** — halt and report.
@@ -154,7 +154,7 @@ the TPM web chat (see `docs/TPM-ROLE.md`) and enter via `scripts/refreeze.sh`.
 
 Model identity never lives in this repo: roles map to models in
 `~/.config/sw-dev-blueprint/models.env` (CEO-owned, D-53). Model *class*
-is constrained (frontier / mid / local non-thinking), never identity; no
+is constrained (frontier / mid / local; every seat passes the Rule 1 seat check), never identity; no
 mapping for a role is a hard halt, never a silent substitution.
 
 The shell owns ALL procedure: `scripts/orchestrate.sh` validates the plan,
