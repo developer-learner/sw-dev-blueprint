@@ -143,6 +143,16 @@ def test_coder_failures_name_the_gate_that_caught_them(tmp_path):
         assert out["rc"] == "1" and out["catch"] == gate, (gate, out)
 
 
+def test_empty_file_block_is_refused_not_written(tmp_path):
+    """A create-mode reply whose block is empty would write a blank source
+    file and spend the test run discovering it; the reply-format gate refuses
+    it up front (survivor of the 2026-10-08 mutation pass)."""
+    _r, out = drive_coder(tmp_path, "=== FILE: src/app.py ===\n   \n=== END FILE ===")
+    assert out["rc"] == "1" and out["catch"] == "coder-reply-format", out
+    assert "empty" in out["evidence"], out
+    assert not (tmp_path / "src/app.py").exists()
+
+
 def test_every_runtime_catch_label_is_in_the_gate_inventory():
     """A catch recorded under a name the inventory lacks is invisible in the
     tiering report — the whole point of recording it."""

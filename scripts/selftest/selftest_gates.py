@@ -6719,7 +6719,7 @@ def freezable_repo(tmp_path):
         "check-ac-postconditions.py",
         "check-test-direction.py",
         "validate-plan.py", "source_paths.py",
-        "catch-ledger.py",
+        "catch-ledger.py", "lint-changed.py",
     ):
         target = tmp_path / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
@@ -6924,7 +6924,7 @@ def _install_refreeze_scripts(repo):
         "check-spec-delta.py",
         "check-ac-postconditions.py",
         "check-test-direction.py",
-        "validate-plan.py", "source_paths.py",
+        "validate-plan.py", "source_paths.py", "lint-changed.py",
     ):
         target = repo / "scripts" / name
         target.write_bytes((SCRIPTS / name).read_bytes())
