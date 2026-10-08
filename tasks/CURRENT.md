@@ -26,6 +26,14 @@ rich-adoption (Phase 0 D-175).
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-07: **D-206 — security plan gaps closed.** VM provisioning pinned
+      and verified (dated image + digest, NodeSource key fingerprint, no
+      `curl | bash`, pinned Claude Code and OpenCode with checksum).
+      D-190/D-191 mutation-checked; three holes found and covered by new
+      tests (coder pre-check before any model call, unparseable graph file,
+      guard vs a regenerated frozen manifest). 69 Playwright tests passed
+      under the pids cap (peak 99/1024). LM Studio appears to stop
+      generating on disconnect (weak signal; seat server not probed).
 - 2026-10-06: **D-205 — copy-in / copy-out: the dev VM writes no host project.**
       The VM's only mount is the blueprint, read-only; projects go in with
       `scripts/vm-sync start` (committed HEAD only, onto the VM's disk) and

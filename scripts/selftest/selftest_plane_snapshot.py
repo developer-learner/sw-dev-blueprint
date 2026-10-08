@@ -727,6 +727,33 @@ def test_guard_flags_merge_introduced_changes(tmp_path):
     assert _guard(app, "--range", f"{base}..HEAD", "--enforce").returncode == 1
 
 
+def test_guard_catches_test_edit_with_a_regenerated_frozen_manifest(tmp_path):
+    """Security plan item 5: an edit that weakens a frozen test AND rewrites
+    scripts/.approved/frozen-manifest to match passes every hash check — so
+    the guard must judge by path and role, and must stay in enforce mode
+    even when the same commit drops guard=enforce."""
+    app = tmp_path / "guard-app"
+    app.mkdir()
+    subprocess.run(["git", "init", "-q", str(app)], check=True)
+    base = _commit(app, ".swbp", "ref=" + "0" * 40 + "\nguard=enforce\n", role="human")
+    _commit(app, "tests/test_a.py", "def test_a(): assert 2 + 2 == 4\n", role="tpm")
+    _commit(app, "scripts/.approved/frozen-manifest", "aaa  tests/test_a.py\n", role="tpm")
+    pinned = subprocess.run(["git", "-C", str(app), "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    (app / "tests/test_a.py").write_text("def test_a(): assert True\n")
+    (app / "scripts/.approved/frozen-manifest").write_text("bbb  tests/test_a.py\n")
+    (app / ".swbp").write_text("ref=" + "0" * 40 + "\n")
+    env = {**os.environ, **IDENT}
+    subprocess.run(["git", "-C", str(app), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(app), "-c", "core.hooksPath=/dev/null",
+                    "commit", "-qm", "tidy"], check=True, env=env)
+    r = _guard(app, "--range", f"{pinned}..HEAD")
+    assert r.returncode == 1, r.stdout
+    assert "[enforce]" in r.stdout, r.stdout
+    assert "scripts/.approved/frozen-manifest" in r.stdout and "tests/test_a.py" in r.stdout
+    assert base
+
+
 def test_guard_enforcement_ratchets_against_downgrades(tmp_path):
     # D-192: once any commit in the range had guard=enforce, the whole range
     # is checked in enforce mode — a hand downgrade of the guard cannot

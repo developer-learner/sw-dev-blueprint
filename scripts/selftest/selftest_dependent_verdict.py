@@ -145,6 +145,21 @@ def test_missing_frozen_test_file_is_uncertain(tmp_path, monkeypatch):
             ["tests/test_ui.py::test_a", "tests/test_ghost.py::test_g"])
 
 
+def test_unparseable_file_in_the_graph_is_uncertain(tmp_path, monkeypatch):
+    """D-191: if a file in the import graph cannot be parsed, its edges are
+    unknown, so the selection is uncertain — never "no dependents" (which
+    would silently narrow the verdict to the mapped union)."""
+    monkeypatch.chdir(tmp_path)
+    _tests(tmp_path, {
+        "src/pkg/ui.py": "PAGE = 1\n",
+        "src/pkg/broken.py": "def oops(:\n",
+        "tests/test_ui.py": "from pkg.ui import PAGE\n\ndef test_a():\n    pass\n",
+    })
+    vp = _vp()
+    with pytest.raises(vp.DependentLookupError):
+        vp.dependent_node_ids(["src/pkg/ui.py"], ["tests/test_ui.py::test_a"])
+
+
 def _cli(workdir):
     return subprocess.run(
         ["python3", str(SCRIPTS / "validate-plan.py"), "--dependent-ids"],

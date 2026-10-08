@@ -197,6 +197,25 @@ def test_coder_create_cannot_write_through_parent_symlink(tmp_path):
     assert result.returncode != 0 or "RC=0" not in result.stdout
 
 
+def test_unsafe_coder_destination_halts_before_any_model_call(tmp_path):
+    """D-190's run_coder pre-check stops BEFORE a model call is spent. The
+    inner write check would refuse the file anyway, so only this test proves
+    the pre-check itself: no call may reach the coder seat."""
+    (tmp_path / "src").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "src/link").symlink_to(outside, target_is_directory=True)
+    (tmp_path / "replies").mkdir()
+    (tmp_path / "replies/1").write_text(
+        "=== FILE: src/link/new.py ===\nvalue = 1\n=== END FILE ===\n")
+    result = subprocess.run(["bash", str(SCRIPTS / "selftest/drive-coder.sh"),
+                             str(tmp_path), "T1", "src/link/new.py", "0"],
+                            capture_output=True, text=True)
+    assert result.returncode != 0, (result.stdout, result.stderr)
+    assert "unsafe coder destination" in result.stderr, result.stderr
+    assert not (tmp_path / ".calls").exists(), "a model call was spent on an unsafe destination"
+
+
 @pytest.mark.parametrize("command", ["prepare-redcheck", "redcheck"])
 def test_redcheck_refuses_cache_directory_symlink(tmp_path, command):
     outside = tmp_path / "outside"
