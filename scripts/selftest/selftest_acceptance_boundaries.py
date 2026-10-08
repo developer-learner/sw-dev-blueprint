@@ -98,7 +98,7 @@ def test_escalation_copy_copies_regular_report(tmp_path):
 
 
 @pytest.mark.parametrize("case", ["runner", "exitcode", "empty", "count", "summary",
-                                      "missing", "duplicate", "unexpected", "phase"])
+                                      "missing", "duplicate", "unexpected", "phase", "xpass"])
 def test_acceptance_rejects_inconsistent_or_incomplete_evidence(tmp_path, case):
     report = report_for(NODE)
     runner = 0
@@ -121,6 +121,10 @@ def test_acceptance_rejects_inconsistent_or_incomplete_evidence(tmp_path, case):
         report = report_for("tests/test_other.py::test_other")
     elif case == "phase":
         report["tests"][0]["teardown"]["outcome"] = "failed"
+    elif case == "xpass":
+        # an expected-failure test that passed anyway (XPASS): every phase
+        # reads "passed", only the wasxfail marker says it is not a real pass
+        report["tests"][0]["call"]["wasxfail"] = "known bug"
     result = accept(tmp_path, report, runner=runner, expected=expected)
     assert "FINAL_TESTS_RC=0" not in result.stdout, result.stdout
 

@@ -153,6 +153,29 @@ def test_empty_file_block_is_refused_not_written(tmp_path):
     assert not (tmp_path / "src/app.py").exists()
 
 
+SMOKE_HARNESS = EXTRACT + r'''
+set -euo pipefail
+PLANE_DIR="$PWD"; mkdir -p scripts
+printf '#!/bin/sh\nexit %s\n' "$SANDBOX_RC" > scripts/sandbox-run.sh; chmod +x scripts/sandbox-run.sh
+eval "$(extract smoke_gate)"
+pass=1; evidence=""; task_catch=""
+[ "$pass" = "1" ] && smoke_gate "$SMOKE"
+echo "PASS=$pass CATCH=${task_catch:--} EVIDENCE=${evidence:--}"
+'''
+
+
+def test_failing_smoke_check_fails_the_task_and_is_recorded(tmp_path):
+    r = _shell(SMOKE_HARNESS, tmp_path, ORCH=str(ORCHESTRATE), SANDBOX_RC="1",
+               SMOKE="curl -sf localhost/health")
+    assert "PASS=0 CATCH=smoke-check EVIDENCE=smoke_check failed: curl" in r.stdout, (r.stdout, r.stderr)
+
+
+def test_passing_or_absent_smoke_check_leaves_the_task_green(tmp_path):
+    for rc, smoke in (("0", "true"), ("1", "")):
+        r = _shell(SMOKE_HARNESS, tmp_path, ORCH=str(ORCHESTRATE), SANDBOX_RC=rc, SMOKE=smoke)
+        assert "PASS=1 CATCH=-" in r.stdout, (rc, smoke, r.stdout, r.stderr)
+
+
 def test_every_runtime_catch_label_is_in_the_gate_inventory():
     """A catch recorded under a name the inventory lacks is invisible in the
     tiering report — the whole point of recording it."""

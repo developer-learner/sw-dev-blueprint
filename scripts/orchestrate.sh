@@ -1458,6 +1458,16 @@ fail_attempt() {
   set_counter "$id" strikes "$strikes"
 }
 
+# smoke_gate <smoke-cmd> — the TPM-authored smoke_check for a task, run in
+# the sandbox after the mapped tests pass. On failure it sets the task loop's
+# pass/evidence/task_catch (D-207 catch label). A function so the gate can be
+# tested on its own (D-208 mutation pass: inline in the loop it was untested).
+smoke_gate() {
+  [ -n "$1" ] || return 0
+  "$PLANE_DIR/scripts/sandbox-run.sh" -- sh -c "$1" >/dev/null 2>&1 && return 0
+  pass=0; evidence="smoke_check failed: $1"; task_catch="smoke-check"
+}
+
 coder_instr() {
   local file="$1" brief="$2"
   # D-59: existing files are EDITED via anchored blocks, never retyped —
@@ -2690,11 +2700,7 @@ while :; do
     else
       evidence=""
     fi
-    if [ "$pass" = "1" ] && [ -n "$smoke" ]; then
-      if ! "$PLANE_DIR/scripts/sandbox-run.sh" -- sh -c "$smoke" >/dev/null 2>&1; then
-        pass=0; evidence="smoke_check failed: $smoke"; task_catch="smoke-check"
-      fi
-    fi
+    [ "$pass" = "1" ] && smoke_gate "$smoke"
   else
     pass=0; evidence="$CODER_EVIDENCE"; task_catch="$CODER_CATCH"
   fi
