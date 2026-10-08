@@ -35,7 +35,7 @@ ok() { echo "  ok: $*"; }
 PIN="${SWBP_E2E_PIN:-$(git -C "$MOUNTED_BUILDER" rev-parse HEAD)}"
 [ -f "$LINKBOX_SRC/storage.py" ] && [ -f "$LINKBOX_SRC/api.py" ] \
   || fail "correct reference sources not found in $LINKBOX_SRC"
-limactl list 2>/dev/null | grep -q "^dev-vm *Running" || fail "dev VM is not running"
+case "$(limactl list 2>/dev/null)" in *"dev-vm "*Running*) ;; *) fail "dev VM is not running" ;; esac
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/e2e-sim.XXXXXX")"
 APP="$TMP/simapp"
@@ -112,7 +112,9 @@ ok "orchestrate exited 0"
 
 echo "== 4. land"
 bash "$VS" land "$APP" "$RUN" 2>&1 | grep -v 'level=warning'
-git -C "$APP" log --oneline | grep -q "\[success\] spec v1" || fail "no [success] commit on the host"
+# (no `git log | grep -q`: under pipefail grep -q's early exit SIGPIPEs git log)
+HOST_LOG="$(git -C "$APP" log --oneline)"
+case "$HOST_LOG" in *"[success] spec v1"*) ;; *) fail "no [success] commit on the host" ;; esac
 ok "[success] landed on the host"
 
 echo "== 5. evidence"
