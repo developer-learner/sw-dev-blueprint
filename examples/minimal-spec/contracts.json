@@ -61,17 +61,46 @@
     {
       "id": "error:404-bookmark",
       "status": 404,
-      "shape": { "detail": "bookmark not found" }
+      "shape": {
+        "detail": "bookmark not found"
+      }
     },
     {
       "id": "error:409-duplicate-url",
       "status": 409,
-      "shape": { "detail": "duplicate url" }
+      "shape": {
+        "detail": "duplicate url"
+      }
     },
     {
       "id": "error:422-bad-url",
       "status": 422,
-      "shape": { "detail": "url must start with http:// or https://" }
+      "shape": {
+        "detail": "url must start with http:// or https://"
+      }
     }
-  ]
+  ],
+  "test_mapping": {
+    "tests/test_storage.py::test_add_returns_full_record": "src/storage.py",
+    "tests/test_storage.py::test_add_defaults": "src/storage.py",
+    "tests/test_storage.py::test_duplicate_url_raises": "src/storage.py",
+    "tests/test_storage.py::test_list_newest_first": "src/storage.py",
+    "tests/test_storage.py::test_list_filters_by_tag": "src/storage.py",
+    "tests/test_storage.py::test_list_search_is_case_insensitive_over_url_title_notes": "src/storage.py",
+    "tests/test_storage.py::test_list_filters_by_unread": "src/storage.py",
+    "tests/test_storage.py::test_get_bookmark_found_and_missing": "src/storage.py",
+    "tests/test_storage.py::test_update_applies_only_known_fields": "src/storage.py",
+    "tests/test_storage.py::test_update_missing_returns_none": "src/storage.py",
+    "tests/test_storage.py::test_delete_bookmark": "src/storage.py",
+    "tests/test_storage.py::test_data_persists_across_calls": "src/storage.py",
+    "tests/test_api.py::test_create_returns_201_and_record": "src/api.py",
+    "tests/test_api.py::test_create_rejects_non_http_url": "src/api.py",
+    "tests/test_api.py::test_create_duplicate_url_is_409": "src/api.py",
+    "tests/test_api.py::test_list_newest_first": "src/api.py",
+    "tests/test_api.py::test_list_filters_combine": "src/api.py",
+    "tests/test_api.py::test_list_unread_filter": "src/api.py",
+    "tests/test_api.py::test_get_by_id_and_404": "src/api.py",
+    "tests/test_api.py::test_patch_updates_and_404": "src/api.py",
+    "tests/test_api.py::test_delete_204_then_404": "src/api.py"
+  }
 }
