@@ -223,10 +223,15 @@ done
 if [ -n "$CHANGED_TEST_FILES" ]; then
   command -v ruff >/dev/null 2>&1 \
     || die "ruff not found — the staged-test lint gate (D-67) requires it: pip install ruff"
+  # D-208: the project's own ruff config governs; without one, the pinned
+  # core rule set — never ruff's version-dependent defaults (0.16 enabled 413).
+  # shellcheck disable=SC2086  # intentional word splitting of the rule args
+  RUFF_RULE_ARGS=$(python3 "$PLANE_DIR/scripts/lint-changed.py" --rule-args) \
+    || die "could not resolve the staged-test lint rules (D-208)"
   for f in $CHANGED_TEST_FILES; do
     case "$f" in
       *.py)
-        LINT_OUT=$(ruff check --no-cache "$IN/$f" 2>&1) \
+        LINT_OUT=$(ruff check --no-cache $RUFF_RULE_ARGS "$IN/$f" 2>&1) \
           || die "staged test $f fails lint (D-67 gate):
 $LINT_OUT
   -> fix the TPM output and restage; frozen lint debt outlives the freeze"

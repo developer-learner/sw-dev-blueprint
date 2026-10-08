@@ -11,7 +11,9 @@ Rule 6: this proves the helper's decision logic. That orchestrate.sh feeds it
 the pre-task baseline (HEAD at strike 0) is proven by the source wiring, not here.
 """
 
+import os
 import shutil
+import sys
 import subprocess
 from pathlib import Path
 
@@ -186,3 +188,63 @@ def test_pure_deletion_does_not_invent_findings(tmp_path):
     (repo / "m.py").write_text("import abc\nimport os\n\nprint(abc, os)\n")
     r = _run(repo, "m.py", base)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+# --- D-208: rules do not drift with the installed ruff version ---------------
+
+FAKE_RUFF = """#!/bin/sh
+printf '%s\\n' "$*" >> "$RUFF_ARGS_LOG"
+echo '[]'
+"""
+
+
+def _fake_ruff(tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "ruff").write_text(FAKE_RUFF)
+    (bindir / "ruff").chmod(0o755)
+    log = tmp_path / "ruff-args.log"
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "RUFF_ARGS_LOG": str(log)}
+    return env, log
+
+
+def test_no_project_config_pins_the_core_rule_set(tmp_path):
+    """Without a project ruff config, ruff's OWN defaults decide — and they
+    moved from 59 rules (0.15) to 413 (0.16), so the same file passed on one
+    machine and failed on another. The gate pins the canonical core set."""
+    (tmp_path / "r").mkdir()
+    repo = _repo(tmp_path / "r")
+    _commit(repo, "app.py", "x = 1\n")
+    env, log = _fake_ruff(tmp_path)
+    subprocess.run([sys.executable, str(SCRIPT), "app.py", "NONE"], cwd=repo,
+                   capture_output=True, text=True, env=env)
+    assert "--isolated --select E4,E7,E9,F" in log.read_text(), log.read_text()
+
+
+@pytest.mark.parametrize("config", ["ruff.toml", ".ruff.toml", "pyproject.toml"])
+def test_project_ruff_config_still_governs(tmp_path, config):
+    (tmp_path / "r").mkdir()
+    repo = _repo(tmp_path / "r")
+    body = '[tool.ruff]\nline-length = 100\n' if config == "pyproject.toml" else "line-length = 100\n"
+    _commit(repo, config, body)
+    _commit(repo, "app.py", "x = 1\n")
+    env, log = _fake_ruff(tmp_path)
+    subprocess.run([sys.executable, str(SCRIPT), "app.py", "NONE"], cwd=repo,
+                   capture_output=True, text=True, env=env)
+    assert "--isolated" not in log.read_text(), log.read_text()
+
+
+def test_pyproject_without_a_ruff_table_is_not_a_ruff_config(tmp_path):
+    repo = _repo(tmp_path)
+    _commit(repo, "pyproject.toml", "[project]\nname = 'x'\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), "--rule-args"], cwd=repo,
+                       capture_output=True, text=True)
+    assert r.stdout.split() == ["--isolated", "--select", "E4,E7,E9,F"], r.stdout
+
+
+def test_freeze_lint_gate_uses_the_same_rule_choice():
+    """refreeze.sh's staged-test lint (D-67) must take its rules from the
+    same helper, or the two gates drift apart again."""
+    text = (SCRIPT.parent / "refreeze.sh").read_text()
+    assert 'lint-changed.py" --rule-args' in text
+    assert 'ruff check --no-cache $RUFF_RULE_ARGS "$IN/$f"' in text

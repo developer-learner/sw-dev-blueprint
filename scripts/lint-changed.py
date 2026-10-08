@@ -2,8 +2,8 @@
 """D-74 diff-scoped coder-output lint.
 
 Runs the SAME `ruff check` the D-74 gate has always run on the one `.py` file a
-coder task wrote — same rule set, same config resolution (no `--select`, so a
-child project's ruff config still governs) — but reports ONLY findings on lines
+coder task wrote — same rule set, same config resolution (a child project's ruff config
+still governs; without one, the pinned core set — D-208) — but reports ONLY findings on lines
 this task actually changed relative to a baseline ref. Pre-existing ("legacy")
 findings on lines the coder did not touch are grandfathered, so an unrelated
 lint debt in an edited file no longer burns a coder strike (the failure mode the
@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from pathlib import Path
 import sys
 from typing import Iterable
 
@@ -96,10 +97,30 @@ def _changed_rows(file: str, baseline_ref: str) -> set[int] | None:
     return rows
 
 
+# D-208: the canonical core rule set (D-106). Used ONLY when the project has
+# no ruff config of its own — otherwise ruff's built-in defaults decide, and
+# those moved from 59 rules (ruff 0.15) to 413 (ruff 0.16): the same file
+# passed the gate on one machine and failed it on another.
+CORE_RULES = ["--isolated", "--select", "E4,E7,E9,F"]
+
+
+def rule_args(root: Path = Path(".")) -> list[str]:
+    """[] when the project has its own ruff config (it governs), else the
+    pinned core rule set. Shared by refreeze.sh's staged-test lint (D-67)."""
+    if (root / "ruff.toml").is_file() or (root / ".ruff.toml").is_file():
+        return []
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file() and any(
+            line.strip().startswith("[tool.ruff")
+            for line in pyproject.read_text().splitlines()):
+        return []
+    return list(CORE_RULES)
+
+
 def _ruff_findings(file: str) -> list[dict]:
     """Run the D-74 ruff check as JSON. Raises RuntimeError on a tooling error."""
     proc = subprocess.run(
-        ["ruff", "check", "--no-cache", "--output-format", "json", file],
+        ["ruff", "check", "--no-cache", *rule_args(), "--output-format", "json", file],
         capture_output=True,
         text=True,
     )
@@ -148,6 +169,9 @@ def filter_findings(findings: Iterable[dict], rows: set[int] | None) -> list[dic
 
 
 def main(argv: list[str]) -> int:
+    if argv[1:] == ["--rule-args"]:
+        print(" ".join(rule_args()))
+        return 0
     if len(argv) != 3:
         print(__doc__.strip().splitlines()[0], file=sys.stderr)
         print("usage: lint-changed.py <file> <baseline_ref>", file=sys.stderr)
