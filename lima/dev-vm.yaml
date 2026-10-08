@@ -1,17 +1,21 @@
 # Lima VM config for sw-dev-blueprint zero-prompt agent operation.
 # Usage: limactl create --name=dev-vm lima/dev-vm.yaml && limactl start dev-vm
 #
-# Design: see tasks/HANDOFF-dev-vm.md constraints 1-6.
+# Design: see docs/DEV-VM-SETUP.md (constraints 1-6).
 # - Persistent, headless Linux guest.
 # - Native Podman (replaces host podman-machine; same nesting depth).
 # - No writable project mounts: runs work on VM-disk clones (scripts/vm-sync, D-205).
 # - Host-gateway networking so the VM reaches LM Studio on the Mac.
 
+# Security plan item 10b: every install input is pinned and verified. Dated
+# image + sha256 from Ubuntu's SHA256SUMS for that release; bump deliberately.
 images:
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release-20260926/ubuntu-24.04-server-cloudimg-arm64.img"
     arch: "aarch64"
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    digest: "sha256:1d6bffe64b848468ac97f821d369a4846d983de1800ccf6b5ec8853e85cefc55"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release-20260926/ubuntu-24.04-server-cloudimg-amd64.img"
     arch: "x86_64"
+    digest: "sha256:6a81c37564db9b1ee84e141922625e1d7c5b389b99bb3c572e0243607d5bb4d2"
 
 cpus: 4
 memory: "8GiB"
@@ -66,28 +70,43 @@ provision:
       #!/bin/bash
       set -eux
 
-      # Node.js (for Claude Code)
+      # Node.js 22 (for Claude Code) from NodeSource's SIGNED apt repo. No
+      # setup script is piped into bash: the repo key is downloaded, its
+      # fingerprint checked against the pin, then apt verifies every package.
+      # NodeSource drops old patch builds from the index, so the major line
+      # (node_22.x) is pinned, not the patch.
+      NODESOURCE_FPR="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
       if ! command -v node >/dev/null 2>&1; then
-        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource.key
+        got=$(gpg --show-keys --with-colons /tmp/nodesource.key | awk -F: '/^fpr/{print $10; exit}')
+        [ "$got" = "$NODESOURCE_FPR" ] || { echo "NodeSource key fingerprint mismatch: $got" >&2; exit 1; }
+        gpg --dearmor --yes -o /usr/share/keyrings/nodesource.gpg /tmp/nodesource.key
+        rm -f /tmp/nodesource.key
+        echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+          > /etc/apt/sources.list.d/nodesource.list
+        apt-get update
         apt-get install -y nodejs
       fi
 
-      # Claude Code CLI
+      # Claude Code CLI — pinned install version (it self-updates afterwards).
       if ! command -v claude >/dev/null 2>&1; then
-        npm install -g @anthropic-ai/claude-code
+        npm install -g @anthropic-ai/claude-code@2.1.201
       fi
 
-      # OpenCode — latest release .deb
+      # OpenCode — pinned v0.0.55 .deb, verified against the release's
+      # published sha256 (upstream repo is archived; no newer release exists).
       if ! command -v opencode >/dev/null 2>&1; then
         ARCH=$(dpkg --print-architecture)
-        OC_URL=$(curl -fsSL https://api.github.com/repos/opencode-ai/opencode/releases/latest \
-          | jq -r ".assets[] | select(.name | test(\"linux.*${ARCH}.*\\\\.deb\")) | .browser_download_url" \
-          | head -1)
-        if [ -n "$OC_URL" ]; then
-          curl -fsSL "$OC_URL" -o /tmp/opencode.deb
-          dpkg -i /tmp/opencode.deb
-          rm -f /tmp/opencode.deb
-        fi
+        case "$ARCH" in
+          arm64) OC_SHA256="ffc146abc77c6eb195a80860fbac6757686f8434bbe459f207752003c73784f5" ;;
+          amd64) OC_SHA256="50ba7f69229cec1c326222d07e6c3d06f2a3083da3a1693e6ddfc31d8d7a3e68" ;;
+          *) echo "no pinned OpenCode build for $ARCH" >&2; exit 1 ;;
+        esac
+        curl -fsSL "https://github.com/opencode-ai/opencode/releases/download/v0.0.55/opencode-linux-${ARCH}.deb" \
+          -o /tmp/opencode.deb
+        echo "$OC_SHA256  /tmp/opencode.deb" | sha256sum -c -
+        dpkg -i /tmp/opencode.deb
+        rm -f /tmp/opencode.deb
       fi
 
   - mode: user

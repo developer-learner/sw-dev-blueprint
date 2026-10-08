@@ -177,7 +177,9 @@ Podman becomes native.
 - [x] Container process cap holds at runtime — `scripts/selftest/verify-sandbox-in-vm.sh`
       check [7] reads `pids.max` inside the sandbox and expects
       `${SANDBOX_PIDS_LIMIT:-1024}`. Verified in the VM on 2026-10-06 at
-      `bd36d47`: 12/12 checks passed, `pids.max is 1024`.
+      `bd36d47`: 12/12 checks passed, `pids.max is 1024`. Real workload
+      (2026-10-07): testchat's 69 Playwright tests passed in the sandbox,
+      peak 99 processes against the 1024 cap (D-206).
 - [x] `llm-call.sh` round-trip to the host model server passes from inside
       the VM — exercised by every milestone's pre-flight smoke since D-55,
       including Vortex's three `[success]` runs (v1 `a6f6ec6`, v2

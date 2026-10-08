@@ -92,3 +92,33 @@ def test_no_host_project_is_writable_from_the_vm() -> None:
     read_only = {m["location"] for m in mounts if m["writable"] is False}
     assert writable == EXPECTED_WRITABLE, f"writable mounts: {sorted(writable)}"
     assert read_only == EXPECTED_READ_ONLY, f"read-only mounts: {sorted(read_only)}"
+
+
+# --- Security plan item 10b: the VM is built from pinned, verified inputs ---
+
+def _config_text() -> str:
+    return LIMA_CONFIG.read_text()
+
+
+def test_base_images_are_dated_and_digest_pinned() -> None:
+    text = _config_text()
+    locations = re.findall(r'location:\s*"(https://cloud-images[^"]+)"', text)
+    assert locations, "no cloud image locations found"
+    for loc in locations:
+        assert "/release/" not in loc, f"floating 'release/' image: {loc}"
+        assert re.search(r"/release-\d{8}/", loc), f"image is not a dated release: {loc}"
+    assert len(re.findall(r'digest:\s*"sha256:[0-9a-f]{64}"', text)) == len(locations), \
+        "every image needs a sha256 digest"
+
+
+def test_no_script_is_piped_into_a_shell() -> None:
+    text = _config_text()
+    assert not re.search(r"curl[^\n|]*\|\s*(sudo\s+)?(ba)?sh\b", text), "curl | bash in provisioning"
+
+
+def test_downloads_are_version_pinned_and_verified() -> None:
+    text = _config_text()
+    assert "releases/latest" not in text, "a floating 'latest' release is installed"
+    assert re.search(r"@anthropic-ai/claude-code@\d+\.\d+\.\d+", text), "Claude Code version not pinned"
+    assert "sha256sum -c" in text, "downloaded packages are not checksum-verified"
+    assert re.search(r'NODESOURCE_FPR="[0-9A-F]{40}"', text), "NodeSource key fingerprint not pinned"
