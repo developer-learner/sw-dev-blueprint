@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-215 — 2026-10-08 — A dependent test's skip is not a verdict failure; a mapped test's still is
+
+**Decision:** In the milestone verdict (D-112), the shell lists the dependent node-ids (frozen tests not mapped to a task that reach a modified module) in `.pipeline-state/skip-tolerated` and exports `SWBP_SKIP_TOLERATED_FILE` for that one `run_tests` call only. `test-verdict.py` does not count a SKIPPED outcome for a listed node as a failure (no xfail marker, no failed or errored phase). Every other rule stands: a mapped (spec) test's skip fails the verdict; a dependent test that fails or errors fails it; per-task acceptance is untouched.
+
+**Reason:** rich-adoption v1 (2026-10-08): the task passed all 12 spec tests, the 72 dependent legacy tests ran, 70 passed and 2 were skipped as "Windows specific" on Linux (`tests/test_tree.py::test_render_tree_win32`, `…_hide_root_win32`). Treating those skips as failures halted the milestone as spec drift (the EM correctly diagnosed `contract_or_test_wrong`), and no spec change could fix it — rich has 25 such platform skips, so every milestone touching `rich/` would halt. Dependents are in the verdict to catch breakage; a skipped test can show none. A spec-mapped test is the milestone's evidence, so its skip stays a failure. This relaxes the gate for dependents only; recorded as a decision because it changes what the verdict accepts.
+
+**Evidence:** Tests: a dependent platform skip passes; a mapped skip fails (with or without a tolerated dependent alongside); a dependent failure fails; the tolerance is exported only around the dependent verdict call and unset after. Planted defects (no tolerance, tolerate every skip, leak past the call) killed; "tolerate any outcome" is equivalent (a failed phase still blocks).
+
+**Do not suggest:** tolerating skips of mapped tests; tolerating skips in per-task acceptance; a global "skips are fine" switch.
+
 ## D-214 — 2026-10-08 — Repo-relative pytest node-ids; a failed first freeze rolls back cleanly
 
 **Decision:** (1) All four pipeline pytest calls (refreeze collection and red-check, orchestrate's `run_tests` and D-212 legacy run) pass `--rootdir=.`, so node-ids are repo-relative (`tests/x.py::t`) whatever pytest config an app keeps below its root. (2) `refreeze.sh`'s post-apply rollback restores from HEAD only the lanes HEAD has, and unstages (never restores) a lane HEAD lacks, so the clean step can remove what the apply added.

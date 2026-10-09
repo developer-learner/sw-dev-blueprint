@@ -158,6 +158,21 @@ def emit(rc: int, label: str, detail: str = "") -> int:
     return rc
 
 
+def skip_tolerated() -> set[str]:
+    """D-215: node-ids whose SKIP is not a failure — only the D-112 dependent
+    set of the milestone verdict, which the shell lists in the file named by
+    SWBP_SKIP_TOLERATED_FILE. Those tests are pulled in to catch breakage; a
+    platform-gated skip (rich: `Windows specific` on Linux) shows none.
+    Mapped (spec) tests are never listed: for them a skip is no evidence."""
+    path = os.environ.get("SWBP_SKIP_TOLERATED_FILE", "")
+    if not path:
+        return set()
+    try:
+        return {line.strip() for line in Path(path).read_text().splitlines() if line.strip()}
+    except OSError:
+        return set()
+
+
 def verdict(r: dict, runner: int, expected: set[str]) -> int:
     tests, summary, collectors = r.get("tests"), r.get("summary"), r.get("collectors", [])
     if (not isinstance(tests, list) or not isinstance(summary, dict)
@@ -191,8 +206,13 @@ def verdict(r: dict, runner: int, expected: set[str]) -> int:
         raise ValueError(f"frozen test coverage mismatch: missing={sorted(expected - set(ids))}, "
                          f"unexpected={sorted(set(ids) - expected)}")
     failed, details = [], []
+    tolerated = skip_tolerated()
     for t in tests:
         phases = [t.get(p, {}) for p in ("setup", "call", "teardown")]
+        if (t["outcome"] == "skipped" and t["nodeid"] in tolerated
+                and not any("wasxfail" in p for p in [t, *phases])
+                and all(p.get("outcome") in ("passed", "skipped", None) for p in phases)):
+            continue
         ordinary = (t["outcome"] == "passed"
                     and not any("wasxfail" in p for p in [t, *phases])
                     and all(p.get("outcome") == "passed" for p in phases))

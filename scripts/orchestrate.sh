@@ -2940,7 +2940,13 @@ print('\n'.join(ids))")
     run_tests
   elif [ "${#VERDICT_IDS[@]}" -gt 0 ] || [ "${#DEP_IDS[@]}" -gt 0 ]; then
     echo "=== Verdict: ${#VERDICT_IDS[@]} delta-mapped + ${#DEP_IDS[@]} dependent test(s) (D-112) ==="
+    # D-215: a dependent test's SKIP is tolerated (it shows no breakage); a
+    # mapped test's skip still fails. Scoped to this one verdict call.
+    mkdir -p "${STATE_DIR:-.pipeline-state}"
+    printf '%s\n' ${DEP_IDS[@]+"${DEP_IDS[@]}"} > "${STATE_DIR:-.pipeline-state}/skip-tolerated"
+    export SWBP_SKIP_TOLERATED_FILE="${STATE_DIR:-.pipeline-state}/skip-tolerated"
     run_tests ${VERDICT_IDS[@]+"${VERDICT_IDS[@]}"} ${DEP_IDS[@]+"${DEP_IDS[@]}"}
+    unset SWBP_SKIP_TOLERATED_FILE
   else
     echo "=== Verdict: no mapped tests — per-task acceptance is the verdict (D-112) ==="
     TESTS_RC=0

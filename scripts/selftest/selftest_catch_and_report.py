@@ -272,6 +272,71 @@ def test_a_different_failure_is_not_progress(tmp_path):
     assert "progress" not in r.stdout and _strikes(r) == 2
 
 
+def _verdict_with(tmp_path, records, tolerated=None):
+    """Run test-verdict.py over records [(nodeid, outcome)], optionally with
+    a D-215 skip-tolerated list."""
+    import json as _json
+    import os as _os
+    tests = []
+    for nodeid, outcome in records:
+        phase = "skipped" if outcome == "skipped" else outcome
+        tests.append({"nodeid": nodeid, "outcome": outcome,
+                      "setup": {"outcome": phase if outcome == "skipped" else "passed"},
+                      **({} if outcome == "skipped" else
+                         {"call": {"outcome": phase}, "teardown": {"outcome": "passed"}})})
+    counts = {o: sum(1 for _, x in records if x == o) for o in ("passed", "failed", "skipped")}
+    rc = 1 if counts["failed"] else 0
+    report = {"exitcode": rc, "summary": {"total": len(tests), **{k: v for k, v in counts.items() if v}},
+              "collectors": [], "tests": tests}
+    (tmp_path / ".cache").mkdir(exist_ok=True)
+    (tmp_path / ".cache" / "test-report.json").write_text(_json.dumps(report))
+    (tmp_path / "scripts/.approved").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "scripts/.approved/test-nodeids").write_text("".join(n + "\n" for n, _ in records))
+    env = dict(_os.environ)
+    env.pop("SWBP_SKIP_TOLERATED_FILE", None)
+    if tolerated is not None:
+        (tmp_path / "tolerated").write_text("".join(n + "\n" for n in tolerated))
+        env["SWBP_SKIP_TOLERATED_FILE"] = str(tmp_path / "tolerated")
+    return subprocess.run(["python3", str(SCRIPTS / "test-verdict.py"), str(rc),
+                           *[n for n, _ in records]],
+                          cwd=tmp_path, capture_output=True, text=True, env=env)
+
+
+SPEC = "tests/test_new.py::test_feature"
+DEP = "tests/test_tree.py::test_render_tree_win32"
+
+
+def test_a_dependent_tests_platform_skip_is_not_a_failure(tmp_path):
+    """D-215, rich v1: a dependent legacy test skipped as 'Windows specific'
+    on Linux blocked [success] — it can show no breakage either way."""
+    r = _verdict_with(tmp_path, [(SPEC, "passed"), (DEP, "skipped")], tolerated=[DEP])
+    assert r.returncode == 0, r.stdout
+
+
+def test_a_mapped_tests_skip_still_fails(tmp_path):
+    """Without the tolerated list (a spec-mapped test) a skip is no evidence."""
+    r = _verdict_with(tmp_path, [(SPEC, "skipped")])
+    assert r.returncode == 1 and SPEC in r.stdout
+    r = _verdict_with(tmp_path, [(SPEC, "skipped"), (DEP, "skipped")], tolerated=[DEP])
+    assert r.returncode == 1 and SPEC in r.stdout and DEP not in r.stdout.splitlines()[0]
+
+
+def test_a_dependent_tests_failure_still_fails(tmp_path):
+    r = _verdict_with(tmp_path, [(SPEC, "passed"), (DEP, "failed")], tolerated=[DEP])
+    assert r.returncode == 1 and DEP in r.stdout
+
+
+def test_skip_tolerance_is_scoped_to_the_dependent_verdict_call():
+    src = (SCRIPTS / "orchestrate.sh").read_text()
+    exports = [i for i, line in enumerate(src.splitlines())
+               if "SWBP_SKIP_TOLERATED_FILE" in line and "export" in line]
+    assert len(exports) == 1, "exactly one scoped export"
+    lines = src.splitlines()
+    window = "\n".join(lines[exports[0] - 3: exports[0] + 4])
+    assert 'printf \'%s\\n\' ${DEP_IDS[@]+"${DEP_IDS[@]}"} > "${STATE_DIR:-.pipeline-state}/skip-tolerated"' in window
+    assert "run_tests ${VERDICT_IDS" in window and "unset SWBP_SKIP_TOLERATED_FILE" in window
+
+
 def test_failure_detail_follows_the_build_lane_and_a_nested_rootdir(tmp_path):
     """D-213: rich's code is in rich/, and its tests/pytest.ini makes pytest
     report frames relative to tests/ (`../rich/table.py`)."""
