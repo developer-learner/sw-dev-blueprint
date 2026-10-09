@@ -1389,8 +1389,7 @@ prefetch_launch() {
     mkdir -p "$d"
     ob=""
     [ -f "$cfile" ] && ob="$SWBP_CODER_EDIT_MAX_OUTPUT"
-    { printf '%s\n' "$(coder_instr "$cfile" "$(task_attempt_brief "$cand" "$cfile" quiet)")"
-      [ -f "$cfile" ] && build_context "existing:$cfile"; } > "$d/prompt"
+    coder_prompt "$cfile" "$(coder_instr "$cfile" "$(task_attempt_brief "$cand" "$cfile" quiet)")" > "$d/prompt"
     (
       trap - EXIT
       rc=0
@@ -1467,6 +1466,18 @@ prefetch_reap() {
     [ -z "$survivors" ] || kill -KILL $survivors 2>/dev/null || true
   fi
   rm -rf "$PREFETCH_DIR"
+}
+
+# coder_prompt <file> <instr> — the coder's user message: the file block FIRST,
+# the brief + reply rules LAST (D-216). With the instructions first and a large
+# existing file last (rich/table.py, 40 KB), the coder lost the task: in 6
+# reproductions of rich v1's attempt-1 prompt it answered with a bare Read tool
+# call 4 times and prose about the code twice, never edits. File first: 6/6
+# edit blocks. Shared by run_coder and prefetch_launch so a prefetched reply
+# is reused only for a byte-identical prompt.
+coder_prompt() {
+  [ -f "$1" ] && build_context "existing:$1"
+  printf '%s\n' "$2"
 }
 
 # coder_instr <file> <brief> — the coder instruction text for one call. Shared
@@ -1603,7 +1614,7 @@ run_coder() {
   # T7 M1 (D-174): the coder prompt was never byte-archived before — tee it
   # alongside the reply so the [task] trailer's Prompt-SHA256 is computable
   # and re-verifiable against the durable archive.
-  { printf '%s\n' "$instr"; build_context "$existing"; } > "$LOG_DIR/$id-a$attempt.prompt"
+  coder_prompt "$file" "$instr" > "$LOG_DIR/$id-a$attempt.prompt"
   if prefetch_take "$id" "$attempt"; then
     mark "coder $id attempt $attempt: prefetched reply reused (identical prompt)"
     echo "  coder reply for $id arrived from a parallel prefetch (identical prompt)"

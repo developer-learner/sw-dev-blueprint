@@ -91,7 +91,7 @@ extract() {
   printf '%s\n' "$body" | grep -q '^}' || { echo "cannot extract $1" >&2; exit 65; }
   printf '%s\n' "$body"
 }
-for f in build_context coder_instr task_attempt_brief task_no_edit prefetch_launch prefetch_take prefetch_reap run_coder; do
+for f in build_context coder_prompt coder_instr task_attempt_brief task_no_edit prefetch_launch prefetch_take prefetch_reap run_coder; do
   eval "$(extract "$f")"
 done
 

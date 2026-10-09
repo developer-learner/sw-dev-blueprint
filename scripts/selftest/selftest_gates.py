@@ -2299,10 +2299,11 @@ def test_coder_context_never_ships_contracts():
     """D-116: the coder's brief is self-contained (Rule 8) — run_coder's
     context is brief + existing file, never the frozen contracts."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
-    assert re.search(
-        r'\{ printf \'%s\\n\' "\$instr"; build_context "\$existing"; \} (\\|> "\$LOG_DIR)',
-        source,
-    ), "run_coder context must be brief + existing file only"
+    assert 'coder_prompt "$file" "$instr" > "$LOG_DIR' in source, \
+        "run_coder must build its context via coder_prompt (D-216)"
+    body = re.search(r"^coder_prompt\(\) \{(.*?)^\}", source, re.S | re.M).group(1)
+    assert re.findall(r'build_context[^\n]*', body) == ['build_context "existing:$1"'], \
+        "coder context must be the existing file + brief only"
     assert '"ERD:$APPROVED/ERD.md"' not in source
     assert '"ERD:$APPROVED/ERD.md"' not in source.replace(
         '"standing:${STANDING_SUMMARY:-$APPROVED/ERD.md}"', "",

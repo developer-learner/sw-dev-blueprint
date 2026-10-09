@@ -211,6 +211,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-193**: Every `[template-update ...]` commit records the `Template-Diff-SHA:` trailer binding the applied bytes to the reviewed diff. (Its approval-only default was reversed by D-194.)
 - **D-194**: Template updates apply automatically again (D-96); `--require-approval` is the opt-in stop, and a supplied `--approve` hash is verified before any mutation in every branch, ref-advance-only included.
 - **D-205**: The dev VM mounts no host project writable (only the builder, read-only). Runs work on VM-disk clones made by `scripts/vm-sync start`; their commits return only through `vm-sync land`, which `scripts/vm_land.py` checks (base from the host's own record, linear history, no symlink/submodule/`.git`/ignored paths, host branch unmoved, no dirty touched files) before the host changes. Supersedes D-196's four-project mount.
+- **D-216**: The coder's message puts the existing file first and the brief + reply rules last (`coder_prompt`); instructions-first made the coder lose the task behind a large file.
 - **D-215**: In the milestone verdict, a dependent (unmapped) test's skip is not a failure; a mapped test's skip still is.
 - **D-214**: Pipeline pytest calls pin `--rootdir=.` (repo-relative node-ids under any app config); a failed first freeze rolls back cleanly.
 - **D-213**: The type gate and failure pointers follow `.gate-paths` `build=` (an adopted app keeps its own layout, e.g. `rich/`), never a fixed `src/`.

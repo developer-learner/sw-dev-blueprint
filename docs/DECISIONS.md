@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-216 — 2026-10-08 — The coder's message puts the file first and the instructions last
+
+**Decision:** `orchestrate.sh` builds every coder user message through one function, `coder_prompt <file> <instr>`: the existing file's labeled block first, then the brief and reply rules. Create mode (no file) is unchanged. `run_coder` and `prefetch_launch` both call it, so a prefetched reply is still reused only for a byte-identical prompt. Content is unchanged (the brief + the one file, D-116); only the order moved.
+
+**Reason:** In rich-adoption v1 the coder (Qwen3.8 Flash Next, mlx-serve) answered attempt 1 with a bare `<tool_call><function=Read></function></tool_call>` in both runs, as it had on Vortex v42/v43. Every such attempt burned a strike, and apply-edit-blocks caught it. Reproduced through the pipeline's own `llm-call.sh` with rich v1's exact attempt-1 prompt (3.7 KB of instructions, then the 40 KB file): 0 of 6 replies were edits (4 tool calls, 2 essays about the code, one calling it "corrupted"). The model lost the task behind the large trailing file. Instructions last: 6 of 6 edit blocks with the prompt the new function builds, all applying cleanly, 5 of 6 passing all 12 spec tests on the first try (the sixth added one of the two methods; the verdict catches that and D-210's progress rule earns a retry). A trailing reminder after the file did as well (6/6), but leaves the brief far from the answer and adds text to keep in sync. Small files show no change (33-line file: 4/4 both layouts).
+
+**Evidence:** The trial numbers above (scratch harness over the real coder_instr/coder_prompt, real brief, the pre-milestone `rich/table.py`, the seated model and profile, temperature 0.6). `selftest_coder_prompt_layout.py`: file block before the brief, prompt ends with the reply rules, create mode is instructions only, both call sites use `coder_prompt`; the D-116 test now checks `coder_prompt` ships only the existing file. Planted defects killed. Not yet observed in a real milestone run.
+
+**Do not suggest:** putting the instructions back before a large file; adding tools to the coder (D-53); stripping the file to a window, which hides the anchors edit blocks need.
+
 ## D-215 — 2026-10-08 — A dependent test's skip is not a verdict failure; a mapped test's still is
 
 **Decision:** In the milestone verdict (D-112), the shell lists the dependent node-ids (frozen tests not mapped to a task that reach a modified module) in `.pipeline-state/skip-tolerated` and exports `SWBP_SKIP_TOLERATED_FILE` for that one `run_tests` call only. `test-verdict.py` does not count a SKIPPED outcome for a listed node as a failure (no xfail marker, no failed or errored phase). Every other rule stands: a mapped (spec) test's skip fails the verdict; a dependent test that fails or errors fails it; per-task acceptance is untouched.
