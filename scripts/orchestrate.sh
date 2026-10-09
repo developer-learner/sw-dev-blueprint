@@ -873,6 +873,15 @@ git --version >/dev/null 2>&1    || die "git required"
 [ -f "$COMPLETION_LEDGER_TOOL" ]    || die "$COMPLETION_LEDGER_TOOL missing"
 [ -f "$FLAKE_LEDGER_TOOL" ]       || die "$FLAKE_LEDGER_TOOL missing"
 [ -f .gate-paths ]               || die ".gate-paths not found"
+# The build lane (D-213): the app's source directories from `.gate-paths`
+# build= (space-separated), default src/. An adopted app keeps its own
+# layout (rich-adoption: rich/), so nothing below may assume src/.
+BUILD_DIRS=()
+read -r -a BUILD_DIRS <<< "$(sed -n 's/^build=//p' .gate-paths | head -1)"
+[ "${#BUILD_DIRS[@]}" -gt 0 ] || BUILD_DIRS=("src/")
+for _bd in "${BUILD_DIRS[@]}"; do
+  case "$_bd" in /*|*..*|"") die ".gate-paths build= entry '$_bd' must be a relative directory" ;; esac
+done
 if [ ! -f .swbp ]; then  # D-186: a builder-targeted app hosts no plane
   [ -f scripts/.manifest-template ] || die "scripts/.manifest-template not found"
   [ -f scripts/.manifest-project ]  || die "scripts/.manifest-project not found"
@@ -1786,21 +1795,26 @@ run_tests() {
   # the checked set.
   MYPY_OUT=""
   MYPY_RC=0
-  local mypy_targets=()
+  # Extracted on its own (selftest harnesses) the lane may be unset: src/.
+  [ "${BUILD_DIRS+set}" = set ] || BUILD_DIRS=("src/")
+  local mypy_targets=() _bd _in_lane=0
   if [ "$#" -gt 0 ] && [ -n "${MYPY_TASK_FILE:-}" ]; then
-    case "$MYPY_TASK_FILE" in
-      src/*.py) [ -f "$MYPY_TASK_FILE" ] \
-        || die "task-scoped mypy target missing: $MYPY_TASK_FILE" ;;
-      *) die "invalid task-scoped mypy target: $MYPY_TASK_FILE" ;;
-    esac
+    for _bd in "${BUILD_DIRS[@]}"; do
+      case "$MYPY_TASK_FILE" in "${_bd%/}"/*.py) _in_lane=1 ;; esac
+    done
+    [ "$_in_lane" = 1 ] \
+      || die "invalid task-scoped mypy target: $MYPY_TASK_FILE"
+    [ -f "$MYPY_TASK_FILE" ] \
+      || die "task-scoped mypy target missing: $MYPY_TASK_FILE"
     mypy_targets=("$MYPY_TASK_FILE")
   elif [ "$#" -gt 0 ] && [ "${ACTIVE_DELTA_FILES+set}" = "set" ] \
      && [ "${#ACTIVE_DELTA_FILES[@]}" -gt 0 ]; then
     while IFS= read -r _mf; do
       [ -n "$_mf" ] && mypy_targets+=("$_mf")
-    done < <(python3 - "${ACTIVE_DELTA_FILES[@]}" <<'PYSCOPE'
-import json, sys
+    done < <(SWBP_BUILD_DIRS="${BUILD_DIRS[*]}" python3 - "${ACTIVE_DELTA_FILES[@]}" <<'PYSCOPE'
+import json, os, sys
 from pathlib import Path
+lanes = tuple(d.rstrip("/") + "/" for d in os.environ["SWBP_BUILD_DIRS"].split())
 seen = []
 for p in sys.argv[1:]:
     try:
@@ -1808,7 +1822,7 @@ for p in sys.argv[1:]:
     except (OSError, ValueError):
         continue
     for f in d.get("changed_files", []):
-        if (f.startswith("src/") and f.endswith(".py")
+        if (f.startswith(lanes) and f.endswith(".py")
                 and Path(f).exists() and f not in seen):
             seen.append(f)
 print("\n".join(seen))
@@ -1820,8 +1834,8 @@ PYSCOPE
     mypy_label="mypy:$(IFS=,; printf '%s' "${mypy_targets[*]}")"
   elif [ "$#" -eq 0 ] || [ "${ACTIVE_DELTA_FILES+set}" != "set" ] \
      || [ "${#ACTIVE_DELTA_FILES[@]}" -eq 0 ]; then
-    mypy_targets=("src/")
-    mypy_label="mypy:src"
+    mypy_targets=("${BUILD_DIRS[@]}")
+    mypy_label="mypy:$(IFS=,; printf '%s' "${BUILD_DIRS[*]%/}")"
   else
     mypy_label="mypy:none"
   fi

@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-213 — 2026-10-08 — The type gate and failure pointers follow the declared build lane, not src/
+
+**Decision:** `orchestrate.sh` reads the build lane once at pre-flight from `.gate-paths` `build=` (space-separated directories, default `src/`; an absolute or `..` entry halts) into `BUILD_DIRS`. The mypy gate uses it in all three places that had `src/` hard-coded: the task-scoped target must be a `.py` under the lane, the delta scope keeps changed files under the lane, and the whole-tree fallback checks the lane (label `mypy:<dirs>`; `mypy:src` unchanged for src/ apps). `run_tests` defaults the lane to `src/` when extracted on its own. `test-verdict.py`'s D-210 frame pointers match the lane and drop leading `../` (a pytest rootdir below the repo, e.g. rich's `tests/pytest.ini`).
+
+**Reason:** Found preparing rich-adoption's first milestone (code in `rich/`): the first task's acceptance would have died "invalid task-scoped mypy target: rich/table.py", and a delta-scoped verdict would have silently skipped type-checking the app's real code. validate-plan.py already read `build=`; the type gate never had. This changes where the gate looks, not what it decides.
+
+**Evidence:** Six new tests (lane-scoped delta, whole-lane fallback, task-file must be lane `.py`, `.gate-paths` parse incl. refusals, nested-rootdir frame pointer); seven planted defects all killed; full suite green.
+
+**Do not suggest:** re-adding a fixed `src/` anywhere in the gate path (check-spec-delta's D-120 route/schema file pin still expects `src/` and is untouched: no adopted app freezes routes yet).
+
 ## D-212 — 2026-10-08 — Existing-suite regression evidence at milestone success (report-only)
 
 > Amended 2026-10-08: a pinned file whose current bytes match `scripts/.approved/frozen-manifest` is not reported as changed — it was carried into the frozen suite and changed through refreeze (Vortex's carried-in legacy tests: all three pinned files differ from the 2026-08-15 pin, all match the manifest). Bytes matching neither are still flagged. Vortex's pinned tests through the check: 38 passed, no regressions, no changed files, 63 s.

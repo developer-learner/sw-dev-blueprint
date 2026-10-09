@@ -5408,6 +5408,7 @@ _SCOPED_DRIVER = (
     "mark() { :; }\n"
     "ACTIVE_DELTA_FILES=(__ACTIVE__)\n"
     "DELTA_SCOPED=1\n"
+    "__LANE__\n"
     "eval \"$(sed -n '/^run_tests() {/,/^}/p' \"__ORCH__\")\"\n"
     "run_tests __IDS__\n"
     "echo \"FINAL_TESTS_RC=$TESTS_RC\"\n"
@@ -5419,7 +5420,7 @@ _MYPY_ERR_SRC = 'x: int = "not an int"\n'
 
 
 def _drive_scoped_run_tests(tmp_path, *, src_files, deltas, node_ids,
-                            mypy_rc=0):
+                            mypy_rc=0, lane=""):
     """Invoke the real run_tests with a scoped delta range. src_files:
     {relpath: source}; deltas: list of delta dicts (written as delta-N.json and
     passed as ACTIVE_DELTA_FILES); node_ids: run_tests args ([] = full-suite);
@@ -5460,6 +5461,7 @@ def _drive_scoped_run_tests(tmp_path, *, src_files, deltas, node_ids,
               .replace("__WORK__", str(work))
               .replace("__ACTIVE__", " ".join(f'"{p}"' for p in delta_paths))
               .replace("__ORCH__", str(ORCHESTRATE))
+              .replace("__LANE__", lane)
               .replace("__IDS__", " ".join(f'"{n}"' for n in node_ids)))
     env = {**os.environ, "SANDBOX_REPORT_SOURCE": str(report),
            "SANDBOX_ARG_LOG": str(arg_log), "SANDBOX_STUB_RC": "0",
@@ -5548,6 +5550,67 @@ def test_scoped_mypy_no_src_change_skips_gate(tmp_path):
     lines = _mypy_call_line(arg_log)
     assert not any("mypy" in line for line in lines), lines
     assert any("pytest" in line for line in lines), lines
+
+
+def test_scoped_mypy_follows_the_declared_build_lane(tmp_path):
+    """D-213: an adopted app keeps its own layout (rich-adoption: rich/). The
+    delta's changed rich/table.py is type-checked; before, only src/ counted,
+    so the gate silently skipped the app's real code."""
+    r, arg_log = _drive_scoped_run_tests(
+        tmp_path,
+        src_files={"rich/table.py": _MYPY_CLEAN_SRC},
+        deltas=[{"changed_files": ["rich/table.py"]}],
+        node_ids=["tests/test_a.py::t"], mypy_rc=0, lane="BUILD_DIRS=(rich/)")
+    assert "FINAL_TESTS_RC=0" in r.stdout, (r.stdout, r.stderr)
+    assert _mypy_call_line(arg_log)[:5] == [
+        "--", "mypy", "--explicit-package-bases",
+        "--cache-dir=/tmp/mypy-cache", "rich/table.py"], _mypy_call_line(arg_log)
+
+
+def test_full_suite_mypy_checks_the_declared_build_lane(tmp_path):
+    r, arg_log = _drive_scoped_run_tests(
+        tmp_path,
+        src_files={"rich/table.py": _MYPY_ERR_SRC},
+        deltas=[{"changed_files": ["rich/table.py"]}],
+        node_ids=[], mypy_rc=1, lane="BUILD_DIRS=(rich/)")
+    assert "FINAL_FAILING=mypy:rich" in r.stdout, r.stdout
+    assert _mypy_call_line(arg_log)[-1] == "rich/", _mypy_call_line(arg_log)
+
+
+@pytest.mark.parametrize("task_file,ok", [("rich/table.py", True), ("src/x.py", False),
+                                          ("rich/notes.md", False)])
+def test_task_scoped_mypy_target_must_be_python_in_the_lane(tmp_path, task_file, ok):
+    r, arg_log = _drive_scoped_run_tests(
+        tmp_path,
+        src_files={"rich/table.py": _MYPY_CLEAN_SRC, "src/x.py": _MYPY_CLEAN_SRC,
+                   "rich/notes.md": "x"},
+        deltas=[{"changed_files": ["rich/table.py"]}],
+        node_ids=["tests/test_a.py::t"], mypy_rc=0,
+        lane=f"BUILD_DIRS=(rich/); MYPY_TASK_FILE={task_file}; die() {{ echo DIED: $*; exit 9; }}")
+    if ok:
+        assert "FINAL_TESTS_RC=0" in r.stdout, (r.stdout, r.stderr)
+        assert task_file in _mypy_call_line(arg_log)
+    else:
+        assert "DIED: invalid task-scoped mypy target" in r.stdout, (r.stdout, r.stderr)
+
+
+def test_build_lane_is_read_from_gate_paths(tmp_path):
+    """The pre-flight parse: space-separated build= dirs, default src/, and
+    an absolute or '..' entry refused."""
+    src = ORCHESTRATE.read_text()
+    start = src.index("BUILD_DIRS=()\n")
+    end = src.index("done\n", start) + len("done\n")
+    snippet = src[start:end]
+    def lane(gate_paths):
+        (tmp_path / ".gate-paths").write_text(gate_paths)
+        return subprocess.run(
+            ["bash", "-c", "set -u; die() { echo DIED; exit 9; }\n" + snippet
+             + 'echo "LANE=${BUILD_DIRS[*]}"'], cwd=tmp_path, capture_output=True, text=True).stdout
+    assert "LANE=rich/" in lane("build=rich/\ntest=tests/\n")
+    assert "LANE=a/ b/" in lane("build=a/ b/\n")
+    assert "LANE=src/" in lane("test=tests/\n")
+    assert "DIED" in lane("build=../elsewhere/\n")
+    assert "DIED" in lane("build=/abs/\n")
 
 
 def test_scoped_mypy_unions_changed_src_across_deltas(tmp_path):

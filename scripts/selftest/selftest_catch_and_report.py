@@ -272,6 +272,31 @@ def test_a_different_failure_is_not_progress(tmp_path):
     assert "progress" not in r.stdout and _strikes(r) == 2
 
 
+def test_failure_detail_follows_the_build_lane_and_a_nested_rootdir(tmp_path):
+    """D-213: rich's code is in rich/, and its tests/pytest.ini makes pytest
+    report frames relative to tests/ (`../rich/table.py`)."""
+    import json as _json
+    report = {
+        "exitcode": 1, "summary": {"total": 1, "failed": 1}, "collectors": [],
+        "tests": [{"nodeid": "tests/test_a.py::test_a", "outcome": "failed",
+                   "setup": {"outcome": "passed"}, "teardown": {"outcome": "passed"},
+                   "call": {"outcome": "failed",
+                            "crash": {"message": "AssertionError: bad row"},
+                            "traceback": [{"path": "test_a.py", "lineno": 4},
+                                          {"path": "../rich/table.py", "lineno": 88},
+                                          {"path": "../src/other.py", "lineno": 3}]}}],
+    }
+    (tmp_path / ".gate-paths").write_text("build=rich/\ntest=tests/\n")
+    (tmp_path / ".cache").mkdir()
+    (tmp_path / ".cache" / "test-report.json").write_text(_json.dumps(report))
+    (tmp_path / "scripts/.approved").mkdir(parents=True)
+    (tmp_path / "scripts/.approved/test-nodeids").write_text("tests/test_a.py::test_a\n")
+    r = subprocess.run(["python3", str(SCRIPTS / "test-verdict.py"), "1", "tests/"],
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert "[at rich/table.py:88]" in r.stdout, r.stdout
+    assert "other.py" not in r.stdout and "test_a.py:4" not in r.stdout
+
+
 def test_failure_detail_points_at_implementation_lines_not_test_code(tmp_path):
     import json as _json
     report = {

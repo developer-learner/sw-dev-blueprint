@@ -109,10 +109,26 @@ def expected_ids(selectors: list[str]) -> set[str]:
     return selected
 
 
+def build_dirs() -> tuple[str, ...]:
+    """The build lane from .gate-paths build= (D-213), default src/."""
+    try:
+        for line in Path(".gate-paths").read_text().splitlines():
+            if line.startswith("build="):
+                dirs = tuple(d.rstrip("/") + "/" for d in line[6:].split())
+                if dirs:
+                    return dirs
+    except OSError:
+        pass
+    return ("src/",)
+
+
 def source_frames(phases: list[dict], limit: int = 3) -> str:
     """D-210: where in the IMPLEMENTATION a failure happened — the traceback
-    frames under src/, innermost last — so a retry brief can point the coder
-    at its own lines without showing it the frozen test's code."""
+    frames under the build lane, innermost last — so a retry brief can point
+    the coder at its own lines without showing it the frozen test's code.
+    A pytest rootdir below the repo (rich: tests/pytest.ini) reports
+    `../rich/x.py`; leading `../` is dropped before matching."""
+    lanes = build_dirs()
     frames: list[str] = []
     for p in phases:
         tb = p.get("traceback")
@@ -122,7 +138,9 @@ def source_frames(phases: list[dict], limit: int = 3) -> str:
             if not isinstance(entry, dict):
                 continue
             path, line = entry.get("path"), entry.get("lineno")
-            if isinstance(path, str) and path.startswith("src/") and isinstance(line, int):
+            while isinstance(path, str) and path.startswith("../"):
+                path = path[3:]
+            if isinstance(path, str) and path.startswith(lanes) and isinstance(line, int):
                 frame = f"{path}:{line}"
                 if frame not in frames:
                     frames.append(frame)
