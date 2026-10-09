@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-214 — 2026-10-08 — Repo-relative pytest node-ids; a failed first freeze rolls back cleanly
+
+**Decision:** (1) All four pipeline pytest calls (refreeze collection and red-check, orchestrate's `run_tests` and D-212 legacy run) pass `--rootdir=.`, so node-ids are repo-relative (`tests/x.py::t`) whatever pytest config an app keeps below its root. (2) `refreeze.sh`'s post-apply rollback restores from HEAD only the lanes HEAD has, and unstages (never restores) a lane HEAD lacks, so the clean step can remove what the apply added.
+
+**Reason:** rich-adoption's first real milestone (2026-10-08). Rich keeps `tests/pytest.ini`, which made pytest root itself at `tests/`: the frozen `test-nodeids` read `test_table_bulk.py::…` while the spec's `test_mapping` (and every other pipeline consumer) uses `tests/test_table_bulk.py::…`. The plan gate rejected both EM revisions with "mapped test node-id(s) not in the frozen suite" — no plan could have passed, so the halt was a harness seam, not a model failure, and was not re-run. Separately, rich's first freeze attempt failed after apply (a spec defect), and the rollback's single `git restore` named `scripts/.approved/`, absent from HEAD before a first freeze; the unmatched pathspec failed the whole call, printing a false "rollback restore failed" and leaving the tests/ lane unrestored.
+
+**Evidence:** rich's real suite: plain collection gives `test_align.py::…`, with `--rootdir=.` `tests/test_align.py::…`; its 956 legacy tests still pass under the sandbox's Python 3.12 / pytest 8.4.2. `selftest_first_freeze_rollback.py`: the real `on_refreeze_exit()` on an adopted repo (unstaged and staged cases — the pre-fix code fails the unstaged one), never unstaging a tracked lane, an anti-drift check that every pipeline pytest call carries `--rootdir=.`, and a nested-config collection demo; planted defects killed.
+
+**Do not suggest:** rewriting or deleting an adopted app's own pytest config to fit the pipeline (legacy bytes are pinned, D-165); restoring a lane from HEAD that HEAD does not have.
+
 ## D-213 — 2026-10-08 — The type gate and failure pointers follow the declared build lane, not src/
 
 **Decision:** `orchestrate.sh` reads the build lane once at pre-flight from `.gate-paths` `build=` (space-separated directories, default `src/`; an absolute or `..` entry halts) into `BUILD_DIRS`. The mypy gate uses it in all three places that had `src/` hard-coded: the task-scoped target must be a `.py` under the lane, the delta scope keeps changed files under the lane, and the whole-tree fallback checks the lane (label `mypy:<dirs>`; `mypy:src` unchanged for src/ apps). `run_tests` defaults the lane to `src/` when extracted on its own. `test-verdict.py`'s D-210 frame pointers match the lane and drop leading `../` (a pytest rootdir below the repo, e.g. rich's `tests/pytest.ini`).

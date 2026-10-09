@@ -722,8 +722,23 @@ on_refreeze_exit() {
   [ "$rc" -eq 0 ] && return 0
   [ "$REFREEZE_APPLIED" = "1" ] || return 0
   echo "REFREEZE FAIL: failure after apply (rc=$rc) — rolling back the applied freeze to HEAD" >&2
-  git restore --source=HEAD --staged --worktree -- tests/ scripts/.approved/ ':(exclude)scripts/.approved/incoming' \
-    || echo "REFREEZE WARNING: rollback restore failed — inspect tests/ and scripts/.approved/ manually before retrying" >&2
+  # Restore only lanes HEAD has: before an app's first freeze there is no
+  # scripts/.approved/ (or tests/) in HEAD, the pathspec cannot match, and the
+  # clean below alone undoes the apply (rich-adoption v1, 2026-10-08).
+  rb_paths=() rb_new=()
+  for rb_p in tests scripts/.approved; do
+    if git cat-file -e "HEAD:$rb_p" 2>/dev/null; then rb_paths+=("$rb_p/"); else rb_new+=("$rb_p/"); fi
+  done
+  if [ "${#rb_paths[@]}" -gt 0 ]; then
+    git restore --source=HEAD --staged --worktree -- "${rb_paths[@]}" ':(exclude)scripts/.approved/incoming' \
+      || echo "REFREEZE WARNING: rollback restore failed — inspect tests/ and scripts/.approved/ manually before retrying" >&2
+  fi
+  # A lane absent from HEAD: unstage anything the apply staged there, so the
+  # clean below can remove it. Never applied to a lane HEAD tracks.
+  if [ "${#rb_new[@]}" -gt 0 ]; then
+    git reset -q -- "${rb_new[@]}" 2>/dev/null \
+      || echo "REFREEZE WARNING: rollback unstage failed — inspect ${rb_new[*]} manually before retrying" >&2
+  fi
   git clean -f -- tests/ scripts/.approved/ ':(exclude)scripts/.approved/incoming' \
     || echo "REFREEZE WARNING: rollback clean failed — inspect tests/ and scripts/.approved/ manually before retrying" >&2
 }
@@ -807,7 +822,10 @@ echo "  AST: $AST_COUNT node-ids"
 COLLECT_OUT=".pipeline-state/refreeze-collect.out"
 COLLECT_ERR=".pipeline-state/refreeze-collect.err"
 COLLECT_VIA="sandbox"
-"$PLANE_DIR/scripts/sandbox-run.sh" -- pytest tests/ --collect-only -q -p no:cacheprovider \
+# --rootdir=. (D-214): node-ids are repo-relative everywhere in the pipeline;
+# an app's own pytest config below the root (rich: tests/pytest.ini) would
+# otherwise make pytest report them relative to that directory.
+"$PLANE_DIR/scripts/sandbox-run.sh" -- pytest tests/ --rootdir=. --collect-only -q -p no:cacheprovider \
   >"$COLLECT_OUT" 2>"$COLLECT_ERR" || true
 PYTEST_NODEIDS=$(grep '::' "$COLLECT_OUT" || true)
 PYTEST_COUNT=$(printf '%s\n' "$PYTEST_NODEIDS" | grep -c '::' || true)
@@ -871,7 +889,7 @@ if [ -n "$RED_IDS" ]; then
     || die "red-before-green cache is unsafe"
   RED_ARGS=()
   while IFS= read -r _t; do [ -n "$_t" ] && RED_ARGS+=("$_t"); done <<< "$RED_IDS"
-  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider --json-report \
+  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider --rootdir=. --json-report \
     --json-report-file=.cache/redcheck-report.json "${RED_ARGS[@]}" >/dev/null 2>&1 || true
   python3 "$PLANE_DIR/scripts/test-verdict.py" redcheck \
     || die "red-before-green sandbox produced no safe readable report — run refreeze inside the Linux dev VM; staged tests are never executed on the host"

@@ -455,7 +455,7 @@ legacy_regression() {
   mkdir -p .cache
   rm -f .cache/legacy-report.json
   mark "existing-suite regression run (${#targets[@]} files, report-only)"
-  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider -q --json-report \
+  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider --rootdir=. -q --json-report \
     --json-report-file=.cache/legacy-report.json "${targets[@]}" >/dev/null 2>&1 || rc=$?
   line=$(python3 "$tool" report --report .cache/legacy-report.json --pytest-rc "$rc" \
     --spec "$FROZEN_V" --out "$MEAS_DIR/legacy-v$FROZEN_V.json" 2>&1) || line="Existing tests: NOT RUN — $line"
@@ -1917,7 +1917,7 @@ PYMYPYHASH
     mv "$mypy_green_tmp" "$mypy_green_marker"
   fi
   local pytest_rc=0
-  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider --json-report \
+  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider --rootdir=. --json-report \
     --json-report-file=.cache/test-report.json "${test_args[@]}" >/dev/null 2>&1 || pytest_rc=$?
   local out
   if out=$(python3 "$PLANE_DIR/scripts/test-verdict.py" "$pytest_rc" "${test_args[@]}"); then
