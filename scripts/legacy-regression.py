@@ -60,15 +60,33 @@ def targets(root: Path) -> list[str]:
 CACHE_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 
 
+def frozen_hashes(root: Path) -> dict[str, str]:
+    """path -> sha256 from scripts/.approved/frozen-manifest, {} if absent."""
+    fm = root / "scripts" / ".approved" / "frozen-manifest"
+    if not fm.is_file():
+        return {}
+    out = {}
+    for line in fm.read_text().splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            out[parts[1].strip()] = parts[0]
+    return out
+
+
 def changed_files(root: Path, pin: dict) -> list[str]:
-    """Pinned files whose bytes differ or are gone. Tool caches a snapshot
-    may have swept in (rich's pin holds tests/.pytest_cache/) are not tests."""
+    """Pinned files whose bytes differ from the pin or are gone. Not counted:
+    tool caches a snapshot swept in (rich's pin holds tests/.pytest_cache/),
+    and a file whose bytes match the frozen manifest — it was carried into
+    the frozen suite and changed through refreeze, the sanctioned path
+    (Vortex's carried-in legacy tests)."""
+    frozen = frozen_hashes(root)
     changed = []
     for rel, digest in sorted(pin["files"].items()):
         if CACHE_DIRS & set(rel.split("/")):
             continue
         p = root / rel
-        if not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != digest:
+        actual = hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else ""
+        if actual != digest and not (actual and frozen.get(rel) == actual):
             changed.append(rel)
     return changed
 

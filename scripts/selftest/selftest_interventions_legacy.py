@@ -186,6 +186,24 @@ def test_changed_pinned_file_is_reported(tmp_path):
     assert "1 pinned test file(s) changed" in line
 
 
+def test_a_pinned_file_changed_through_refreeze_is_not_flagged(tmp_path):
+    """Vortex carried its legacy tests into the frozen suite; refreeze then
+    changed them. Bytes matching the frozen manifest are sanctioned; bytes
+    matching neither the pin nor the manifest are still flagged."""
+    import hashlib
+    pin_project(tmp_path)
+    body = b"def test_a(): assert 1\n"
+    (tmp_path / "tests" / "test_old.py").write_bytes(body)
+    fm = tmp_path / "scripts" / ".approved" / "frozen-manifest"
+    fm.parent.mkdir(parents=True)
+    fm.write_text(f"{hashlib.sha256(body).hexdigest()}  tests/test_old.py\n")
+    _, rec = report(tmp_path, [{"nodeid": "t::a", "outcome": "passed"}], rc=0)
+    assert rec["changed_files"] == []
+    (tmp_path / "tests" / "test_old.py").write_text("def test_a(): assert 2\n")
+    _, rec = report(tmp_path, [{"nodeid": "t::a", "outcome": "passed"}], rc=0)
+    assert rec["changed_files"] == ["tests/test_old.py"]
+
+
 def test_a_suite_that_could_not_run_is_not_reported_as_clean(tmp_path):
     pin_project(tmp_path)
     line, rec = report(tmp_path, [], rc=4, write=False)

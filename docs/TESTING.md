@@ -335,7 +335,7 @@ sandbox (`scripts/legacy-regression.py`) and records:
 
 - the result in `.measurement/legacy-v<N>.json` — counts, `regressions`
   (failing tests not in `known_failing`), pinned files whose bytes changed
-  since adoption, or why the suite could not run;
+  since adoption other than through refreeze, or why the suite could not run;
 - one line in the milestone's `## Results` entry in `tasks/CURRENT.md`
   (committed with `[success]`), naming up to five regressions;
 - the regression count in the `legacy_regressions` metrics column.
