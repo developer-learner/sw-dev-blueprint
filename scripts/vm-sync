@@ -104,7 +104,15 @@ if any(r.count("\t") != width for r in rows[1:] if r):
     sys.exit("metrics: ragged row")
 old = dst.read_text().splitlines() if dst.exists() else [header]
 if old and old[0] != header:
-    sys.exit("metrics: header differs from the host's")
+    # D-211: columns are only ever appended. Pad the side with the shorter
+    # header; anything else is a different table.
+    hc, nc = old[0].split("\t"), header.split("\t")
+    if nc[:len(hc)] == hc:
+        old = [header] + [r + "\t" * (len(nc) - len(hc)) if r else r for r in old[1:]]
+    elif hc[:len(nc)] == nc:
+        rows = [rows[0]] + [r + "\t" * (len(hc) - len(nc)) if r else r for r in rows[1:]]
+    else:
+        sys.exit("metrics: header differs from the host's")
 new = [r for r in rows[1:] if r and r not in set(old)]
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_text("\n".join(old + new) + "\n")

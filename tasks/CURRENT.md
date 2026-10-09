@@ -26,6 +26,12 @@ rich-adoption (Phase 0 D-175).
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-08: **D-211 + D-212 — intervention metrics; existing-suite regression evidence.**
+      metrics.tsv now counts hand edits during a milestone and hand fixes
+      after a declared success (from the commit role trailers). At success,
+      an adopted project's pinned existing suite runs once, report-only,
+      and new failures are named in Results. Rich: 956/25/0 reproduced; a
+      planted bug showed 30 regressions. Real-run value still to be seen.
 - 2026-10-08: **D-209 + D-210 — seat admission test; evidence-driven repair loop.**
       Rule 1 is now `scripts/seat-check.sh` (complete artifact in content,
       reasoning models allowed when they pass); test retirement needs

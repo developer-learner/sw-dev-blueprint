@@ -323,6 +323,27 @@ revision sites recompute and reapply scope before work continues.
 - **Do not mock the database** — use a real test DB with transactions
 - **Do not mock your own services** — if you need to mock it, split the dependency
 
+## Existing-suite regression evidence (D-212)
+
+An adopted project (D-165) keeps its pre-existing tests as a hash-pinned
+snapshot, `legacy-pin.json` (at `scripts/.approved/` or the project root;
+optional `known_failing` nodeid list). Those tests are not an oracle and
+never gate acceptance — they were written with the implementation in view.
+But a test of existing behavior that turns red is real evidence, so when a
+milestone succeeds `orchestrate.sh` runs the pinned test files once in the
+sandbox (`scripts/legacy-regression.py`) and records:
+
+- the result in `.measurement/legacy-v<N>.json` — counts, `regressions`
+  (failing tests not in `known_failing`), pinned files whose bytes changed
+  since adoption, or why the suite could not run;
+- one line in the milestone's `## Results` entry in `tasks/CURRENT.md`
+  (committed with `[success]`), naming up to five regressions;
+- the regression count in the `legacy_regressions` metrics column.
+
+It is report-only: a regression never fails or blocks the milestone. A
+suite that could not run says `NOT RUN`, never "no regressions". Projects
+without a pin skip it entirely. Rich's 956-test suite takes about 4 seconds.
+
 ## End-to-end simulation and gate teeth (D-208)
 
 - `scripts/selftest/e2e-sim.sh` runs one full milestone through the real

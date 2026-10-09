@@ -441,6 +441,28 @@ record_catch() {
   python3 "$PLANE_DIR/scripts/catch-ledger.py" record --gate "$1" \
     --spec-version "${FROZEN_V:-0}" >/dev/null 2>&1 || true
 }
+# legacy_regression — D-212: at milestone success, run the project's pinned
+# pre-existing suite (legacy-pin.json, D-165) in the sandbox and record what
+# it shows in .measurement/legacy-v<N>.json. REPORT-ONLY: never gates, never
+# fails the run; sets LEGACY_NOTE for the Results entry. No pin -> no-op.
+legacy_regression() {
+  LEGACY_NOTE=""
+  local tool="$PLANE_DIR/scripts/legacy-regression.py" files rc=0 line
+  files=$(python3 "$tool" targets 2>/dev/null) || { LEGACY_NOTE=" Existing tests: NOT RUN — unreadable legacy pin."; return 0; }
+  [ -n "$files" ] || return 0
+  local -a targets=()
+  while IFS= read -r line; do targets+=("$line"); done <<< "$files"
+  mkdir -p .cache
+  rm -f .cache/legacy-report.json
+  mark "existing-suite regression run (${#targets[@]} files, report-only)"
+  "$PLANE_DIR/scripts/sandbox-run.sh" --rw .cache -- pytest -p no:cacheprovider -q --json-report \
+    --json-report-file=.cache/legacy-report.json "${targets[@]}" >/dev/null 2>&1 || rc=$?
+  line=$(python3 "$tool" report --report .cache/legacy-report.json --pytest-rc "$rc" \
+    --spec "$FROZEN_V" --out "$MEAS_DIR/legacy-v$FROZEN_V.json" 2>&1) || line="Existing tests: NOT RUN — $line"
+  echo "  $line"
+  meas "legacy spec=$FROZEN_V $line"
+  LEGACY_NOTE=" $line."
+}
 # Terminal attribution for the exit row (Vortex backlog: fault_role): which
 # seat does the operator look at after this run? Set at the terminal halt
 # sites below; the default names the harness itself. Values:
@@ -3046,11 +3068,12 @@ if [ "$TESTS_RC" -eq 0 ]; then
   else
     _verdict_note="Per-task acceptance green against spec v$FROZEN_V — feature done (no mapped tests; verdict scope, D-112)"
   fi
+  legacy_regression || true
   cat >> tasks/CURRENT.md <<EOF
 
 ## Results
 
-  $_verdict_note. Feature built and validated.${FLAKE_NOTE}
+  $_verdict_note. Feature built and validated.${FLAKE_NOTE}${LEGACY_NOTE:-}
 EOF
   # D-126 ordering + M2b criterion 4: persist -> commit -> teardown, so a
   # failed [success] commit surfaces (nonzero exit, checkpoint kept) instead of

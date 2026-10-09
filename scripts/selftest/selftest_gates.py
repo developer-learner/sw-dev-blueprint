@@ -10628,7 +10628,7 @@ def test_metrics_report_records_row_and_is_idempotent(tmp_path):
     assert lines[0] == "\t".join([
         "milestone", "date", "feature", "gate_hours", "selftest_count",
         "selftest_s", "em_calls", "em_waste", "flakes", "success_runs",
-        "retry_runs",
+        "retry_runs", "human_edits", "post_success_fixes", "legacy_regressions",
     ])
     assert len(lines) == 2
     row = lines[1].split("\t")

@@ -14,7 +14,20 @@ Durable sources (all survive teardown):
   - .measurement/timings-<TS>.tsv    per-run timings copies
   - .em-archive/*/meta.txt           EM call outcome + gate result (spec-tagged)
   - .pipeline-flakes.json            committed per-spec flake history (D-111)
-  - git history                      milestone ref, date, feature version
+  - git history                      milestone ref, date, feature version,
+                                     and who changed the build lane (D-211)
+  - .measurement/legacy-v<N>.json    existing-suite regression record (D-212)
+
+D-211 columns, from the D-174 `Swbp-Role` commit trailers: `human_edits` =
+commits during this milestone (first refreeze since the previous [success]
+up to this [success]) that change build-lane files (`.gate-paths` build=)
+and were NOT made by the pipeline (role human, or no trailer: a hand
+commit). `post_success_fixes` = the same kind of commit between the PREVIOUS
+[success] and this milestone's first refreeze — hand repairs to work the
+pipeline had already declared done ("" when there is no previous success).
+`legacy_regressions` = existing-suite tests failing at success that the
+project's legacy pin does not list as known failures ("" when the project
+has no legacy pin, D-212).
 
 Appends one TSV row per milestone to .measurement/metrics.tsv (idempotent: a
 milestone+feature already recorded is skipped). With --evidence it prints the
@@ -35,8 +48,9 @@ from pathlib import Path
 COLS = [
     "milestone", "date", "feature", "gate_hours", "selftest_count",
     "selftest_s", "em_calls", "em_waste", "flakes", "success_runs",
-    "retry_runs",
+    "retry_runs", "human_edits", "post_success_fixes", "legacy_regressions",
 ]
+PIPELINE_ROLES = {"em", "coder", "tpm", "pipeline"}
 METRICS_REL = Path(".measurement") / "metrics.tsv"
 RE_FEATURE = re.compile(r"\[(?:success\] spec|refreeze) v(\d+)")
 RE_RC = re.compile(r"rc=(\d+)")
@@ -197,6 +211,71 @@ def flake_count(path: Path, feature: str) -> int:
     return count
 
 
+def build_paths(root: Path) -> list[str]:
+    """The build lane from .gate-paths (`build=`), default src/."""
+    gp = root / ".gate-paths"
+    if gp.is_file():
+        for line in gp.read_text().splitlines():
+            if line.startswith("build="):
+                paths = line.split("=", 1)[1].split()
+                if paths:
+                    return paths
+    return ["src/"]
+
+
+def first_match(root: Path, rev_range: str, pattern: str, last: bool) -> str:
+    """SHA of the newest (last=True) or oldest commit in rev_range whose
+    subject matches the extended regex pattern, or ""."""
+    shas = sh(root, "git", "log", "--format=%H", "-E", f"--grep={pattern}",
+              rev_range).split()
+    if not shas:
+        return ""
+    return shas[0] if last else shas[-1]
+
+
+def hand_commits(root: Path, rev_range: str) -> int:
+    """Non-merge commits in rev_range that change the build lane and were not
+    made by a pipeline role (D-211). Role comes from the D-174 trailer; a
+    commit without one was made by hand."""
+    out = sh(root, "git", "log", "--no-merges",
+             "--format=%H%x1f%(trailers:key=Swbp-Role,valueonly,separator=%x2c)",
+             rev_range, "--", *build_paths(root))
+    count = 0
+    for line in out.splitlines():
+        role = line.split("\x1f", 1)[1].strip().lower() if "\x1f" in line else ""
+        if role not in PIPELINE_ROLES:
+            count += 1
+    return count
+
+
+def intervention_counts(root: Path, milestone: str) -> tuple[str, str]:
+    """(human_edits, post_success_fixes) for the milestone ending at
+    `milestone` (D-211)."""
+    if not sh(root, "git", "rev-parse", "--verify", "--quiet", milestone):
+        return "0", ""
+    prev = first_match(root, f"{milestone}^", r"^\[success\] spec v", last=True) \
+        if sh(root, "git", "rev-parse", "--verify", "--quiet", f"{milestone}^") else ""
+    window = f"{prev}..{milestone}" if prev else milestone
+    start = first_match(root, window, r"^\[refreeze v", last=False)
+    if not start:
+        return "0", ("0" if prev else "")
+    edits = hand_commits(root, f"{start}..{milestone}")
+    fixes = str(hand_commits(root, f"{prev}..{start}^")) if prev else ""
+    return str(edits), fixes
+
+
+def legacy_regressions(meas_dir: Path, feature: str) -> str:
+    """Count from the D-212 record for this spec version, "" if none."""
+    if not feature:
+        return ""
+    rec = meas_dir / f"legacy-v{feature}.json"
+    try:
+        data = json.loads(rec.read_text())
+        return str(len(data["regressions"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+
+
 def compute(root: Path, milestone: str, feature_override: str) -> dict[str, str]:
     meas_dir = root / ".measurement"
     archive = root / ".em-archive"
@@ -216,6 +295,7 @@ def compute(root: Path, milestone: str, feature_override: str) -> dict[str, str]
 
     selftest_count, selftest_s = selftest_stats(timings_for_spec(meas_dir, spec))
     em_calls, em_waste = em_outcomes(archive, spec)
+    human_edits, post_success_fixes = intervention_counts(root, milestone)
 
     return {
         "milestone": short,
@@ -229,6 +309,9 @@ def compute(root: Path, milestone: str, feature_override: str) -> dict[str, str]
         "flakes": str(flake_count(root / ".pipeline-flakes.json", feature)),
         "success_runs": str(success),
         "retry_runs": str(retries),
+        "human_edits": human_edits,
+        "post_success_fixes": post_success_fixes,
+        "legacy_regressions": legacy_regressions(meas_dir, feature),
     }
 
 
@@ -243,7 +326,25 @@ def evidence_block(row: dict[str, str]) -> str:
         f"flakes={row['flakes']}\n"
         f"  success_runs={row['success_runs']}  "
         f"retry_runs={row['retry_runs']}\n"
+        f"  human_edits={row['human_edits']}  "
+        f"post_success_fixes={row['post_success_fixes'] or 'n/a'}  "
+        f"legacy_regressions={row['legacy_regressions'] or 'n/a'}\n"
     )
+
+
+def upgrade_header(path: Path) -> None:
+    """A metrics.tsv written before columns were appended (D-211) gets the
+    current header, its old rows padded with empty fields — never reordered,
+    never dropped. A header that is not a prefix of COLS is left alone."""
+    lines = path.read_text().splitlines()
+    if not lines:
+        return
+    old = lines[0].split("\t")
+    if old == COLS or old != COLS[:len(old)]:
+        return
+    pad = "\t" * (len(COLS) - len(old))
+    rows = [r + pad if r else r for r in lines[1:]]
+    path.write_text("\n".join(["\t".join(COLS)] + rows) + "\n")
 
 
 def append_row(path: Path, row: dict[str, str]) -> bool:
@@ -256,6 +357,7 @@ def append_row(path: Path, row: dict[str, str]) -> bool:
     if not gi.exists():
         gi.write_text("*\n")
     if path.is_file():
+        upgrade_header(path)
         for line in path.read_text().splitlines():
             fields = line.split("\t")
             if len(fields) == len(COLS) and fields[0] == row["milestone"] \

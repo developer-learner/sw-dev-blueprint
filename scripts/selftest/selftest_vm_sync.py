@@ -374,6 +374,25 @@ def test_telemetry_is_merged_not_overwritten(env):
         "milestone\tfeature\nold999\tv2\nabc123\tv4\n"
 
 
+def test_metrics_with_appended_columns_merge_into_an_older_host_table(env):
+    """D-211 appends metrics columns. A host table with the older header gets
+    the new header and its old rows padded; a different table is refused."""
+    host, _vm, e = env
+    _ignore_telemetry(host)
+    (host / ".measurement").mkdir()
+    (host / ".measurement" / "metrics.tsv").write_text("milestone\tfeature\nold999\tv2\n")
+    run, ws = start(host, e)
+    _vm_telemetry(ws, None, "milestone\tfeature\thuman_edits\nabc123\tv4\t1\n")
+    vm_sync(e, "discard", str(host), run)
+    assert (host / ".measurement" / "metrics.tsv").read_text() == \
+        "milestone\tfeature\thuman_edits\nold999\tv2\t\nabc123\tv4\t1\n"
+    run, ws = start(host, e)
+    _vm_telemetry(ws, None, "other\ttable\nx\ty\n")
+    r = vm_sync(e, "discard", str(host), run)
+    assert "header differs" in r.stderr
+    assert "abc123" in (host / ".measurement" / "metrics.tsv").read_text()
+
+
 def test_bad_telemetry_warns_and_never_blocks_landing(env):
     host, _vm, e = env
     _ignore_telemetry(host)

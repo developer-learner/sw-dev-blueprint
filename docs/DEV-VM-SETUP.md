@@ -68,6 +68,8 @@ scripts/vm-sync discard ~/dev/vortex <run>
   into the host copies, and only where the project's `.gitignore` covers
   them. A discarded run's catches count too — gates catch the local model
   mostly in runs that fail. Bad telemetry warns; it never blocks landing.
+  Metrics columns are only ever appended (D-211): a host table with an
+  older header is upgraded, its old rows padded, never dropped.
 
 The guest needs a Git identity for its commits (`git config --global
 user.name/user.email` inside the VM); the clones are VM-owned, so the old
