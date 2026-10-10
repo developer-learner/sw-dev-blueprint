@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-219 — 2026-10-09 — Flake acceptance needs a green same-order re-run; an unrun legacy suite is unknown, not zero
+
+**Decision:** (1) D-77/D-100 flake triage: after every failing carried node earns an isolated pass, `orchestrate.sh` re-runs the verdict scope once, with the same node-ids in the same order (and the same D-215 skip tolerance). Green → the flake path proceeds as before (ledger, D-111 threshold). Red → the suite stays red and the evidence names whether the original nodes repeated; over budget → no flake evidence, red. The verdict block records its scope in `VERDICT_RUN_ARGS` / `VERDICT_SKIP_TOLERATED` for this. (2) `metrics-report.py`: a `legacy-v<N>.json` record with a `run_problem` reports a blank `legacy_regressions` cell, not the length of its empty `regressions` list.
+
+**Alternatives considered:** Re-running only the failing node's file, or random-order runs — rejected: the defect class is "an earlier test in this run leaves state that breaks a later one", and only the same scope in the same order reproduces it. Requiring 2/2 isolated passes — rejected: it does not address order dependence at all.
+
+**Reason:** From an external review (2026-10-09). An isolated pass shows a node can pass alone, not that its suite failure was chance: if test A damages shared state and test B then fails, B passes alone every time, and the old triage accepted a real interaction defect as a flake. The cost is one extra verdict run, only on the rare flake path. Separately, a legacy run that produced no readable report wrote `regressions: []` with a `run_problem`; the metrics reader counted the list and recorded "0 regressions", making "not checked" indistinguishable from "checked and clean".
+
+**Do not suggest:** accepting a flake on isolated passes alone; reporting 0 for a legacy run that did not produce a result.
+
 ## D-218 — 2026-10-09 — Stage F: the sync layer is retired; apps run only through the builder
 
 **Decision:** Every app is builder-targeted (D-186), so the copy/link era's machinery is removed from the builder: `scripts/link-template.sh`, `update-template.sh`, `check-drift.sh`, `manifest-drift-guard.sh`, `bootstrap.sh`, the `check-drift` workflow, the builder's own `.template-version`, and their selftests. Every code path that served a hosted or linked child goes with them: orchestrate's non-snapshot entry (`.template-version` pin, installed-plane verification, dry-run re-exec) now refuses with "orchestrate runs only through the builder"; phase-gate's `.template-link` structural pass, the pre-push linked-child materialization, CI's "Materialize linked Blueprint" steps and swbp's `.template-version` fallback are gone; the broker's plane trailer falls back to `.swbp` only. `new-project.sh` creates builder-targeted apps only (`--linked` refuses with a pointer; `--targeted` stays accepted). The builder keeps its own integrity manifests (`.manifest-template` / `.manifest-project`, `regen-manifest.sh`, `phase-gate.sh manifest`) — they guard the builder's files, not apps. Permission lists protect `.swbp` where they protected `.template-version`. `doc-consistency.sh` warns on the retired onboarding commands (and now passes tokens with `-e`, so a token may start with `--`).

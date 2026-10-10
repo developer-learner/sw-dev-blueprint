@@ -246,7 +246,10 @@ through the production parser (D-110); synthetic reports remain for malformed
 and rare outcome shapes. Accepted D-77 flakes are stored by node and successful
 spec version in `.pipeline-flakes.json`. The third occurrence by default keeps
 the suite red and creates a TPM bundle instead of granting another bypass
-(D-111; threshold override: `SWBP_FLAKE_ESCALATION_THRESHOLD`).
+(D-111; threshold override: `SWBP_FLAKE_ESCALATION_THRESHOLD`). Before a
+flake is accepted, the verdict scope is re-run once in the same order; a red
+re-run keeps the suite red, because a test that fails after its neighbours but
+passes alone is an interaction defect, not chance (D-219).
 
 The sandbox image is built from a cold cache on packaging changes and weekly,
 then inspected for an absent project tree (D-123). This complements the static
@@ -338,7 +341,8 @@ sandbox (`scripts/legacy-regression.py`) and records:
   since adoption other than through refreeze, or why the suite could not run;
 - one line in the milestone's `## Results` entry in `tasks/CURRENT.md`
   (committed with `[success]`), naming up to five regressions;
-- the regression count in the `legacy_regressions` metrics column.
+- the regression count in the `legacy_regressions` metrics column (blank
+  when the suite could not run — unknown is never 0, D-219).
 
 It is report-only: a regression never fails or blocks the milestone. A
 suite that could not run says `NOT RUN`, never "no regressions". Projects
