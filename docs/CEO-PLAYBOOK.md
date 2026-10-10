@@ -81,6 +81,10 @@ the blueprint, pinned to it — the project holds no pipeline code (D-186).
    both are true: the delta's mapped verdict green (D-112) AND you've accepted the prototype.
    If it passes tests but isn't what you meant, that's not a bug — the
    spec is wrong: back to the TPM (step 2) for the next delta.
+   - **"WITH ACCEPTED FLAKE" means not a clean run (D-220).** A test failed
+     once and passed when re-run, so the pipeline let the milestone through
+     and says so. Treat it as a known risk, not a pass: ask the conductor
+     which test, and if it matters to you, have the TPM fix or replace it.
    - **Record the hand-fix ledger at close-out (D-82).** Have the
      conductor count the live-fix commits made after `[success]`
      (`git log --oneline --grep='live-fix' <success-commit>..HEAD`) and

@@ -184,7 +184,8 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-98**: Test verdicts require a freshly generated JSON report; stale reports are invalidated before every run
 - **D-99**: Empty task state is allowed only after a covering success commit; mid-milestone loss still halts
 - **D-100**: D-77 flake-green requires at least one isolated pass per failing carried node
-- **D-219**: ...and a green re-run of the verdict scope in the same order (an isolated pass alone cannot rule out an interaction defect); a legacy run with no result reports blank, not 0 regressions
+- **D-219**: ...and a green re-run of the verdict scope in the same order (evidence, not proof; red stays red); a legacy run with no result reports blank, not 0 regressions
+- **D-220**: A run that passed by accepting a flake lands as `[success] spec vN — WITH ACCEPTED FLAKE`, never a plain success
 - **D-103**: Frozen acceptance requires ordinary passed outcomes; skip/xfail/xpass remain red
 - **D-110**: Report-parser compatibility is exercised against the real pytest-json-report producer
 - **D-189**: Host verdict cross-checks runner status, report consistency, and frozen test coverage; cache access refuses links. In-process pytest remains untrusted (TESTING.md).

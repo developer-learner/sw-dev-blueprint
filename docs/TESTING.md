@@ -247,9 +247,12 @@ and rare outcome shapes. Accepted D-77 flakes are stored by node and successful
 spec version in `.pipeline-flakes.json`. The third occurrence by default keeps
 the suite red and creates a TPM bundle instead of granting another bypass
 (D-111; threshold override: `SWBP_FLAKE_ESCALATION_THRESHOLD`). Before a
-flake is accepted, the verdict scope is re-run once in the same order; a red
-re-run keeps the suite red, because a test that fails after its neighbours but
-passes alone is an interaction defect, not chance (D-219).
+flake is accepted, the verdict scope is re-run once in the same order (D-219).
+A red re-run keeps the suite red: it may be an interaction defect (a test that
+fails after its neighbours but passes alone) or a flake that failed twice, and
+the rule is fail-closed. A green re-run lets the flake be accepted, but that is
+evidence, not proof, so the milestone lands labelled `[success] spec vN — WITH
+ACCEPTED FLAKE`, never as a plain success (D-220).
 
 The sandbox image is built from a cold cache on packaging changes and weekly,
 then inspected for an absent project tree (D-123). This complements the static
