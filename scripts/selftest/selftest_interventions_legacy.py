@@ -97,6 +97,17 @@ def test_legacy_regressions_column_reads_this_specs_record(history):
     assert "legacy_regressions=n/a" in evidence(root)
 
 
+def test_legacy_run_without_a_result_is_unknown_not_zero(history):
+    """D-219: a record whose run produced no readable report carries an empty
+    regressions list; that is "not checked", never "0 regressions"."""
+    root, _ = history
+    (root / ".measurement").mkdir()
+    (root / ".measurement" / "legacy-v2.json").write_text(json.dumps(
+        {"regressions": [], "run_problem": "no readable pytest report (pytest exit 4)"}))
+    assert "legacy_regressions=n/a" in evidence(root)
+    assert "legacy_regressions=0" not in evidence(root)
+
+
 def test_old_metrics_table_gets_new_columns_without_losing_rows(history):
     root, _ = history
     old_cols = ["milestone", "date", "feature", "gate_hours", "selftest_count",

@@ -265,12 +265,15 @@ def intervention_counts(root: Path, milestone: str) -> tuple[str, str]:
 
 
 def legacy_regressions(meas_dir: Path, feature: str) -> str:
-    """Count from the D-212 record for this spec version, "" if none."""
+    """Count from the D-212 record for this spec version, "" if none or if
+    the run produced no usable result (D-219: unknown is not zero)."""
     if not feature:
         return ""
     rec = meas_dir / f"legacy-v{feature}.json"
     try:
         data = json.loads(rec.read_text())
+        if data.get("run_problem"):
+            return ""
         return str(len(data["regressions"]))
     except (OSError, ValueError, KeyError, TypeError):
         return ""
