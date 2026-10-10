@@ -551,6 +551,14 @@ finalize_success() {
   if [ -n "${SWBP_PLANE_SHA:-}" ]; then
     success_subject="$success_subject (plane ${SWBP_PLANE_SHA:0:12})"
   fi
+  # D-220: a run that passed only because a flake was accepted is not a clean
+  # success, and its subject says so. The `[success] spec vN` prefix stays the
+  # machine marker every reader keys on (metrics, completion, provenance).
+  if [ -n "${FLAKE_RECORDS:-}" ]; then
+    _flake_n=$(printf '%s\n' "$FLAKE_RECORDS" | grep -c .)
+    _flake_s="s"; [ "$_flake_n" != 1 ] || _flake_s=""
+    success_subject="$success_subject — WITH ACCEPTED FLAKE ($_flake_n test$_flake_s)"
+  fi
   # M2b criterion 4: persist -> commit (checked, never swallowed) -> teardown.
   # A failed [success] commit surfaces (exit 3, checkpoint kept) instead of
   # exiting 0 with the runtime state already deleted.
@@ -2886,9 +2894,12 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
   fi
   # D-219: an isolated pass shows a node CAN pass alone, not that its suite
   # failure was chance — an earlier test may leave state that breaks it. Re-run
-  # the verdict scope once, in the same order. A red re-run is an order or
-  # interaction defect (or more instability), so the suite stays red. If it
-  # cannot run within budget there is no flake evidence either.
+  # the verdict scope once, in the same order. This is evidence, not proof,
+  # either way: a red re-run may be an interaction defect or a flake that
+  # failed twice, and a green one does not prove the first failure harmless.
+  # Red keeps the suite red (fail-closed); green lets the flake be accepted,
+  # and the success is then labelled as such (D-220). If the re-run cannot
+  # run within budget there is no flake evidence either.
   if [ "$all_carried" -eq 1 ] && [ "$isolation_supports_flake" -eq 1 ]; then
     if [ "$SWBP_RUN_BUDGET" -gt 0 ] && [ "$(run_elapsed)" -gt "$SWBP_RUN_BUDGET" ]; then
       iso_evidence="${iso_evidence:+$iso_evidence; }suite-order re-run skipped — over SWBP_RUN_BUDGET"
@@ -2905,7 +2916,7 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
           case "|$FAILING|" in *"|$fid|"*) repeated="${repeated}${repeated:+, }$fid" ;; esac
         done
         if [ -n "$repeated" ]; then repeated="repeated: $repeated"; else repeated="the same nodes did not repeat"; fi
-        iso_evidence="${iso_evidence:+$iso_evidence; }suite-order re-run red again ($repeated) — order-dependent or unstable, not a flake"
+        iso_evidence="${iso_evidence:+$iso_evidence; }suite-order re-run red again ($repeated) — not accepted as a flake (interaction defect, or a flake that failed twice)"
         isolation_supports_flake=0
       fi
     fi
@@ -2932,9 +2943,9 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
       FAIL_DETAIL="${FAIL_DETAIL}${FAIL_DETAIL:+; }recurring flake threshold reached: $recurring_evidence; isolation evidence: $iso_evidence"
     else
       echo "WARNING (D-77): every full-suite failure is a carried-forward node,"
-      echo "  unmapped in the plan, with an isolated pass — flake, not drift. Isolation evidence: $iso_evidence"
+      echo "  unmapped in the plan, with an isolated pass and a green same-order re-run — accepted as a flake (evidence, not proof). Isolation evidence: $iso_evidence"
       FLAKE_NOTE="
-WARNING (D-77): carried-forward node(s) failed in the full run — flake, not drift ($iso_evidence). Occurrences are tracked; the threshold routes a recurring test defect to the TPM."
+WARNING (D-77): carried-forward node(s) failed in the full run — accepted as a flake on re-run evidence, not proven harmless ($iso_evidence). Occurrences are tracked; the threshold routes a recurring test defect to the TPM."
       FLAKE_RECORDS="$isolation_records"
       TESTS_RC=0
     fi
@@ -2948,7 +2959,9 @@ fi
 if [ "$TESTS_RC" -eq 0 ]; then
   echo ""
   echo "=========================================="
-  if [ "$FULL_SUITE_CHECK" = "1" ]; then
+  if [ -n "$FLAKE_RECORDS" ]; then
+    echo "  PASSED WITH ACCEPTED FLAKE — feature done, NOT a clean run (D-220)"
+  elif [ "$FULL_SUITE_CHECK" = "1" ]; then
     echo "  ALL FROZEN TESTS PASS — feature done"
   elif [ "${#VERDICT_IDS[@]}" -gt 0 ]; then
     echo "  ALL DELTA-MAPPED TESTS PASS — feature done"
@@ -2986,6 +2999,10 @@ if [ "$TESTS_RC" -eq 0 ]; then
     _verdict_note="Delta-mapped frozen tests green against spec v$FROZEN_V — feature done (verdict scope: mapped tests only, D-112)"
   else
     _verdict_note="Per-task acceptance green against spec v$FROZEN_V — feature done (no mapped tests; verdict scope, D-112)"
+  fi
+  if [ -n "$FLAKE_RECORDS" ]; then
+    _flake_ids=$(printf '%s\n' "$FLAKE_RECORDS" | cut -f1 | paste -sd, - | sed 's/,/, /g')
+    _verdict_note="SUCCESS WITH ACCEPTED FLAKE — not a clean run: $_flake_ids failed in the verdict run and passed on the re-runs, which is evidence of a flake, not proof (D-220). $_verdict_note"
   fi
   legacy_regression || true
   cat >> tasks/CURRENT.md <<EOF

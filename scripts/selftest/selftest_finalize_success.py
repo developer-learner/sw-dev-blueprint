@@ -22,7 +22,7 @@ ORCHESTRATE = REPO / "scripts" / "orchestrate.sh"
 
 HARNESS = r"""#!/usr/bin/env bash
 set -uo pipefail
-WORK="$1"; REPO="$2"; COMMIT_FAILS="$3"
+WORK="$1"; REPO="$2"; COMMIT_FAILS="$3"; FLAKE_RECORDS="${4:-}"
 cd "$WORK"
 
 git init -q -b main
@@ -39,7 +39,7 @@ STATE_DIR=".pipeline-state"
 FROZEN_V="99"
 COMPLETION_LEDGER=".measurement/completion.jsonl"
 FLAKE_LEDGER=".measurement/flake.jsonl"   # absent -> not staged
-METRICS_REPORT_TOOL="./metrics-stub.sh"
+METRICS_REPORT_TOOL="./metrics-stub.py"   # run as python3 <tool>
 SWBP_PLANE_SHA=""
 SUCCESS_RECORDED=0
 FAULT_ROLE=""
@@ -51,11 +51,9 @@ echo "results" >> tasks/CURRENT.md
 # durable persist marker — written into .measurement, which must survive rm.
 record_measurement() { echo "rc=$1 fault=$FAULT_ROLE" >> .measurement/rows.log; }
 
-cat > metrics-stub.sh <<'STUB'
-#!/usr/bin/env bash
-exit 0
+cat > metrics-stub.py <<'STUB'
+open("metrics-called", "w").close()
 STUB
-chmod +x metrics-stub.sh
 
 if [ "$COMMIT_FAILS" = "1" ]; then
   swbp_commit() { echo "swbp_commit stub: forced failure" >&2; return 1; }
@@ -76,14 +74,14 @@ finalize_success
 """
 
 
-def _drive(tmp_path, commit_fails):
+def _drive(tmp_path, commit_fails, flake_records=""):
     driver = tmp_path / "harness.sh"
     driver.write_text(HARNESS)
     work = tmp_path / "work"
     work.mkdir()
     r = subprocess.run(
         ["bash", str(driver), str(work), str(REPO),
-         "1" if commit_fails else "0"],
+         "1" if commit_fails else "0", flake_records],
         capture_output=True, text=True)
     return r, work
 
@@ -116,3 +114,32 @@ def test_finalization_clean_exits_zero_and_tears_down(tmp_path):
     # checkpoint torn down on the clean path
     assert not (work / ".pipeline-state").exists()
     assert (work / ".measurement" / "rows.log").exists()
+
+
+def _subject(work):
+    return subprocess.run(["git", "-C", str(work), "log", "-1", "--format=%s"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def test_accepted_flake_success_is_labelled_not_plain(tmp_path):
+    """D-220: a run that passed only by accepting a flake lands as
+    "[success] ... WITH ACCEPTED FLAKE", never a plain [success]; the prefix
+    stays, so the metrics row is still recorded against it."""
+    r, work = _drive(tmp_path, commit_fails=False,
+                     flake_records="tests/test_a.py::test_x\t1\ntests/test_b.py::test_y\t2")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _subject(work) == "[success] spec v99 — WITH ACCEPTED FLAKE (2 tests)"
+    assert (work / "metrics-called").exists()
+
+
+def test_one_accepted_flake_is_singular(tmp_path):
+    r, work = _drive(tmp_path, commit_fails=False,
+                     flake_records="tests/test_a.py::test_x\t1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _subject(work) == "[success] spec v99 — WITH ACCEPTED FLAKE (1 test)"
+
+
+def test_clean_success_carries_no_flake_label(tmp_path):
+    r, work = _drive(tmp_path, commit_fails=False)
+    assert _subject(work) == "[success] spec v99"
+    assert (work / "metrics-called").exists()
