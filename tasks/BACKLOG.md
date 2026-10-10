@@ -5,8 +5,9 @@
 > Source: testchat M1–M4 supervised-run retrospective (2026-07-05).
 >
 > **Scope:** this is the blueprint's authoritative future-work queue. Active
-> work → `CURRENT.md`; transient cross-session/cross-repo working notes →
-> `TODO.md` (not authoritative). Other repos' backlogs live in those repos.
+> work → `CURRENT.md`. (`TODO.md`, the transient cross-repo checklist, was
+> retired 2026-10-09; its open items moved here.) Other repos' backlogs live
+> in those repos.
 
 ---
 
@@ -24,8 +25,42 @@
 
 ## Up Next
 
+> Reconciled 2026-10-09: nothing in the blueprint is in flight. The items
+> below ride the next real milestone (no clock) or are small.
+
+### Confirm D-213..D-217 in a real milestone run
+**Priority:** P2
+**Why:** the coder-message layout (D-216) is proven by repeated trials, and the build-lane, rootdir, dependent-skip and budget fixes by rich-adoption v1 / selftests only; a Vortex or Testchat milestone that edits a large existing file is the first real check (first-attempt edit rate, `post_success_fixes`, catch ledger).
+**Rough size:** rides the next milestone
+**Depends on:** a feature to run (none queued in any app 2026-10-09) and the seated Flash Next server being up
+
+### Silent-halt live-fire (moved from TODO.md §6)
+**Priority:** P3
+**Why:** a double coder failure should reach the caps-exhausted escalation end to end; observe and report on the next real orchestrate run that produces one.
+**Rough size:** rides the next milestone
+**Depends on:** a run that naturally hits it
+
+### check-spec-delta: route/schema file pins still assume `src/`
+**Priority:** P3
+**Why:** D-120's pin check (`check-spec-delta.py`) requires `src/...py`; an adopted app with another layout (rich: `rich/`) that freezes routes or schemas would be refused. D-213 moved the type gate to the `.gate-paths` lane; this is the one remaining `src/` assumption in a gate.
+**Rough size:** Small
+**Depends on:** —
+
+### Onboarding preflight still uses the pre-D-209 "thinking model" test
+**Priority:** P3
+**Why:** `new-project.sh`'s `llm_preflight` refuses a server whose probe reply is reasoning-only — the old Rule 1 wording; D-209's admission test is `seat-check.sh`. Swap the preflight for `seat-check.sh` (it now prints the seat-check pointer as a next step).
+**Rough size:** Small
+**Depends on:** —
+
+---
+
+## Parked (CEO decisions)
+
+> Not queued. Each needs a CEO decision to un-park.
+
 ### T7 M2b — clean adoption cycle + T1 gate flip
-**Priority:** P1
+**Status:** PARKED — CEO 2026-10-01 (security plan wrap-up, `tasks/CURRENT.md`): signed roles deferred as an accepted risk under the buggy-not-hostile threat model. Also gates central-builder done criterion 4 (`swbp-guard` flip). Was P1.
+**Priority:** —
 **Why:** M2a (D-184) shipped the machinery; the gate flip needs one live adoption run on a child (machine slot) so the gate first bites on the run that proves it.
 **Rough size:** Small (one live run + flip)
 **Depends on:** machine slot (LM Studio up + run window)
@@ -47,19 +82,23 @@
 **Flagged dependency (not one of the four, tracked with fault-attribution below):** the broker commits raw prompt/reply bytes in-tree ([git-provenance.sh:195-196](../scripts/git-provenance.sh:195)), while the endorsed fault-attribution design requires deterministic, fail-closed redaction ([design §](fault-attribution-provenance-design.md:102)). Settle the stored-byte/hash/redaction contract before broader adoption; it does not block the T1 flip but does block wider evidence capture.
 
 ### Fault-attribution provenance — durable post-ship trace
-**Priority:** P2
+**Status:** PARKED with M2b (depends on it).
+**Priority:** —
 **Why:** D-185 extends T7's immutable authorship evidence into an honest, queryable bug→task→tier→model trace after ship, with revisable shared-causality adjudications rather than permanent blame.
 **Rough size:** Medium (approximately 10–15 engineer-days hardened; 4–7 days for a milestone-only MVP)
 **Depends on:** T7 M2b for the trusted signed layer; a concrete deterministic, fail-closed redaction policy
 **Design:** `tasks/fault-attribution-provenance-design.md`
+
+### Model trials (coder upgrade, EM skip)
+**Status:** PARKED — CEO 2026-10-08: "we dont need to try new coder or EM local llms for now".
+**Evidence so far:** 2026-10-09, rich v1 coder prompt, 6 trials each, same sampling: Qwen3.8-27B 8-bit (LM Studio, not seated) 6/6 full pass at 46–130 s/reply; seated Flash Next 5/6 at 2–9 s/reply. Too few trials to rank reliability; the speed gap is real.
 
 ---
 
 ## Icebox (someday/maybe)
 
 - EM-tier collapse experiment: M1–M4 showed EM is strong at decomposition, weak at diagnosis — test whether a frontier TPM emitting the plan directly (skipping EM) changes outcomes.
-- Coder model upgrade pass: the coder was the weakest link in every milestone; re-run a milestone with a stronger local model (models.env change only) and compare strike rates.
-- mlx-serve as LM Studio alternative (OpenAI+Anthropic+Ollama endpoints, ~35% faster decode on Apple Silicon) — revisit when model-serving friction matters.
+- Coder model upgrade pass — see "Model trials" under Parked.
 
 ---
 
@@ -67,6 +106,9 @@
 
 | Task | Completed | Notes |
 |------|-----------|-------|
+| Stage F — retire the copy/link sync layer | 2026-10-09 | D-218: `link-template.sh`, `update-template.sh`, `check-drift.sh`, `manifest-drift-guard.sh`, `bootstrap.sh`, the `check-drift` workflow and every hosted/linked-child code path removed (~3,400 lines); apps run only through `swbp`; e2e simulation PASS on the stage-F commit; all three apps pass its manifest gate. |
+| mlx-serve as a model server | 2026-09-29 | In use: the seated EM/coder (Flash Next) runs on mlx-serve under Vortex since Vortex v38. |
+| Coder edit budget 20480 + file-first coder prompt | 2026-10-09 | D-217 (CEO directive: 20K+) and D-216 (attempt-1 tool-call habit: 0/6 → 6/6 edit blocks in reproduction). |
 | T7 M2a — GPG-signed provenance: trust anchor, durable evidence, verifier | 2026-09-03 | D-184: broker signs with a dedicated passphrase-less Ed25519 sign-only key (`git-provenance.sh init\|active\|rotate\|revoke\|retire`, homedir `~/.swbp/provenance/gnupg`, pin + revocation lists, revocation beats pinning); `Swbp-Call-Id:` trailer correlates commit↔LLM-call meta sidecar; prompt/reply/meta committed in-tree at `.swbp-evidence/<run>/<entry>/` (5 MB fail-closed guard); `scripts/check-provenance.py` report mode (advisory, exit 0) + `--gate` (M2b) verifies signature/pin/revocation/hole/trailers/evidence-hash/tamper per in-scope commit; blueprint CI advisory job; 10 blind selftests (`selftest_provenance_m2.py`). Suite 583 passed + 1 skip (machine-tier, M2b). Gate flip stays CEO-gated behind one live adoption run (M2b, Up Next). |
 | Born-linked seeding: new children are born in the linked state (#8 seed-path half) | 2026-09-03 | D-183 (`a87f014`): `new-project.sh --linked <name> [--from <blueprint>]` seeds the child-owned files as a sibling of the blueprint checkout and converts to the linked state in the same run (seed commit → two-step `[template-link]` → bootstrap). `BLUEPRINT.md`/`QUICKSTART.md` join the plane manifest (linked and governed); bootstrap's birth-SHA stamp no longer demotes a linked child's local-HEAD pin. Selftest `test_born_linked_seed` + a real smoke child verified: 82/82 plane paths correct (81 symlinks + the check-drift exception), gate green, blueprint untouched, zero copy-seeded residue. The doc-layer half of #8 fell out of the 2026-09-03 child dismantling (root docs became symlinks there). |
 | Escalation-ladder validation: first organic end-to-end run | 2026-09-03 | **CEO call: validated.** The v115 run (testchat T8 build, 2026-09-02, plane `6132185`) exercised the full ladder organically on two tasks: T1/T3 each struck twice (`MAX_TASK_STRIKES=2`, 8 coder calls) → schema-valid `brief_wrong` diagnoses with `verdict`+`reason`+`revised_brief` (`.em-archive/2026-09-02_{012954,013427}_diagnosis`) → in-run brief revisions (prompt-diff proven: the rewritten brief fixed exactly the diagnosed BLE001/S110 defect) → `caps-exhausted` TPM bundles → batch halt → v116 brief-only refreeze (`641aa8d`) → v119 success (`aa3deea`); D-69 budget contained the total (≈7 min ≪ 1200 s). What the run exposed was brief defects (lint awareness, router-gate consistency), not machinery defects — the ladder caught, diagnosed, revised, and escalated exactly as designed. |

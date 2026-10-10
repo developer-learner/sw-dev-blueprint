@@ -1,3 +1,9 @@
+> **RETIRED 2026-10-09.** Historical checklist only. Its open items moved to
+> `tasks/BACKLOG.md` (silent-halt live-fire → Up Next; T7/M2b → Parked; the
+> measurement instruments are standing practice). T11 closed with
+> rich-adoption v1 `[success]` (2026-10-08); the linked-child verification
+> item ended with stage F (D-218). Do not add to this file.
+
 # TODO — combined (vortex + blueprint) — 2026-08-24
 
 A **transient, non-authoritative** cross-session working checklist. Lane tags:

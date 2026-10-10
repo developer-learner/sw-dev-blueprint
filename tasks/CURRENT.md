@@ -6,8 +6,8 @@
 > of every working session; halt notes (Rule 4) land here.
 >
 > **Scope:** this file is *status* — what is active or halted now. The
-> prioritized queue of not-yet-started work is `BACKLOG.md`; the transient
-> cross-session working checklist is `TODO.md`. Don't grow a second queue here.
+> prioritized queue of not-yet-started work is `BACKLOG.md` (`TODO.md` is
+> retired). Don't grow a second queue here.
 
 ---
 
@@ -26,6 +26,17 @@ rich-adoption (Phase 0 D-175).
 **Frozen spec version:** n/a — the template's own files mutate via its normal
 commits, not `refreeze.sh` (children's specs still freeze there)
 
+- 2026-10-09: **D-217 + D-218 — coder budget 20480; stage F (sync layer retired).**
+      Edit-mode coder budget defaults to 20480 (CEO standing directive). The
+      copy/link era's scripts, workflow and every hosted/linked-child path
+      are removed — apps run only through `swbp` from their `.swbp` pin.
+      e2e simulation PASS on the stage-F commit; Vortex, Testchat and
+      rich-adoption all pass its manifest gate. Backlog reconciled: M2b and
+      fault attribution parked (CEO 2026-10-01), TODO.md retired.
+- 2026-10-08: **D-213..D-216 + rich-adoption v1.** First adopted-app milestone
+      landed (`[success] spec v1`, 968 passed, legacy 956/25/0); fixed the
+      build-lane type gate, repo-relative node-ids, first-freeze rollback,
+      dependent platform skips, and the coder's attempt-1 tool-call habit.
 - 2026-10-08: **D-211 + D-212 — intervention metrics; existing-suite regression evidence.**
       metrics.tsv now counts hand edits during a milestone and hand fixes
       after a declared success (from the commit role trailers). At success,
