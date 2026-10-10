@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-217 — 2026-10-09 — The coder's edit-mode output budget defaults to 20480 tokens
+
+**Decision:** `SWBP_CODER_EDIT_MAX_OUTPUT` defaults to 20480 (was 4096). It stays overridable per run.
+
+**Reason:** CEO standing directive (2026-08-02, reaffirmed 2026-10-09): coder calls get 20K+. The 4096 cap truncated legitimate edit replies (testchat M33 v76: two attempts cut mid-prose at the limit). 20480 equals the allowance create mode already gets from the seated Flash Next profile, and fits a 32K-context seat with rich v1's ~11K-token edit prompt; `llm-call.sh` does not clamp to the context window, so a larger default would overrun a 32K seat on big files.
+
+**Cost accepted:** a runaway edit attempt now runs up to 5x longer before the applier can reject it (about 3.5 min on Flash Next, far longer on a slow dense seat); the run budget (`SWBP_RUN_BUDGET`) still bounds the milestone.
+
+**Do not suggest:** silently restoring 4096 as the default; raising it past what a 32K seat can hold without first adding a context clamp in `llm-call.sh`.
+
 ## D-216 — 2026-10-08 — The coder's message puts the file first and the instructions last
 
 **Decision:** `orchestrate.sh` builds every coder user message through one function, `coder_prompt <file> <instr>`: the existing file's labeled block first, then the brief and reply rules. Create mode (no file) is unchanged. `run_coder` and `prefetch_launch` both call it, so a prefetched reply is still reused only for a byte-identical prompt. Content is unchanged (the brief + the one file, D-116); only the order moved.

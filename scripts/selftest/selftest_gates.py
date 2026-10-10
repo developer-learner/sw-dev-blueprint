@@ -2600,7 +2600,7 @@ def test_edit_mode_output_budget_has_no_hardcoded_call_site():
     silently reintroduce the literal alongside the env var."""
     source = (SCRIPTS / "orchestrate.sh").read_text()
     assert re.search(
-        r'^SWBP_CODER_EDIT_MAX_OUTPUT="\$\{SWBP_CODER_EDIT_MAX_OUTPUT:-4096\}"$',
+        r'^SWBP_CODER_EDIT_MAX_OUTPUT="\$\{SWBP_CODER_EDIT_MAX_OUTPUT:-20480\}"$',
         source, re.M,
     ), "declaration missing or default changed"
     run_coder = source[source.index("run_coder() {"):
@@ -2691,15 +2691,15 @@ def test_edit_mode_budget_reaches_llm_call(tmp_path):
 
     # Override reaches the boundary: edit mode sees 8192.
     assert seen(drive("8192", preexist=True)) == "SWBP_MAX_OUTPUT=8192"
-    # Default (mirrored from orchestrate.sh entry): edit mode sees 4096.
+    # Default (mirrored from orchestrate.sh entry, D-217): edit mode sees 20480.
     (tmp_path / "envlog").unlink(missing_ok=True)
     # A budget-only FIFTH arg with no env override is not how the test drives
     # the default; drive the harness default by passing nothing over env.
     default = subprocess.run(
-        ["bash", str(DRIVE_CODER), str(tmp_path), "T7", "src/x.py", "0", "4096"],
+        ["bash", str(DRIVE_CODER), str(tmp_path), "T7", "src/x.py", "0", "20480"],
         capture_output=True, text=True,
     )
-    assert seen(default) == "SWBP_MAX_OUTPUT=4096"
+    assert seen(default) == "SWBP_MAX_OUTPUT=20480"
     # Create mode ignores the override; SWBP_MAX_OUTPUT is empty.
     fresh = tmp_path / "create"
     fresh.mkdir()

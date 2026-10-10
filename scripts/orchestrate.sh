@@ -340,10 +340,13 @@ SWBP_RUN_BUDGET="${SWBP_RUN_BUDGET:-1200}"
 # halves the wall-clock cost of a runaway attempt. Made overridable after
 # M33 v76 escalated with two attempts truncated mid-prose at the 4096-token
 # limit; the seat had exhausted its budget on explanation and never reached
-# an edit block. This is a bounded diagnostic control — the default stays
-# 4096, and the correct next step for a persistent budget bind is a seat
-# or prompt fix, not raising the default silently.
-SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-4096}"
+# an edit block. D-217 (2026-10-09, CEO directive): the default is 20480,
+# the same allowance create mode gets from the seated profile — a 4096 cap
+# truncated legitimate larger edits (M33 v76), and the CEO's standing rule is
+# 20K+. 20480 also fits a 32K-context seat with a ~11K-token prompt (rich
+# v1). Cost: a runaway attempt runs up to 5x longer before the applier can
+# reject it (the run budget still bounds the milestone).
+SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-20480}"
 # Parallel coder calls (2026-09-23): how many coder requests may be in flight
 # at once. 1 = strictly sequential (the pre-2026-09-23 behavior). Only the
 # model CALL overlaps: every reply is still applied, gated, tested and

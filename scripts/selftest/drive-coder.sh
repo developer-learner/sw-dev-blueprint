@@ -80,7 +80,7 @@ FROZEN_V="42"
 # orchestrate.sh's .em-archive; the success teardown must not erase it.
 CODER_ARCHIVE_DIR=".coder-archive"
 # Mirrors orchestrate.sh's entry default exactly: unset OR empty means 4096.
-SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-4096}"
+SWBP_CODER_EDIT_MAX_OUTPUT="${SWBP_CODER_EDIT_MAX_OUTPUT:-20480}"
 mkdir -p "$STATE_DIR" "$TASK_STATE" "$LOG_DIR"
 
 die() { echo "FAIL: $*" >&2; exit 1; }
