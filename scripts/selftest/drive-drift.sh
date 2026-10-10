@@ -43,6 +43,10 @@
 #   FROZEN_V       current frozen spec used for idempotent flake projection;
 #                  defaults to 3 so the existing v1/v2 threshold fixture
 #                  models a genuinely new occurrence
+#   RT_FAILING_ON_RED  FAILING value a red stub run_tests leaves behind (the
+#                  D-219 suite-order re-run reads it to name repeated nodes)
+#   VERDICT_ARGS   space-separated node-ids the verdict ran with (becomes
+#                  VERDICT_RUN_ARGS; empty = full suite)
 # Workdir inputs:
 #   tasks/plan.json  the mapping data the block queries per failing id
 #
@@ -54,6 +58,7 @@
 #   RECURRING_FLAKE=<0|1>
 #   ISO_EVIDENCE=<the recorded isolation evidence string>
 #   RT_CALLS=<how many times the stub run_tests was invoked>
+#   RT_LAST_ARGS=<the args of the last stub run_tests call>
 set -euo pipefail
 
 WORK="${1:?usage: drive-drift.sh <workdir>}"
@@ -81,6 +86,9 @@ SWBP_RUN_BUDGET="${SWBP_RUN_BUDGET:-0}"
 FLAKE_LEDGER="${FLAKE_LEDGER:-.pipeline-flakes.json}"
 FLAKE_LEDGER_TOOL="$REPO/scripts/flake-ledger.py"
 FLAKE_ESCALATION_THRESHOLD="${SWBP_FLAKE_ESCALATION_THRESHOLD:-3}"
+VERDICT_RUN_ARGS=()
+[ -z "${VERDICT_ARGS:-}" ] || read -r -a VERDICT_RUN_ARGS <<< "$VERDICT_ARGS"
+VERDICT_SKIP_TOLERATED=""
 
 # --- Stubs the block calls out to -------------------------------------
 # The real run_tests parses .cache/test-report.json and sets TESTS_RC,
@@ -90,9 +98,11 @@ FLAKE_ESCALATION_THRESHOLD="${SWBP_FLAKE_ESCALATION_THRESHOLD:-3}"
 # stub does too, or the save/restore dance would look correct only
 # because nothing ever touched the vars.
 RT_CALLS=0
+RT_LAST_ARGS=""
 _rt_queue="$RT_OUTCOMES"
 run_tests() {
   RT_CALLS=$((RT_CALLS + 1))
+  RT_LAST_ARGS="$*"
   local outcome=""
   if [ -n "$_rt_queue" ]; then
     outcome="${_rt_queue%%:*}"
@@ -104,6 +114,7 @@ run_tests() {
   TESTS_RC="${outcome:-1}"
   FAILING=""     # match real run_tests's clobber pattern
   FAIL_DETAIL="" # ditto
+  [ "$TESTS_RC" = "0" ] || FAILING="${RT_FAILING_ON_RED:-}"
 }
 
 run_elapsed() { echo "$SWBP_ELAPSED"; }
@@ -125,3 +136,4 @@ echo "FLAKE_RECORDS=${FLAKE_RECORDS:-}"
 echo "RECURRING_FLAKE=${RECURRING_FLAKE:-0}"
 echo "ISO_EVIDENCE=${iso_evidence:-}"
 echo "RT_CALLS=$RT_CALLS"
+echo "RT_LAST_ARGS=$RT_LAST_ARGS"

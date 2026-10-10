@@ -330,11 +330,15 @@ def test_skip_tolerance_is_scoped_to_the_dependent_verdict_call():
     src = (SCRIPTS / "orchestrate.sh").read_text()
     exports = [i for i, line in enumerate(src.splitlines())
                if "SWBP_SKIP_TOLERATED_FILE" in line and "export" in line]
-    assert len(exports) == 1, "exactly one scoped export"
+    # The verdict call, and its D-219 same-order replay in the flake triage.
+    assert len(exports) == 2, "exactly two scoped exports"
     lines = src.splitlines()
-    window = "\n".join(lines[exports[0] - 3: exports[0] + 4])
+    window = "\n".join(lines[exports[0] - 3: exports[0] + 5])
     assert 'printf \'%s\\n\' ${DEP_IDS[@]+"${DEP_IDS[@]}"} > "${STATE_DIR:-.pipeline-state}/skip-tolerated"' in window
-    assert "run_tests ${VERDICT_IDS" in window and "unset SWBP_SKIP_TOLERATED_FILE" in window
+    assert "run_tests ${VERDICT_RUN_ARGS" in window and "unset SWBP_SKIP_TOLERATED_FILE" in window
+    replay = "\n".join(lines[exports[1]: exports[1] + 3])
+    assert 'export SWBP_SKIP_TOLERATED_FILE="$VERDICT_SKIP_TOLERATED"' in replay
+    assert "run_tests ${VERDICT_RUN_ARGS" in replay and "unset SWBP_SKIP_TOLERATED_FILE" in replay
 
 
 def test_failure_detail_follows_the_build_lane_and_a_nested_rootdir(tmp_path):

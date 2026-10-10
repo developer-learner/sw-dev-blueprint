@@ -6285,7 +6285,8 @@ FLAKE_PLAN = {
 
 def run_drive_drift(tmp_path, *, tests_rc=1, failing="", fail_detail="",
                     rt_outcomes="", swbp_elapsed=0, swbp_budget=0,
-                    frozen_v=3, plan=None):
+                    frozen_v=3, plan=None, rt_failing_on_red="",
+                    verdict_args=""):
     (tmp_path / "tasks").mkdir(exist_ok=True)
     (tmp_path / "tasks" / "plan.json").write_text(
         json.dumps(plan if plan is not None else FLAKE_PLAN))
@@ -6296,7 +6297,9 @@ def run_drive_drift(tmp_path, *, tests_rc=1, failing="", fail_detail="",
            "RT_OUTCOMES": rt_outcomes,
            "SWBP_ELAPSED": str(swbp_elapsed),
            "SWBP_RUN_BUDGET": str(swbp_budget),
-           "FROZEN_V": str(frozen_v)}
+           "FROZEN_V": str(frozen_v),
+           "RT_FAILING_ON_RED": rt_failing_on_red,
+           "VERDICT_ARGS": verdict_args}
     return subprocess.run(
         ["bash", str(DRIVE_DRIFT), str(tmp_path)],
         capture_output=True, text=True, env=env,
@@ -6314,17 +6317,73 @@ def _kv(stdout, key):
 def test_flake_all_unmapped_flips_red_to_green(tmp_path):
     """Every failure is a carried-forward, plan-unmapped node -> the block
     treats the suite as flake-green: TESTS_RC flipped 0, FLAKE_NOTE populated,
-    WARNING printed. This is the one branch that overrides a red suite."""
+    WARNING printed. This is the one branch that overrides a red suite.
+    Two isolation runs, then one suite-order re-run (D-219)."""
     r = run_drive_drift(
         tmp_path, failing="tests/test_flake.py::test_a",
-        rt_outcomes="0:0",
+        rt_outcomes="0:0:0",
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
     assert "WARNING (D-77)" in r.stdout
     assert _kv(r.stdout, "FLAKE_NOTE").startswith("WARNING (D-77)")
     assert "2/2 isolated passes" in r.stdout
-    assert _kv(r.stdout, "RT_CALLS") == "2"
+    assert "suite-order re-run green" in r.stdout
+    assert _kv(r.stdout, "RT_CALLS") == "3"
+
+
+def test_flake_failing_again_in_suite_order_keeps_drift(tmp_path):
+    """D-219: test A leaves state that breaks test B; B passes alone. The
+    isolated passes alone would call it a flake — the same-order re-run
+    fails B again, so it is an interaction defect and the suite stays red."""
+    nodeid = "tests/test_flake.py::test_b"
+    r = run_drive_drift(
+        tmp_path, failing=nodeid, rt_outcomes="0:0:1",
+        rt_failing_on_red=f"tests/test_other.py::test_x|{nodeid}",
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
+    assert _kv(r.stdout, "FLAKE_NOTE") == ""
+    assert f"suite-order re-run red again (repeated: {nodeid})" in r.stdout
+    assert _kv(r.stdout, "FINAL_FAILING") == nodeid       # original evidence restored
+    assert _kv(r.stdout, "RT_CALLS") == "3"
+
+
+def test_flake_suite_order_rerun_red_on_other_nodes_keeps_drift(tmp_path):
+    """A re-run that goes red on different nodes is more instability, not
+    evidence of a flake: stay red and say the originals did not repeat."""
+    r = run_drive_drift(
+        tmp_path, failing="tests/test_flake.py::test_a", rt_outcomes="0:0:1",
+        rt_failing_on_red="tests/test_other.py::test_x",
+    )
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
+    assert "the same nodes did not repeat" in r.stdout
+    assert _kv(r.stdout, "FLAKE_NOTE") == ""
+
+
+def test_flake_suite_order_rerun_uses_the_verdict_scope(tmp_path):
+    """The re-run repeats the verdict's own node-ids in their order, not a
+    different scope (D-219)."""
+    scope = "tests/test_delta.py::test_new tests/test_flake.py::test_a"
+    r = run_drive_drift(
+        tmp_path, failing="tests/test_flake.py::test_a", rt_outcomes="0:0:0",
+        verdict_args=scope,
+    )
+    assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
+    assert _kv(r.stdout, "RT_LAST_ARGS") == scope
+
+
+def test_verdict_block_records_the_scope_the_flake_rerun_repeats():
+    """The verdict block must record its run scope where the triage reads it."""
+    source = (SCRIPTS / "orchestrate.sh").read_text()
+    verdict = source[source.index("# BEGIN D-112 verdict scope"):
+                     source.index("# END D-112 verdict scope")]
+    triage = source[source.index("# BEGIN D-77 flake triage"):
+                    source.index("# END D-77 flake triage")]
+    assert 'VERDICT_RUN_ARGS=(${VERDICT_IDS[@]+"${VERDICT_IDS[@]}"} ${DEP_IDS[@]+"${DEP_IDS[@]}"})' in verdict
+    assert 'run_tests ${VERDICT_RUN_ARGS[@]+"${VERDICT_RUN_ARGS[@]}"}' in verdict
+    assert 'run_tests ${VERDICT_RUN_ARGS[@]+"${VERDICT_RUN_ARGS[@]}"}' in triage
+    assert 'SWBP_SKIP_TOLERATED_FILE="$VERDICT_SKIP_TOLERATED"' in triage
 
 
 def test_flake_reproducing_twice_keeps_drift(tmp_path):
@@ -6345,7 +6404,7 @@ def test_flake_one_isolated_pass_allows_flake_green(tmp_path):
     provides mechanical flake evidence without demanding deterministic 2/2."""
     r = run_drive_drift(
         tmp_path, failing="tests/test_flake.py::test_a",
-        rt_outcomes="1:0",
+        rt_outcomes="1:0:0",
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
@@ -6365,7 +6424,7 @@ def test_flake_recurring_threshold_keeps_suite_red_for_escalation(tmp_path):
         )
         assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
     r = run_drive_drift(
-        tmp_path, failing=nodeid, rt_outcomes="1:0",
+        tmp_path, failing=nodeid, rt_outcomes="1:0:0",
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert _kv(r.stdout, "FINAL_TESTS_RC") == "1"
@@ -6384,7 +6443,7 @@ def test_flake_same_spec_rerun_does_not_reach_recurring_threshold(tmp_path):
         )
         assert recorded.returncode == 0, (recorded.stdout, recorded.stderr)
     r = run_drive_drift(
-        tmp_path, failing=nodeid, rt_outcomes="1:0", frozen_v=2,
+        tmp_path, failing=nodeid, rt_outcomes="1:0:0", frozen_v=2,
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert _kv(r.stdout, "FINAL_TESTS_RC") == "0"
@@ -6463,7 +6522,7 @@ def test_flake_failing_and_detail_survive_isolation_clobber(tmp_path):
     r = run_drive_drift(
         tmp_path, failing="tests/test_flake.py::test_a",
         fail_detail="original detail preserved across isolation",
-        rt_outcomes="0:0",
+        rt_outcomes="0:0:0",
     )
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert _kv(r.stdout, "FINAL_FAILING") == "tests/test_flake.py::test_a"

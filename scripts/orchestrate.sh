@@ -2762,6 +2762,10 @@ finalize_batch
 # BEGIN D-112 verdict scope (drive-verdict.sh extracts this block)
 check_budget "feature verdict"
 VERDICT_IDS=()
+# D-219: the scope the verdict ran with, so the flake triage can re-run it in
+# the same order. Empty args = the full frozen suite.
+VERDICT_RUN_ARGS=()
+VERDICT_SKIP_TOLERATED=""
 if [ "$FULL_SUITE_CHECK" = "1" ]; then
   echo "=== Full frozen suite (on-demand regression check, D-112) ==="
   run_tests
@@ -2812,7 +2816,9 @@ print('\n'.join(ids))")
     mkdir -p "${STATE_DIR:-.pipeline-state}"
     printf '%s\n' ${DEP_IDS[@]+"${DEP_IDS[@]}"} > "${STATE_DIR:-.pipeline-state}/skip-tolerated"
     export SWBP_SKIP_TOLERATED_FILE="${STATE_DIR:-.pipeline-state}/skip-tolerated"
-    run_tests ${VERDICT_IDS[@]+"${VERDICT_IDS[@]}"} ${DEP_IDS[@]+"${DEP_IDS[@]}"}
+    VERDICT_SKIP_TOLERATED="$SWBP_SKIP_TOLERATED_FILE"
+    VERDICT_RUN_ARGS=(${VERDICT_IDS[@]+"${VERDICT_IDS[@]}"} ${DEP_IDS[@]+"${DEP_IDS[@]}"})
+    run_tests ${VERDICT_RUN_ARGS[@]+"${VERDICT_RUN_ARGS[@]}"}
     unset SWBP_SKIP_TOLERATED_FILE
   else
     echo "=== Verdict: no mapped tests — per-task acceptance is the verdict (D-112) ==="
@@ -2878,6 +2884,32 @@ print(1 if any(sys.argv[1] in t['tests'] for t in p['tasks']) else 0)" "$fid")
       [ "$iso_pass" -gt 0 ] || isolation_supports_flake=0
     done
   fi
+  # D-219: an isolated pass shows a node CAN pass alone, not that its suite
+  # failure was chance — an earlier test may leave state that breaks it. Re-run
+  # the verdict scope once, in the same order. A red re-run is an order or
+  # interaction defect (or more instability), so the suite stays red. If it
+  # cannot run within budget there is no flake evidence either.
+  if [ "$all_carried" -eq 1 ] && [ "$isolation_supports_flake" -eq 1 ]; then
+    if [ "$SWBP_RUN_BUDGET" -gt 0 ] && [ "$(run_elapsed)" -gt "$SWBP_RUN_BUDGET" ]; then
+      iso_evidence="${iso_evidence:+$iso_evidence; }suite-order re-run skipped — over SWBP_RUN_BUDGET"
+      isolation_supports_flake=0
+    else
+      [ -z "${VERDICT_SKIP_TOLERATED:-}" ] || export SWBP_SKIP_TOLERATED_FILE="$VERDICT_SKIP_TOLERATED"
+      run_tests ${VERDICT_RUN_ARGS[@]+"${VERDICT_RUN_ARGS[@]}"}
+      unset SWBP_SKIP_TOLERATED_FILE
+      if [ "$TESTS_RC" -eq 0 ]; then
+        iso_evidence="${iso_evidence:+$iso_evidence; }suite-order re-run green"
+      else
+        repeated=""
+        for fid in "${_fail_ids[@]}"; do
+          case "|$FAILING|" in *"|$fid|"*) repeated="${repeated}${repeated:+, }$fid" ;; esac
+        done
+        if [ -n "$repeated" ]; then repeated="repeated: $repeated"; else repeated="the same nodes did not repeat"; fi
+        iso_evidence="${iso_evidence:+$iso_evidence; }suite-order re-run red again ($repeated) — order-dependent or unstable, not a flake"
+        isolation_supports_flake=0
+      fi
+    fi
+  fi
   FAILING="$saved_failing"; FAIL_DETAIL="$saved_detail"; TESTS_RC=1
   if [ "$all_carried" -eq 1 ] && [ "$isolation_supports_flake" -eq 1 ]; then
     recurring_evidence=""
@@ -2907,7 +2939,7 @@ WARNING (D-77): carried-forward node(s) failed in the full run — flake, not dr
       TESTS_RC=0
     fi
   elif [ "$all_carried" -eq 1 ]; then
-    echo "D-77: carried-forward failure reproduced or could not be isolated;"
+    echo "D-77: carried-forward failure reproduced, failed again in suite order, or could not be isolated;"
     echo "  keeping the frozen suite red. Isolation evidence: $iso_evidence"
   fi
 fi
