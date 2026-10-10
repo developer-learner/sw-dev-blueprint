@@ -70,6 +70,10 @@ TOKENS=(
   "swap to non-thinking"                     # D-209: Rule 1 is an admission test, not a model ban
   "must be non-thinking"                     # D-209: same, rule wording
   "not failed for five consecutive"          # D-209: silence is not a retirement signal
+  "./scripts/bootstrap.sh"                   # D-218: stage F retired the copy-seed bootstrap
+  "--template developer-learner"             # D-218: apps are not created from the GitHub template
+  "scripts/update-template.sh --"            # D-218: no template pulls; bump the .swbp pin
+  "scripts/link-template.sh --"              # D-218: no linked children
 )
 
 # CLAUDE.md embeds the correction log (historical table rows, verbatim).
@@ -83,9 +87,9 @@ for doc in "${DOCS[@]}"; do
   [ -f "$ROOT/$doc" ] || continue
   for tok in "${TOKENS[@]}"; do
     if [ "$doc" = "CLAUDE.md" ]; then
-      hits=$(grep -inE "$tok" "$ROOT/$doc" | claude_filter || true)
+      hits=$(grep -inE -e "$tok" "$ROOT/$doc" | claude_filter || true)
     else
-      hits=$(grep -inE "$tok" "$ROOT/$doc" || true)
+      hits=$(grep -inE -e "$tok" "$ROOT/$doc" || true)
     fi
     if [ -n "$hits" ]; then
       [ "$found" -eq 0 ] && {

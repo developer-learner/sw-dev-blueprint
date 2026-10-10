@@ -8,12 +8,9 @@
 # are how silent drift happened last time.
 set -euo pipefail
 
-# Portable SHA-256 (D-152 class): this is the repair command the drift guard
-# tells the operator to run — it must work wherever the guard does, including
-# a stock macOS host. Output format matches sha256sum ("<hash>  <path>").
-# Inline copy — selftest fixtures copy scripts by bytes, so keep this
-# in sync with the helpers in manifest-drift-guard.sh, check-drift.sh,
-# update-template.sh (sync-pinned by selftest_gates.py).
+# Portable SHA-256 (D-152 class): this is the repair command the manifest
+# gate tells the operator to run — it must work on a stock macOS host too.
+# Output format matches sha256sum ("<hash>  <path>").
 sha256_line() {
   local hex
   if command -v sha256sum >/dev/null 2>&1; then

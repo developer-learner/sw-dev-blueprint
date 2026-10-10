@@ -49,8 +49,7 @@ Testing:      pytest
 ├── tasks/                # EM write lane (plan.json) + session notes + backlog
 │   └── CURRENT.md        # session notes — active work, halt notes (the PRD lives in scripts/.approved/)
 ├── scripts/
-│   ├── bootstrap.sh / new-project.sh
-│   │                         # one-time setup (core.hooksPath, .template-version stamp); template-owned, kept after setup (manifest gate fails on a missing file)
+│   ├── swbp / new-project.sh # run a pipeline step against an app; create a builder-targeted app (D-186)
 │   ├── orchestrate.sh        # shell-driven task-DAG conductor (owns ALL procedure)
 │   ├── llm-call.sh           # ONE bare HTTP completion per call, no harness (D-53)
 │   ├── phase-gate.sh         # lane + integrity gate (INV-2, frozen spec; portable sha256)
@@ -68,9 +67,8 @@ Testing:      pytest
 │   │                         # contract slicing/merging + shared artifact helpers
 │   ├── completion-ledger.py / flake-ledger.py / metrics-report.py
 │   │                         # durable cross-run bookkeeping (.measurement/, D-108/D-111/D-126)
-│   ├── update-template.sh / link-template.sh / check-drift.sh / regen-manifest.sh /
-│   │   manifest-drift-guard.sh / doc-consistency.sh
-│   │                         # fleet sync + doc guards (D-33/D-34/D-115 class)
+│   ├── regen-manifest.sh / doc-consistency.sh
+│   │                         # builder manifest repair + doc guard (the fleet-sync scripts retired at stage F, D-218)
 │   ├── tpm-pack.sh / tpm-unpack.sh / tpm-view.sh / tpm-agent.sh (+ *-settings.json)
 │   │                         # TPM shuttle: verbatim relay, scoped agent (D-49/D-139)
 │   ├── teardown.sh / status.sh / em-bench.sh / feature-summary.py

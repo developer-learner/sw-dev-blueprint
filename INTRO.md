@@ -170,11 +170,11 @@ physical barrier at every place it could cause damage.
 
 A few things run at the template level, between or outside milestones:
 
-**Pulling improvements from the blueprint.** The blueprint itself keeps
-getting new gates and fixes. `check-drift.sh` tells you how far behind
-you are. `update-template.sh` pulls them in — with a plain-language summary
-you approve before anything changes. Your project files are never touched;
-only template-owned files update.
+**Picking up improvements from the blueprint.** The blueprint keeps getting
+new gates and fixes, but your project never holds a copy of it: each project
+names the blueprint version it runs on in a one-line `.swbp` file, and every
+step runs from exactly that version. To pick up improvements, move that pin
+forward between milestones; nothing is copied and nothing can drift.
 
 **Housekeeping.** `status.sh` gives you a read-only view (VM state, LM Studio
 port, container count, disk usage) — good end-of-day check. `teardown.sh`
@@ -184,8 +184,8 @@ Neither runs automatically — the design treats a warm VM and loaded model as
 
 **The template protects itself.** Critical files are hashed. If you or an AI
 edit one, the next commit is blocked until you consciously regenerate the
-hash list. The blueprint's own test suite runs in CI so a broken template
-never reaches your project via `update-template.sh`.
+hash list. The blueprint's own test suite runs before every push and in CI,
+so a broken blueprint version is never published for a project to pin.
 
 Nothing is on a timer. Every template action is human-triggered — the design
 assumes you want to *choose* when the ground under you moves.

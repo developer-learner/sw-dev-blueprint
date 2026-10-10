@@ -197,7 +197,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-85**: A red CI stops the line — pre-flight consumes the external verdict, INCONCLUSIVE when it cannot, `SWBP_SKIP_CI_CHECK=1` to override
 - **D-25**: INV-3 — decision-traceability gate (retired 2026-07-22, see D-25 amendment; keeping this section current is now a PM-review discipline)
 - **D-33**: Fleet drift — birth-SHA identity, ownership-split manifests
-- **D-34/D-35**: Fleet propagation — copied children use `update-template.sh`; linked children delegate to `link-template.sh` and execute one commit-pinned Blueprint plane
+- **D-34/D-35**: Fleet propagation — copied children used `update-template.sh`; linked children delegated to `link-template.sh` (both retired at stage F, D-218: apps pin `.swbp` and run from the builder)
 - **D-101**: Template removals contribute to the approval hash and apply atomically
 - **D-36**: Gate-script self-tests (`scripts/selftest/`)
 - **D-106**: The unconditional selftest CI job lints all template-owned Python under `scripts/`
@@ -211,6 +211,8 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-193**: Every `[template-update ...]` commit records the `Template-Diff-SHA:` trailer binding the applied bytes to the reviewed diff. (Its approval-only default was reversed by D-194.)
 - **D-194**: Template updates apply automatically again (D-96); `--require-approval` is the opt-in stop, and a supplied `--approve` hash is verified before any mutation in every branch, ref-advance-only included.
 - **D-205**: The dev VM mounts no host project writable (only the builder, read-only). Runs work on VM-disk clones made by `scripts/vm-sync start`; their commits return only through `vm-sync land`, which `scripts/vm_land.py` checks (base from the host's own record, linear history, no symlink/submodule/`.git`/ignored paths, host branch unmoved, no dirty touched files) before the host changes. Supersedes D-196's four-project mount.
+- **D-218**: Stage F — the copy/link sync layer is retired; every app runs only through `scripts/swbp` from a snapshot of its `.swbp` pin.
+- **D-217**: The coder's edit-mode output budget defaults to 20480 tokens (CEO directive).
 - **D-216**: The coder's message puts the existing file first and the brief + reply rules last (`coder_prompt`); instructions-first made the coder lose the task behind a large file.
 - **D-215**: In the milestone verdict, a dependent (unmapped) test's skip is not a failure; a mapped test's skip still is.
 - **D-214**: Pipeline pytest calls pin `--rootdir=.` (repo-relative node-ids under any app config); a failed first freeze rolls back cleanly.

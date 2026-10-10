@@ -48,24 +48,17 @@ die() { echo "FAIL: $*" >&2; exit 1; }
 PLANE_DIR=""
 
 # --- D-168: pinned-plane immutable snapshot (BEGIN extract markers) ----------
-# Ruling 2026-08-22: pinned ref = authority · immutable snapshot = execution ·
-# drift alarm = telemetry.
-#   * Authority is the CHILD's .template-version ref=<sha>, never the blueprint
-#     working tree that symlinks happen to point at this hour.
-#   * Before any project mutation, that exact commit is materialized once into
-#     a content-addressed snapshot under $XDG_CACHE_HOME/swbp-plane/<sha> and
-#     this script re-execs from the snapshot with CWD still = project root.
-#   * Every helper invoked during the run resolves inside the snapshot
-#     ($PLANE_DIR); the run's git commits gate through the SNAPSHOT's hooks
-#     via a process-scoped core.hooksPath override — the child's live
-#     symlinked plane is untouched and keeps serving interactive/human work.
-#   * Resume re-materializes (or reuses) the SAME recorded sha; adopting a
-#     newer plane mid-milestone is a hard stop.
-#   * Blueprint movement during the run is an informational drift record under
-#     .measurement/, eligible for adoption at the next explicit update-template.
+# Ruling 2026-08-22: pinned ref = authority · immutable snapshot = execution.
+# Since stage F (D-218) the ONLY entry is the builder: `swbp orchestrate --app
+# <app>` resolves the app's `.swbp` pin, materializes that exact commit into a
+# content-addressed snapshot ($XDG_CACHE_HOME/swbp-plane/<sha>), records the
+# sha (the mid-milestone adoption guard lives in swbp), and execs this script
+# from the snapshot with SWBP_PLANE_SNAPSHOT set and cwd = the app. Every
+# helper resolves inside the snapshot ($PLANE_DIR). The hosted / linked-child
+# entry (.template-version pin, installed-plane verification) was retired with
+# the sync layer: a direct launch is refused, never guessed at.
 _plane_self() {       # absolute path of this script, POSIX-only symlink walk
-  # (no `readlink -f`: absent on stock macOS < 13, and the guard must run
-  # wherever the child repo lives)
+  # (no `readlink -f`: absent on stock macOS < 13)
   local t="$1" link
   while [ -L "$t" ]; do
     link="$(readlink "$t")"
@@ -76,152 +69,12 @@ _plane_self() {       # absolute path of this script, POSIX-only symlink walk
   done
   printf '%s\n' "$(cd "$(dirname "$t")" && pwd -P)/$(basename "$t")"
 }
-_plane_hash_file() {  # portable SHA-256 for the installed-plane fallback
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | cut -d' ' -f1
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | cut -d' ' -f1
-  else
-    die "no sha256sum or shasum found — cannot verify the installed plane"
-  fi
-}
-_plane_publish() { # _plane_publish <stage> <root> — D-201 atomic publication
-  # A snapshot is published by ONE rename of a complete, stamped stage dir;
-  # a published root is never deleted or rewritten. A launcher that loses the
-  # rename waits for the winner's stamp and discards its own stage. A root
-  # that stays unstamped past the wait is an abandoned leftover: it is
-  # renamed aside (never deleted in place), then the stage is published.
-  python3 - "$1" "$2" "${SWBP_PLANE_PUBLISH_WAIT:-30}" <<'PYPUBLISH'
-import os
-import shutil
-import sys
-import time
-
-stage, root, wait = sys.argv[1], sys.argv[2], float(sys.argv[3])
-stamp = os.path.join(root, ".swbp-plane-stamped")
-
-
-def rename() -> bool:
-    try:
-        os.rename(stage, root)
-        return True
-    except OSError:
-        return False
-
-
-if rename():
-    sys.exit(0)
-deadline = time.time() + wait
-while not os.path.exists(stamp) and time.time() < deadline:
-    time.sleep(0.2)
-if not os.path.exists(stamp):
-    aside = f"{root}.stale.{os.getpid()}"
-    try:
-        os.rename(root, aside)
-    except OSError:
-        pass
-    if rename():
-        shutil.rmtree(aside, ignore_errors=True)
-        sys.exit(0)
-    if not os.path.exists(stamp):
-        sys.exit(f"cannot publish plane snapshot at {root}")
-shutil.rmtree(stage, ignore_errors=True)
-PYPUBLISH
-}
-_plane_snapshot_from_installed() { # normal update-template child: copied files
-  local root="$1" manifest="scripts/.manifest-template"
-  local stage expected path extra actual
-  [ -f "$manifest" ] || die "$manifest missing — cannot verify copied plane at pinned ref"
-  stage="${root}.tmp.$$"
-  rm -rf "$stage"
-  mkdir -p "$stage"
-  while read -r expected path extra; do
-    [ -n "$expected" ] || continue
-    [ -n "$path" ] && [ -z "${extra:-}" ] \
-      || die "malformed installed-plane manifest row: $expected ${path:-} ${extra:-}"
-    case "$path" in
-      /*|../*|*/../*|*/..|..)
-        die "unsafe installed-plane manifest path: $path" ;;
-    esac
-    [ -f "$path" ] || die "installed plane file missing: $path"
-    actual="$(_plane_hash_file "$path")"
-    [ "$actual" = "$expected" ] \
-      || die "installed plane drift: $path (run scripts/update-template.sh)"
-    mkdir -p "$stage/$(dirname "$path")"
-    cp -pL "$path" "$stage/$path"
-  done < "$manifest"
-  mkdir -p "$stage/scripts"
-  cp -p "$manifest" "$stage/scripts/.manifest-template"
-  : > "$stage/.swbp-plane-stamped"
-  _plane_publish "$stage" "$root" || die "could not publish the plane snapshot at $root"
-}
-plane_entry_guard() { # runs BEFORE first mutation; execs or falls through
+plane_entry_guard() { # runs BEFORE first mutation
   if [ -n "${SWBP_PLANE_SNAPSHOT:-}" ]; then
     PLANE_DIR="$(cd "$(dirname "$(_plane_self "${BASH_SOURCE[0]}")")/.." && pwd -P)"
     return 0
   fi
-  local pin repo project_repo head root prev stage repo_has_pin=0
-  # Locate the blueprint repository this script was reached through (children
-  # reach it via symlink; direct checkouts reach themselves).
-  repo="$(git -C "$(dirname "$(_plane_self "${BASH_SOURCE[0]}")")" rev-parse --show-toplevel 2>/dev/null || true)"
-  [ -n "$repo" ] || die "cannot locate the blueprint repository from ${BASH_SOURCE[0]}"
-  project_repo="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-  [ -f .template-version ] || die ".template-version missing — no pinned plane authority (D-33/D-168)"
-  pin="$(grep '^ref=' .template-version | cut -d= -f2 | tr -d '[:space:]')"
-  [ -n "$pin" ] || die ".template-version has no ref= — stamp it via scripts/update-template.sh --stamp (D-168 authority)"
-  git -C "$repo" cat-file -e "$pin^{commit}" 2>/dev/null && repo_has_pin=1
-  if [ "$repo_has_pin" != "1" ] && [ "$repo" != "$project_repo" ]; then
-    die "pinned plane ref $pin not present in $repo — fetch or adopt a newer plane via scripts/update-template.sh"
-  fi
-  # Materialize once, content-addressed by the sha: identical bytes on resume,
-  # immune to concurrent adoptions, trivially evictable.
-  root="${XDG_CACHE_HOME:-$HOME/.cache}/swbp-plane/$pin"
-  if [ ! -f "$root/.swbp-plane-stamped" ]; then
-    if [ "$repo_has_pin" = "1" ]; then
-      stage="${root}.tmp.$$"
-      rm -rf "$stage"
-      mkdir -p "$stage"
-      git -C "$repo" archive "$pin" | tar -x -C "$stage"
-      : > "$stage/.swbp-plane-stamped"
-      _plane_publish "$stage" "$root" || die "could not publish the plane snapshot at $root"
-    else
-      # update-template installs ordinary files, not symlinks or blueprint git
-      # objects. Their template manifest is the byte-level authority available
-      # offline in a normal child; verify every entry before snapshotting it.
-      _plane_snapshot_from_installed "$root"
-    fi
-  fi
-  mkdir -p .pipeline-state .measurement
-  local prev; prev="$(cat .pipeline-state/plane-sha 2>/dev/null || true)"
-  # A recorded plane differing from the pin is a violation ONLY while a
-  # milestone is actually in progress (task state present). After a completed
-  # milestone or a clean adoption the record is stale, and the new pin is
-  # adopted below — blocking on the stale record alone would wedge the FIRST
-  # run after every adoption (D-168 live-fire, 2026-08-23).
-  if [ -n "$prev" ] && [ "$prev" != "$pin" ] \
-     && [ -n "$(ls -A .pipeline-state/tasks 2>/dev/null || true)" ]; then
-    die "mid-milestone plane adoption forbidden (D-168): state recorded $prev, .template-version now pins $pin — finish the milestone on $prev, adopt afterwards"
-  fi
-  echo "$pin" > .pipeline-state/plane-sha
-  # Telemetry only: blueprint moved past the pin (or pin predates HEAD).
-  head=""
-  [ "$repo_has_pin" = "1" ] && head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
-  if [ -n "$head" ] && [ "$head" != "$pin" ]; then
-    printf 'pinned=%s head=%s at=%s\n' "$pin" "$head" "$(date -u +%FT%TZ)" \
-      >> .measurement/plane-drift.log
-  fi
-  if [ -n "${SWBP_PLANE_DRYRUN:-}" ]; then
-    PLANE_DIR="$root"
-    printf 'DRYRUN exec: SWBP_PLANE_SNAPSHOT=%s SWBP_PLANE_SHA=%s bash %s/scripts/orchestrate.sh %s\n' \
-      "$root" "$pin" "$root" "$*"
-    # EXIT, not return: a launch-proof must stop here, never fall through
-    # into real preflight/work with model calls.
-    exit 0
-  fi
-  exec env SWBP_PLANE_SNAPSHOT="$root" SWBP_PLANE_SHA="$pin" \
-    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath \
-    GIT_CONFIG_VALUE_0="$root/.githooks" \
-    bash "$root/scripts/orchestrate.sh" "$@"
+  die "orchestrate runs only through the builder: <blueprint>/scripts/swbp orchestrate --app <app> (D-186; the hosted/linked-child entry was retired at stage F, D-218)"
 }
 plane_entry_guard "$@"
 # --- D-168 END ---------------------------------------------------------------
@@ -799,7 +652,7 @@ except Exception:
 if not runs:
     print("NONE|no CI runs on this branch yet"); sys.exit(0)
 # gh returns newest first; keep the newest run of EACH workflow. Checking only
-# the single newest run would let a green sibling workflow (check-drift) mask a
+# the single newest run would let a green sibling workflow (swbp-guard) mask a
 # red CI, which is exactly the blackout this decision exists to prevent.
 latest = {}
 for r in runs:
@@ -893,8 +746,8 @@ python3 -c "import json, hashlib" 2>/dev/null || die "python3 json/hashlib requi
 if [ "${SANDBOX:-1}" != "1" ]; then
   die "SANDBOX must be 1 (test/smoke execution runs untrusted generated code — containerization is mandatory, AC9)"
 fi
-# The interactive/human commit path is only gated if bootstrap.sh ran. The
-# testchat M4 run proved this can be silently absent for an entire project
+# The run's commits are only gated if core.hooksPath points at the plane's
+# hooks (swbp sets it for the run and for the app). The testchat M4 run proved this can be silently absent for an entire project
 # lifetime — a conductor hand-committed src/ changes with no gate firing.
 # Fail closed here, same as the manifest check below.
 # Under a D-168 plane snapshot the re-exec points core.hooksPath at the
@@ -904,7 +757,7 @@ fi
 # never caught it (DRYRUN exits before the re-exec).
 _hp="$(git config core.hooksPath || true)"
 { [ "$_hp" = ".githooks" ] || [ "$_hp" = "${SWBP_PLANE_SNAPSHOT:-}/.githooks" ]; } \
-  || die "core.hooksPath is not '.githooks' — run scripts/bootstrap.sh first (the pre-commit lane gate is mandatory, not optional)"
+  || die "core.hooksPath does not point at the plane's hooks — launch through scripts/swbp, which sets it (the pre-commit lane gate is mandatory, not optional)"
 # The orchestrator's own [plan]/[task] commits guard on
 # `git status --porcelain` — "nothing to commit" is skipped as a normal
 # no-change case, but a real commit failure (missing git identity, a hook

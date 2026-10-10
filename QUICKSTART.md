@@ -21,7 +21,7 @@
 | Podman | `podman info` | the frozen suite runs sandboxed (`--network none`, repo read-only); there is no unsandboxed fallback (D-30) |
 | ruff | `ruff --version` | the freeze gate lints staged tests and fails closed without it (D-67) |
 | A local LLM server | `curl -sf http://localhost:1234/v1/models` | LM Studio, llama.cpp server, vLLM — anything OpenAI-compatible. Port 1234 assumed below; override with `SANDBOX_LLM_PORT` |
-| `gh` CLI (optional) | `gh auth status` | only used to stamp the template birth SHA; bootstrap warns and continues without it |
+| `gh` CLI (optional) | `gh auth status` | only used for the pre-run CI health check (D-85); without it the check reports inconclusive and the run proceeds |
 
 The model matters more than the server: a **~27B-class dense model with
 32K context** is the proven floor here — smaller or heavily-MoE models failed
@@ -44,60 +44,21 @@ load another model before going on.
 
 ## Step 1 — create a project
 
-```bash
-git clone https://github.com/developer-learner/sw-dev-blueprint myproj
-cd myproj
-./scripts/bootstrap.sh myproj
-```
-
-Bootstrap fills the project-name placeholder, builds the venv, enables the
-pre-commit gate (`core.hooksPath=.githooks`), stamps `.template-version`, and
-**arms the placeholder gate (D-160)**: from here a commit fails closed while any
-unfilled bracketed placeholder token survives. So fill the rest first — the
-bracketed tokens in `CLAUDE.md` / `README.md` / `docs/` (contact names, tech
-stack, the one-paragraph description), per BLUEPRINT.md Steps 6–7 — then commit:
-
-```bash
-git add -A && git commit -m "chore: instantiate myproj from sw-dev-blueprint"
-```
-
-The pre-commit hook runs the placeholder gate and, if any token survives, prints
-the exact file and line to fix — that is the authoritative check, so don't
-hand-roll a grep to pre-check (a naive one flags the intentional tokens the gate
-excludes: the correction log, handoffs, task templates). The commit also matters
-because the orchestrator refuses a dirty tree (pre-flight, fail-closed).
-
-(The durable path for real projects is GitHub's "Use this template" — see
-README "Starting a new project". Not needed today.)
-
-**Builder-targeted (recommended, D-186):** the app carries no control plane
-at all — the builder runs against it:
+With the blueprint checked out locally, create the app next to it:
 
 ```bash
 cd sw-dev-blueprint
-./scripts/new-project.sh --targeted myproj
-./scripts/swbp refreeze --app ../myproj -- scripts/.approved/incoming
-./scripts/swbp orchestrate --app ../myproj
+./scripts/new-project.sh myproj
 ```
 
 `../myproj` gets product scaffolding, its own CI plus the `swbp-guard`
-workflow, and a `.swbp` pin to this checkout's HEAD — no scripts, hooks, or
-manifests. Every pipeline step is `scripts/swbp <step> --app <path>`.
-
-**Born-linked (legacy, D-183 — superseded by D-186):** if the blueprint is checked out next
-door, skip the clone-and-copy entirely — create the child already linked:
-
-```bash
-cd sw-dev-blueprint
-./scripts/new-project.sh --linked myproj
-```
-
-This seeds `../myproj` with the child-owned files only, then links every
-plane file (scripts, hooks, prompts, root docs) as a symlink into this
-checkout and pins `.template-version` to its HEAD. The child's plane can
-only change through this checkout's own commits — there is no copy to
-drift. Use the clone flow above only on machines without a local blueprint
-checkout.
+workflow, a `.swbp` pin to this checkout's HEAD, and one seed commit made
+through the provenance broker — no scripts, hooks, or manifests (D-186). Fill
+the bracketed placeholders in its `CLAUDE.md` / `README.md` (project
+description, stack, contacts) and commit them with
+`./scripts/swbp commit --app ../myproj -- "docs: fill project details" -A`.
+Every pipeline step is `./scripts/swbp <step> --app ../myproj`; the builder
+version changes only when you edit `.swbp` between milestones.
 
 ## Step 2 — map the model seats
 
@@ -118,10 +79,15 @@ The orchestrator resolves the endpoint here before its reachability probe;
 an explicitly exported host or port overrides the corresponding file value
 for that run (D-180).
 
+All commands from here run in the blueprint checkout (`cd sw-dev-blueprint`)
+and target the app with `--app ../myproj`. On macOS, run Steps 3, 5 and 6
+inside the Linux dev VM through `scripts/vm-sync` (the orchestrator refuses
+Darwin, D-152 — see `docs/DEV-VM-SETUP.md`).
+
 ## Step 3 — pre-warm the sandbox (one-time, ~10 min)
 
 ```bash
-scripts/sandbox-run.sh -- true
+(cd ../myproj && ../sw-dev-blueprint/scripts/sandbox-run.sh -- true)
 ```
 
 Builds the container image the frozen tests run in. Do it now so the freeze
@@ -130,11 +96,12 @@ and the build don't eat the image build inside their own timeouts.
 ## Step 4 — stage the example spec
 
 ```bash
-mkdir -p scripts/.approved/incoming/tests
+IN=../myproj/scripts/.approved/incoming
+mkdir -p $IN/tests
 cp examples/minimal-spec/PRD.md examples/minimal-spec/ERD.md \
-   examples/minimal-spec/contracts.json scripts/.approved/incoming/
-cp examples/minimal-spec/tests/storage_tests.py scripts/.approved/incoming/tests/test_storage.py
-cp examples/minimal-spec/tests/api_tests.py     scripts/.approved/incoming/tests/test_api.py
+   examples/minimal-spec/contracts.json $IN/
+cp examples/minimal-spec/tests/storage_tests.py $IN/tests/test_storage.py
+cp examples/minimal-spec/tests/api_tests.py     $IN/tests/test_api.py
 ```
 
 These four artifacts — PRD, ERD, contracts, frozen tests — are what the TPM
@@ -144,19 +111,19 @@ are pre-written; `examples/minimal-spec/README.md` explains each one.
 ## Step 5 — freeze it
 
 ```bash
-scripts/refreeze.sh
+./scripts/swbp refreeze --app ../myproj -- scripts/.approved/incoming
 ```
 
 The mechanical preflights ARE the verdict (D-121) — once every gate is green
 the freeze auto-applies and commits itself (`refreeze vN` message tag); use
-`scripts/refreeze.sh --diff` for a read-only preview first. The spec is now
+`./scripts/swbp refreeze --app ../myproj -- --diff scripts/.approved/incoming` for a read-only preview first. The spec is now
 version-stamped and hash-pinned under `scripts/.approved/` + `tests/` —
 from here on, no agent can change what "done" means.
 
 ## Step 6 — build it
 
 ```bash
-scripts/orchestrate.sh
+./scripts/swbp orchestrate --app ../myproj
 ```
 
 What you'll watch: pre-flight (including an LLM round-trip smoke test) → the
@@ -174,7 +141,7 @@ The green suite is the proof, but the app is real: serve it with
 
 | Symptom | Meaning | Move |
 |---------|---------|------|
-| pre-flight: no LLM reachable | server down or wrong port | start it, or `SANDBOX_LLM_PORT=8000 scripts/orchestrate.sh` |
+| pre-flight: no LLM reachable | server down or wrong port | start it, or `SANDBOX_LLM_PORT=8000 ./scripts/swbp orchestrate --app ../myproj` |
 | empty smoke reply / JSON parse errors | the seat returns reasoning but no content | Rule 1 — run `scripts/seat-check.sh`; fix the profile or seat another model |
 | pre-flight: working tree not clean | uncommitted changes | commit or stash, re-run |
 | hard halt: role has no model mapping | models.env missing or typo'd | Step 2 — the id must match `/v1/models` exactly |
@@ -202,9 +169,10 @@ Go deeper strictly on demand:
   filled); this walkthrough project skipped that because it is throwaway.
 - **The first time a run exits 2:** read `docs/ESCALATION.md` — the failure
   ladder and the TPM bundle round-trip. Not before.
-- **Several projects from this template:** now the fleet tools matter —
-  `scripts/check-drift.sh` and `scripts/update-template.sh` (BLUEPRINT.md
-  "Staying Current with the Template").
+- **Several projects:** each app pins its own builder version in `.swbp`.
+  Adopt a newer builder by changing that ref between milestones
+  (`./scripts/swbp commit --app <app> -- "<subject>" .swbp`); there is
+  nothing to copy or sync (D-186, stage F D-218).
 - **Why it is built this way:** `docs/DECISIONS.md` — 80+ dated decisions,
   each traceable to a failure. Read entries as you hit their subject, not
   front to back.

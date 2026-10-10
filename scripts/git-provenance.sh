@@ -9,7 +9,7 @@
 #
 # Sourced, not executed:
 #     source "$PLANE_DIR/scripts/git-provenance.sh"   # orchestrate.sh (D-168 snapshot)
-#     source scripts/git-provenance.sh                # refreeze/update-template/link/bootstrap
+#     source "$ROOT/scripts/git-provenance.sh"        # refreeze, swbp commit
 #
 # Identity model (author/committer separation):
 #   author    = who produced the content
@@ -34,8 +34,8 @@
 #   Swbp-Run:             the run id (stable across resumes; see
 #                         swbp_run_id), or "n/a" for human/tpm commits
 #   Swbp-Task:            task id — [task] commits only (SWBP_PROV_TASK)
-#   Swbp-Plane:           $SWBP_PLANE_SHA (D-168) when set, else the child's
-#                         pinned .template-version ref, else "n/a"
+#   Swbp-Plane:           $SWBP_PLANE_SHA (D-168) when set, else the app's
+#                         pinned .swbp ref, else "n/a"
 #   Swbp-Prompt-SHA256 /  sha256 of the archived prompt/reply bytes, present
 #   Swbp-Reply-SHA256:    only when SWBP_PROV_PROMPT_FILE /
 #                         SWBP_PROV_REPLY_FILE point at existing files
@@ -168,9 +168,6 @@ swbp_commit() {
   esac
 
   local plane="${SWBP_PLANE_SHA:-}"
-  if [ -z "$plane" ] && [ -f .template-version ]; then
-    plane="$(sed -n 's/^ref=//p' .template-version 2>/dev/null | head -1)"
-  fi
   if [ -z "$plane" ] && [ -f .swbp ]; then  # D-186 builder-targeted app
     plane="$(sed -n 's/^ref=//p' .swbp 2>/dev/null | head -1)"
   fi
@@ -258,9 +255,8 @@ Swbp-Call-Id: $SWBP_PROV_CALL_ID"
     trailers="$trailers
 Swbp-Evidence-Schema: 1"
   fi
-  # Caller-supplied trailers (D-193: update-template.sh records the
-  # Template-Diff-SHA it bound the apply to). Newline-separated; empty by
-  # default so every other call site is untouched.
+  # Caller-supplied trailers (D-193 introduced them for the retired template
+  # updater). Newline-separated; empty by default.
   if [ -n "${SWBP_EXTRA_TRAILERS:-}" ]; then
     trailers="$trailers
 $SWBP_EXTRA_TRAILERS"

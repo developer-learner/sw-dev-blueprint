@@ -52,7 +52,8 @@ sw-dev-blueprint/
 ├── .opencode/
 │   └── prompts/               # EM/coder system prompts — read directly by llm-call.sh
 ├── scripts/
-│   ├── bootstrap.sh           # One-time project setup script
+│   ├── swbp                   # Runs a pipeline step against an app (D-186)
+│   ├── new-project.sh         # Creates a builder-targeted app
 │   ├── phase-gate.sh          # INV-2 boundary enforcement
 │   ├── llm-call.sh            # ONE bare HTTP completion per call — no harness (D-53)
 │   └── orchestrate.sh         # Code-driven build→test loop conductor
@@ -92,36 +93,24 @@ contracts, 21 tests) that this pipeline built into a working API.
 Give an agent this repo's URL and your project name — the agent does the rest.
 See **BLUEPRINT.md → Bootstrap Sequence** for the full agent-driven flow.
 
-**If you prefer the one-time terminal path:**
-1. Create from template on GitHub UI ("Use this template")
-2. Clone locally
-3. Run `./scripts/bootstrap.sh <your-project-name>`
+**From a terminal**, with this repo checked out locally:
 
 ```bash
-gh repo create my-new-project --template developer-learner/sw-dev-blueprint --private
-cd my-new-project
-./scripts/bootstrap.sh my-new-project
+cd sw-dev-blueprint
+./scripts/new-project.sh myproj          # creates ../myproj, pinned to this checkout
+./scripts/swbp refreeze --app ../myproj -- scripts/.approved/incoming
+./scripts/swbp orchestrate --app ../myproj
 ```
 
-**Builder-targeted apps (D-186, the default for new work):** with this repo
-checked out locally, `./scripts/new-project.sh --targeted <name>` creates an
-app that carries no control plane; every pipeline step then runs from here as
-`./scripts/swbp <step> --app ../<name>`. See QUICKSTART.
-
-Legacy: existing local children can still link one shared, version-pinned
-Blueprint control plane instead of owning copied scripts:
-
-```bash
-bash /path/to/sw-dev-blueprint/scripts/link-template.sh \
-  --from /path/to/sw-dev-blueprint --dry-run
-```
-
-Apply the printed plan by rerunning without `--dry-run` (or bind review with
-`--approve <PLAN-SHA>`). The child keeps its product code, frozen spec/tests,
-project configuration, tasks, and evidence. Template-owned paths become
-relative links; the drift workflow remains a real file so GitHub can bootstrap
-the pinned Blueprint checkout in CI. Later `scripts/update-template.sh` calls
-automatically preserve linked mode.
+Every app is **builder-targeted** (D-186): it carries no control plane — no
+scripts, hooks, prompts or manifests — only its product code, frozen spec and
+tests, its own CI plus the `swbp-guard` workflow, and a `.swbp` file pinning
+the builder version. Every pipeline step runs from this checkout as
+`./scripts/swbp <step> --app <path>`. To adopt a newer builder, change the
+`.swbp` ref between milestones (`swbp commit --app <app> -- "<subject>" .swbp`);
+the pipeline refuses a version change mid-milestone (D-168). The older
+copy/link model (`bootstrap.sh`, `update-template.sh`, `link-template.sh`,
+`check-drift.sh`) was retired at stage F (D-218).
 
 ---
 

@@ -34,7 +34,8 @@ you ←── stuck? conductor reports; TPM reads BATCH.md ───┘
 Tell the conductor: "instantiate a project called X from the
 sw-dev-blueprint template and adapt the stack per Rule 3." It runs
 `scripts/new-project.sh` (which pre-flights whatever model you've loaded in
-LM Studio — no specific model required, D-41) and `scripts/bootstrap.sh`.
+LM Studio — no specific model required, D-41) and creates the project next to
+the blueprint, pinned to it — the project holds no pipeline code (D-186).
 
 ## Each milestone
 

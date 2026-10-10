@@ -4,7 +4,7 @@
 #   scripts/swbp <cmd> --app <path> [--ref <sha>] [-- <cmd args>...]
 #
 # The app carries no control plane. swbp resolves a builder ref (default: the
-# app's pin — `.swbp` ref=, else a linked child's `.template-version` ref=),
+# app's pin — `.swbp` ref=),
 # materializes that exact commit into the same content-addressed snapshot
 # D-168 uses ($XDG_CACHE_HOME/swbp-plane/<sha>), and execs the snapshot's
 # script with cwd = the app. Authority is the pinned ref, never this
@@ -61,10 +61,7 @@ top="$(git -C "$APP" rev-parse --show-toplevel 2>/dev/null || true)"
 pin_of() {  # ref= from a pin file, or empty
   [ -f "$1" ] && sed -n 's/^ref=//p' "$1" | head -1 | tr -d '[:space:]' || true
 }
-if [ -z "$REF" ]; then
-  REF="$(pin_of "$APP/.swbp")"
-  [ -n "$REF" ] || REF="$(pin_of "$APP/.template-version")"
-fi
+[ -n "$REF" ] || REF="$(pin_of "$APP/.swbp")"
 [ -n "$REF" ] || die "no builder ref: pass --ref or pin one in $APP/.swbp (ref=<sha>)"
 SHA="$(git -C "$BUILDER" rev-parse --verify --quiet "$REF^{commit}" || true)"
 [ -n "$SHA" ] || die "builder ref $REF not present in $BUILDER — fetch it first"

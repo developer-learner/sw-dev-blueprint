@@ -16,7 +16,7 @@
 # hook materializes the pushed SHA into a throwaway detached worktree and runs
 # the suite THERE; the working tree's state never decides a publication.
 #
-# Enabled by: git config core.hooksPath .githooks   (bootstrap.sh does this).
+# Enabled by: core.hooksPath (the builder checkout: .githooks; an app: swbp sets it).
 # Scope: only pushes that update the protected ref are gated; feature-branch
 # and non-release pushes pass through untouched. Deliberate operator override
 # is `git push --no-verify` — never the pipeline's path, self-documenting when
@@ -75,11 +75,7 @@ PARENT="$(mktemp -d "${TMPDIR:-/tmp}/release-gate.XXXXXX")" || {
   exit 1
 }
 TMPTREE="$PARENT/tree"
-LINKED_PLANE=""
 cleanup() {
-  if [ -n "$LINKED_PLANE" ] && [ -n "$HOOK_REPO" ]; then
-    git -C "$HOOK_REPO" worktree remove --force "$LINKED_PLANE" >/dev/null 2>&1
-  fi
   git -C "$PUSH_REPO" worktree remove --force "$TMPTREE" >/dev/null 2>&1
   rm -rf "$PARENT"
 }
@@ -118,40 +114,6 @@ if [ -f "$TMPTREE/.swbp" ]; then
   fi
   echo "release-gate: REFUSED — app checks failed at $PUSH_SHA. Fix them, or override deliberately with 'git push --no-verify'." >&2
   exit 1
-fi
-
-# A linked child deliberately commits relative symlinks rather than copied
-# plane files. The isolated child checkout therefore needs a sibling checkout
-# of the exact pinned Blueprint commit before its suite can run. Refuse unsafe
-# or malformed link metadata instead of silently testing some other plane.
-if [ -f "$TMPTREE/.template-link" ]; then
-  link_mode="$(sed -n 's/^mode=//p' "$TMPTREE/.template-link")"
-  link_source="$(sed -n 's/^source=//p' "$TMPTREE/.template-link")"
-  link_pin="$(sed -n 's/^ref=//p' "$TMPTREE/.template-version")"
-  if [ "$link_mode" != "linked" ] || [ -z "$link_source" ] || [ -z "$link_pin" ] || [ -z "$HOOK_REPO" ]; then
-    echo "release-gate: REFUSED — linked-template metadata or Blueprint source repository is unavailable." >&2
-    exit 1
-  fi
-  LINKED_PLANE="$(python3 - "$PARENT" "$TMPTREE" "$link_source" <<'PY'
-import os
-import sys
-
-parent = os.path.abspath(sys.argv[1])
-tree = os.path.abspath(sys.argv[2])
-source = sys.argv[3]
-candidate = os.path.abspath(os.path.join(tree, source))
-if os.path.commonpath((parent, candidate)) != parent or candidate == tree:
-    raise SystemExit(1)
-print(candidate)
-PY
-)" || {
-    echo "release-gate: REFUSED — linked-template source must resolve inside the isolated verification workspace." >&2
-    exit 1
-  }
-  if ! git -C "$HOOK_REPO" worktree add --detach -q "$LINKED_PLANE" "$link_pin" >/dev/null 2>&1; then
-    echo "release-gate: REFUSED — could not materialize pinned Blueprint commit $link_pin for linked-child verification." >&2
-    exit 1
-  fi
 fi
 
 if ( cd "$TMPTREE" && eval "$SUITE_CMD" ) >&2; then

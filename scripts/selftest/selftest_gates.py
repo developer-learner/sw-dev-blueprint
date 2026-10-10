@@ -3351,18 +3351,16 @@ def test_phase_gate_shasum_only_tamper_still_detected(frozen_repo):
 
 
 # --- portable hash across the maintenance scripts (D-152 family) -------------
-# phase-gate.sh is the enforcement point, but its surrounding manifest
-# workflow runs wherever a commit happens: manifest-drift-guard.sh (pre-commit
-# advisory), regen-manifest.sh (the repair command the guard prints),
-# check-drift.sh (CI + manual), update-template.sh (template maintenance).
-# Each carries an inline copy of the portable helper — selftest fixtures copy
+# phase-gate.sh is the enforcement point and regen-manifest.sh the repair
+# command it points at; both run wherever a commit happens (the sync-layer
+# copies went with stage F, D-218). Each carries an inline copy of the
+# portable helper — selftest fixtures copy
 # scripts by BYTES, so no shared lib — which makes silent divergence possible;
 # these tests pin both directions: every copy keeps both branches, and the
 # regen/repair path produces identical output under shasum-only PATH.
 
 _PORTABLE_HASH_SCRIPTS = [
-    "phase-gate.sh", "manifest-drift-guard.sh", "regen-manifest.sh",
-    "check-drift.sh", "update-template.sh",
+    "phase-gate.sh", "regen-manifest.sh",
 ]
 
 
@@ -3399,34 +3397,6 @@ def test_regen_manifest_shasum_only_output_matches_gnu(tmp_path):
     assert manifest.read_text().strip() == expected
 
 
-def test_manifest_drift_guard_shasum_only_still_warns(tmp_path):
-    """The pre-commit advisory must detect staged-without-repin under the
-    shasum-only environment and still print the exact repair command."""
-    repo = tmp_path
-    (repo / "scripts").mkdir()
-    tracked = repo / "control.txt"
-    tracked.write_text("v1\n")
-    real = hashlib.sha256(tracked.read_bytes()).hexdigest()
-    manifest = repo / "scripts" / ".manifest-project"
-    manifest.write_text(f"{real}  control.txt\n")
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
-    # Stage a change WITHOUT re-pinning: exactly the advisory's trigger.
-    tracked.write_text("v2\n")
-    subprocess.run(["git", "add", "control.txt"], cwd=repo, check=True)
-    stub = _stubbin(repo, ["bash", "git", "cut", "shasum"])
-    env = os.environ.copy()
-    env["PATH"] = str(stub)
-    r = subprocess.run(
-        ["bash", str(SCRIPTS / "manifest-drift-guard.sh"), "--root", str(repo)],
-        cwd=repo, capture_output=True, text=True, env=env,
-    )
-    assert r.returncode == 0  # warning-only, always
-    assert "STAGED change to control.txt" in r.stderr
-    assert "scripts/regen-manifest.sh scripts/.manifest-project" in r.stderr
 
 
 # --- placeholder-completeness gate (D-160) ---------------------------------
@@ -6671,7 +6641,7 @@ def test_ci_red_halts_the_run(tmp_path):
 
 def test_ci_red_not_masked_by_newer_green_sibling_workflow(tmp_path):
     """gh returns newest-first across ALL workflows. Checking only the single
-    newest run would let a green check-drift (which runs on every push and
+    newest run would let a green sibling workflow (which runs on every push and
     finishes in ~8s) mask a red CI — precisely the blackout D-85 exists to
     prevent. The newest run of EACH workflow is what counts."""
     r = run_drive_ci(tmp_path, runs=[
@@ -8757,7 +8727,7 @@ def test_spec_artifact_policy_is_shared_by_all_shuttle_boundaries():
 def test_onboarding_prints_the_model_override_names_llm_call_reads():
     """Onboarding must teach SWBP_<ROLE>_MODEL, not the transposed names
     that llm-call ignores."""
-    for name in ("bootstrap.sh", "new-project.sh"):
+    for name in ("new-project.sh",):
         source = (SCRIPTS / name).read_text()
         assert "SWBP_EM_MODEL" in source
         assert "SWBP_CODER_MODEL" in source
@@ -8765,18 +8735,6 @@ def test_onboarding_prints_the_model_override_names_llm_call_reads():
         assert "SWBP_MODEL_CODER" not in source
 
 
-def test_bootstrap_scopes_vm_git_trust_and_requires_identity():
-    """A shared Lima checkout may trip Git's dubious-ownership guard.
-
-    Bootstrap may trust the explicitly selected checkout, but never all repos;
-    it must also halt rather than inventing commit authorship for the guest.
-    """
-    source = (SCRIPTS / "bootstrap.sh").read_text()
-    assert 'git config --global --add safe.directory "$root"' in source
-    assert "safe.directory '*'" not in source
-    assert 'git config user.name' in source
-    assert 'git config user.email' in source
-    assert "Git identity is missing" in source
 
 
 # --- Group 2 oracle gaps (2b-ext survivors): drive the unexercised branches ---
@@ -8943,61 +8901,6 @@ def test_orchestrate_preflight_endpoint_defaults_without_models_env(tmp_path):
     assert r.stdout == "localhost\n1234\n"
 
 
-def test_group2_bootstrap_trusts_exact_checkout_on_dubious_ownership(tmp_path):
-    """bootstrap.sh must respond to Git's dubious-ownership refusal by trusting
-    the EXACT canonical checkout path (`--add safe.directory $root`), never a
-    wildcard or a mangled path, then proceed once Git accepts the repo. A
-    PATH-stubbed `git` simulates the refusal on first probe and records every
-    invocation so the trusted argument is observable."""
-    fakebin = tmp_path / "fakebin"
-    fakebin.mkdir()
-    git_log = tmp_path / "git-log.txt"
-    git_stub = fakebin / "git"
-    git_stub.write_text(
-        "#!/usr/bin/env bash\n"
-        'LOG="${GIT_LOG:?}"\n'
-        'printf \'%s\\n\' "$*" >> "$LOG"\n'
-        'case "$*" in\n'
-        '  *"status --porcelain"*)\n'
-        '    [ "$(grep -c "status --porcelain" "$LOG")" -le 1 ] && {\n'
-        "      echo \"fatal: detected dubious ownership in repository at '$PWD'\" >&2\n"
-        "      exit 128\n"
-        "    }\n"
-        "# Trust only takes hold if the EXACT checkout path was added to\n"
-        "# safe.directory — a mangled path leaves the repository refused.\n"
-        '    grep -Fxq "config --global --add safe.directory $(pwd -P)" "$LOG" || {\n'
-        "      echo \"fatal: detected dubious ownership in repository at '$PWD'\" >&2\n"
-        "      exit 128\n"
-        "    }\n"
-        "    exit 0 ;;\n"
-        '  "config user.name") echo "Fixture User" ; exit 0 ;;\n'
-        '  "config user.email") echo "fixture@example.invalid" ; exit 0 ;;\n'
-        "esac\n"
-        "exit 0\n",
-    )
-    git_stub.chmod(0o755)
-
-    repo = tmp_path / "checkout"
-    (repo / ".git").mkdir(parents=True)
-    harness = tmp_path / "harness.sh"
-    harness.write_text(
-        "set -euo pipefail\n"
-        + _extract_shell_function(SCRIPTS / "bootstrap.sh",
-                                  "ensure_git_worktree_ready")
-        + "\nensure_git_worktree_ready\necho TRUST-OK\n"
-    )
-    env = dict(os.environ)
-    env["PATH"] = f"{fakebin}:{env['PATH']}"
-    env["GIT_LOG"] = str(git_log)
-    r = subprocess.run(["bash", str(harness)], cwd=repo, env=env,
-                       capture_output=True, text=True)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "TRUST-OK" in r.stdout, r.stdout
-    assert "Trusted this checkout" in r.stdout, r.stdout
-    root = subprocess.run(["pwd -P"], cwd=repo, shell=True,
-                          capture_output=True, text=True).stdout.strip()
-    logged = git_log.read_text().splitlines()
-    assert f"config --global --add safe.directory {root}" in logged, logged
 
 
 class _LlmCallServer:
@@ -9096,75 +8999,8 @@ def test_group2_llm_call_seat_mismatch_fails_closed(tmp_path):
     assert match.stdout.strip() == "OK", match.stdout
 
 
-def test_update_template_rejects_wrong_approval_hash_accepts_correct(
-        template_pull_pair):
-    """The --approve gate binds the apply to the DIFF-SHA printed by the
-    preview: a wrong hash must die with 'approval hash mismatch' applying
-    nothing; the exact previewed hash must apply for real. Drives both
-    directions of the comparison."""
-    child, clone = template_pull_pair
-    dry = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
-                   "--from", str(clone)], child)
-    assert dry.returncode == 0, (dry.stdout, dry.stderr)
-    match = re.search(r"DIFF-SHA: ([0-9a-f]{64})", dry.stdout)
-    assert match, dry.stdout
-
-    def _last_commit_subject():
-        return subprocess.run(
-            ["git", "log", "-1", "--format=%s"],
-            cwd=child, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-
-    before = _last_commit_subject()
-    wrong = _run_ut(["bash", "scripts/update-template.sh",
-                     "--approve", "0" * 64, "--from", str(clone)], child)
-    assert wrong.returncode != 0, (wrong.stdout, wrong.stderr)
-    assert "approval hash mismatch" in wrong.stderr, wrong.stderr
-    assert _last_commit_subject() == before, \
-        "a rejected approval hash must commit nothing"
-
-    right = _run_ut(["bash", "scripts/update-template.sh",
-                     "--approve", match.group(1), "--from", str(clone)], child)
-    assert right.returncode == 0, (right.stdout, right.stderr)
-    assert "new-content" in (child / "scripts" / "hello.sh").read_text()
 
 
-def test_group2_check_drift_reports_in_sync(tmp_path):
-    """check-drift.sh must classify a template-owned file whose child bytes
-    equal template@HEAD bytes as IN_SYNC (exit 0). The 2b-ext survivor
-    inverted the comparison (`=` -> `!=`), which would flag an in-sync file as
-    drifted. Drives the IN_SYNC branch with a real (child, clone) pair."""
-    child = tmp_path / "child"
-    clone = tmp_path / "clone"
-    (child / "scripts").mkdir(parents=True)
-    (clone / "scripts").mkdir(parents=True)
-    hello = "#!/bin/sh\necho new-content\n"
-    # Clone: file + manifest, committed (HEAD = birth ref).
-    (clone / "scripts" / "hello.sh").write_text(hello)
-    (clone / "scripts" / "hello.sh").chmod(0o755)
-    h = subprocess.run(["sha256sum", "scripts/hello.sh"], cwd=clone,
-                       capture_output=True, text=True, check=True).stdout.split()[0]
-    (clone / "scripts" / ".manifest-template").write_text(f"{h}  scripts/hello.sh\n")
-    _init_git(clone)
-    clone_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone,
-                                capture_output=True, text=True, check=True).stdout.strip()
-    # Child: SAME file bytes as clone HEAD (IN_SYNC) + manifest + .template-version.
-    (child / "scripts" / "hello.sh").write_text(hello)
-    (child / "scripts" / "hello.sh").chmod(0o755)
-    (child / "scripts" / ".manifest-template").write_text(f"{h}  scripts/hello.sh\n")
-    (child / ".template-version").write_text(f"repo=fake/template\nref={clone_head}\n")
-    # check-drift.sh runs from its own location, so copy it into the child.
-    cd_sh = child / "scripts" / "check-drift.sh"
-    cd_sh.write_bytes((SCRIPTS / "check-drift.sh").read_bytes())
-    cd_sh.chmod(0o755)
-    r = subprocess.run(["bash", "scripts/check-drift.sh", str(clone)],
-                       cwd=child, capture_output=True, text=True)
-    # Original: all IN_SYNC (per-file lines suppressed) -> exit 0, "in sync".
-    # Mutant (inverted `=`): the in-sync file is misread as BEHIND -> exit 2,
-    # "BEHIND" printed. Both the exit code and the message distinguish them.
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "in sync with template@" in r.stdout, r.stdout
-    assert "BEHIND" not in r.stdout, r.stdout
 
 
 def test_group2_sandbox_run_refuses_dotgit_rw(tmp_path):
@@ -9358,539 +9194,6 @@ def test_plan_trivial_one_file_zero_em_calls(tmp_path):
         "tests/test_b.py::test_three"}
 
 
-# --- update-template.sh D-193 approval-required default (D-96 auto -> --auto) ---
-# D-96 made the pull auto-apply on pre-diff green, on the assumption that the
-# template repo is trustworthy ("the human already authorized the change
-# upstream"). The security-plan threat model removes that assumption: a
-# compromised template commit flows into every child on the next update, and
-# the child's own gates are part of what is being replaced. D-193 makes the
-# default print-and-stop (approval required), keeps --approve hash-bound
-# (D-61), keeps --interactive, and moves the D-96 auto-apply behind --auto.
-# Every [template-update ...] commit records the Template-Diff-SHA trailer.
-
-
-def _run_ut(cmd, cwd):
-    """Subprocess wrapper for update-template tests — plain capture, no env."""
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-
-
-@pytest.fixture()
-def template_pull_pair(tmp_path):
-    """A minimal (child repo, template clone) pair with a real diff.
-
-    Template clone ships scripts/hello.sh with "new" content and a
-    scripts/.manifest-template pinning it. Child ships hello.sh with "old"
-    content, a matching .manifest-template pinning the OLD hash, an empty
-    .manifest-project (regen-manifest tolerates zero entries), a
-    .template-version pointing at a fake ref (CLAIMS falls back cleanly on
-    a base ref not in the clone), and the three scripts the pull needs:
-    update-template.sh, regen-manifest.sh, phase-gate.sh. Post-apply,
-    phase-gate.sh manifest HEAD passes because hello.sh matches its
-    newly-installed template manifest hash and .manifest-project is empty."""
-    child = tmp_path / "child"
-    clone = tmp_path / "clone"
-    (child / "scripts").mkdir(parents=True)
-    (clone / "scripts").mkdir(parents=True)
-
-    # Template clone: one committed version of hello.sh + a manifest pinning it.
-    hello_new = "#!/bin/sh\necho new-content\n"
-    (clone / "scripts" / "hello.sh").write_text(hello_new)
-    (clone / "scripts" / "hello.sh").chmod(0o755)
-    new_hash = subprocess.run(
-        ["sha256sum", "scripts/hello.sh"],
-        cwd=clone, capture_output=True, text=True, check=True,
-    ).stdout.split()[0]
-    (clone / "scripts" / ".manifest-template").write_text(
-        f"{new_hash}  scripts/hello.sh\n")
-    _init_git(clone)
-
-    # Child: old content + template manifest pinning the OLD hash. This diff
-    # is what update-template.sh will detect and offer to apply.
-    hello_old = "#!/bin/sh\necho old-content\n"
-    (child / "scripts" / "hello.sh").write_text(hello_old)
-    (child / "scripts" / "hello.sh").chmod(0o755)
-    old_hash = subprocess.run(
-        ["sha256sum", "scripts/hello.sh"],
-        cwd=child, capture_output=True, text=True, check=True,
-    ).stdout.split()[0]
-    (child / "scripts" / ".manifest-template").write_text(
-        f"{old_hash}  scripts/hello.sh\n")
-    (child / "scripts" / ".manifest-project").write_text("")
-
-    (child / ".template-version").write_text(
-        "repo=fake/template\n"
-        "ref=0000000000000000000000000000000000000000\n"
-    )
-
-    for name in ("git-provenance.sh", "update-template.sh", "regen-manifest.sh",
-                 "phase-gate.sh"):
-        target = child / "scripts" / name
-        target.write_bytes((SCRIPTS / name).read_bytes())
-        target.chmod(0o755)
-
-    _init_git(child)
-    subprocess.run(["git", "config", "user.email", "t@t"],
-                   cwd=child, check=True)
-    subprocess.run(["git", "config", "user.name", "t"],
-                   cwd=child, check=True)
-    return child, clone
-
-
-def test_update_template_default_applies_without_terminal(template_pull_pair):
-    """D-194: no mode flag, no tty — the pull applies (the D-96 default,
-    restored) and prints the audit line. Verifies the [template-update ...]
-    commit lands (real apply, not a dry-run degrade) and phase-gate
-    integrity holds post-apply."""
-    child, clone = template_pull_pair
-    r = _run_ut(["bash", "scripts/update-template.sh",
-                 "--from", str(clone)], child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "auto-approved (D-96)" in r.stdout, r.stdout
-    # The rubber-stamp prompt must not print in the default auto mode.
-    assert "Apply this template update?" not in r.stdout, r.stdout
-    # A real commit landed — not a dry-run degrade.
-    log = subprocess.run(
-        ["git", "log", "-1", "--format=%s"],
-        cwd=child, capture_output=True, text=True, check=True,
-    )
-    assert log.stdout.strip().startswith("[template-update "), log.stdout
-    # And the file actually changed to the template's content.
-    assert "new-content" in (child / "scripts" / "hello.sh").read_text()
-
-
-def test_update_template_require_approval_prints_and_stops(template_pull_pair):
-    """D-194: --require-approval (the D-193 default, now opt-in) — the pull
-    must NOT apply. The diff, claims, and DIFF-SHA print; the exact
-    --approve command is shown; no commit lands and the child's file is
-    untouched."""
-    child, clone = template_pull_pair
-    before = subprocess.run(
-        ["git", "log", "-1", "--format=%H"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    r = _run_ut(["bash", "scripts/update-template.sh", "--require-approval",
-                 "--from", str(clone)], child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "approval required" in r.stdout, r.stdout
-    assert "--approve" in r.stdout, r.stdout
-    assert "DIFF-SHA" in r.stdout, r.stdout
-    # Nothing applied: no new commit, file still old content.
-    after = subprocess.run(
-        ["git", "log", "-1", "--format=%H"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert before == after, "--require-approval must not commit"
-    assert "old-content" in (child / "scripts" / "hello.sh").read_text()
-
-
-def test_update_template_wrong_approve_refuses_ref_only(template_pull_pair):
-    """D-194: in the ref-advance-only case (content + manifest already
-    match, only the recorded ref is stale) a wrong --approve hash must die
-    before ANY mutation: .template-version unchanged, HEAD unchanged.
-    Before the fix the ref-only branch ran BEFORE the approval gate, so a
-    wrong hash still advanced the ref and committed."""
-    child, clone = template_pull_pair
-    # Sync content AND manifest to the template so only the ref differs.
-    (child / "scripts" / "hello.sh").write_bytes(
-        (clone / "scripts" / "hello.sh").read_bytes())
-    (child / "scripts" / ".manifest-template").write_text(
-        (clone / "scripts" / ".manifest-template").read_text())
-    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
-    subprocess.run(
-        ["git", "commit", "-qm", "fixture: content matches, ref stale"],
-        cwd=child, check=True)
-    before_version = (child / ".template-version").read_text()
-    before_head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    r = _run_ut(["bash", "scripts/update-template.sh",
-                 "--approve", "0" * 64, "--from", str(clone)], child)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    assert "approval hash mismatch" in r.stderr, r.stderr
-    assert (child / ".template-version").read_text() == before_version, \
-        "a rejected approval hash must not advance the ref"
-    after_head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert after_head == before_head, \
-        "a rejected approval hash must commit nothing"
-
-
-def test_update_template_wrong_approve_refuses_manifest_only(template_pull_pair):
-    """D-194: in the manifest-verbatim case (content matches, only the
-    template's file list changed) a wrong --approve hash must die before
-    ANY mutation: the child manifest unchanged, HEAD unchanged. Guards the
-    hash check's position in the manifest-verbatim branch (the gate was
-    already above it; this pins that it stays there)."""
-    child, clone = template_pull_pair
-    (child / "scripts" / "hello.sh").write_bytes(
-        (clone / "scripts" / "hello.sh").read_bytes())
-    (child / "scripts" / ".manifest-template").write_text(
-        "0" * 64 + "  scripts/hello.sh\n")
-    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
-    subprocess.run(
-        ["git", "commit", "-qm", "fixture: content matches, manifest stale"],
-        cwd=child, check=True)
-    before_manifest = (child / "scripts" / ".manifest-template").read_text()
-    before_head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    r = _run_ut(["bash", "scripts/update-template.sh",
-                 "--approve", "0" * 64, "--from", str(clone)], child)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    assert "approval hash mismatch" in r.stderr, r.stderr
-    assert (child / "scripts" / ".manifest-template").read_text() == \
-        before_manifest, "a rejected approval hash must not install the manifest"
-    after_head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert after_head == before_head, \
-        "a rejected approval hash must commit nothing"
-
-
-def _stage_unrelated(child):
-    (child / "notes.txt").write_text("unrelated work in progress\n")
-    subprocess.run(["git", "add", "notes.txt"], cwd=child, check=True)
-
-
-def _head(child):
-    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=child,
-                          capture_output=True, text=True, check=True).stdout.strip()
-
-
-def _staged(child):
-    return subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=child,
-                          capture_output=True, text=True, check=True).stdout.split()
-
-
-def test_update_template_refuses_with_unrelated_staged_changes(template_pull_pair):
-    """D-198: the updater commits through swbp_commit, which commits the whole
-    index — an unrelated staged file would ride into the [template-update]
-    commit. Refuse before any mutation; leave the staged file staged."""
-    child, clone = template_pull_pair
-    _stage_unrelated(child)
-    before = _head(child)
-    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    assert "notes.txt" in r.stderr, r.stderr
-    assert _head(child) == before, "nothing may be committed"
-    assert _staged(child) == ["notes.txt"], "the staged file must stay staged, alone"
-    assert "old-content" in (child / "scripts" / "hello.sh").read_text()
-
-
-def test_update_template_ref_only_refuses_with_unrelated_staged_changes(template_pull_pair):
-    """D-198: the ref-advance-only branch commits too, so the same refusal
-    applies there."""
-    child, clone = template_pull_pair
-    (child / "scripts" / "hello.sh").write_bytes(
-        (clone / "scripts" / "hello.sh").read_bytes())
-    (child / "scripts" / ".manifest-template").write_text(
-        (clone / "scripts" / ".manifest-template").read_text())
-    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
-    subprocess.run(["git", "commit", "-qm", "fixture: ref stale only"],
-                   cwd=child, check=True)
-    before_version = (child / ".template-version").read_text()
-    _stage_unrelated(child)
-    before = _head(child)
-    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    assert _head(child) == before
-    assert (child / ".template-version").read_text() == before_version
-    assert _staged(child) == ["notes.txt"]
-
-
-def test_update_template_dry_run_works_with_staged_changes(template_pull_pair):
-    """D-198: read-only modes are unaffected by a dirty index."""
-    child, clone = template_pull_pair
-    _stage_unrelated(child)
-    r = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
-                 "--from", str(clone)], child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "DIFF-SHA" in r.stdout
-    assert _staged(child) == ["notes.txt"]
-
-
-def _clone_add_file(clone, rel, content, mode=0o644):
-    """Commit a file into the template clone and re-pin its manifest."""
-    path = clone / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    path.chmod(mode)
-    lines = []
-    for f in sorted({*(ln.split(None, 1)[1].strip() for ln in
-                       (clone / "scripts" / ".manifest-template").read_text().splitlines()
-                       if ln.strip()), rel}):
-        h = subprocess.run(["sha256sum", f], cwd=clone, capture_output=True,
-                           text=True, check=True).stdout.split()[0]
-        lines.append(f"{h}  {f}")
-    (clone / "scripts" / ".manifest-template").write_text("\n".join(lines) + "\n")
-    subprocess.run(["git", "add", "-A"], cwd=clone, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit",
-                    "-qm", f"add {rel}"], cwd=clone, check=True)
-
-
-def _diff_sha(child, clone):
-    r = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
-                 "--from", str(clone)], child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    line = [ln for ln in r.stdout.splitlines() if ln.startswith("DIFF-SHA:")]
-    assert line, r.stdout
-    return line[0].split()[1]
-
-
-def test_update_template_hidden_tail_of_new_file_changes_diff_sha(template_pull_pair):
-    """D-199: a new file is DISPLAYED abbreviated, but a change anywhere in it
-    must change the DIFF-SHA the approval binds to."""
-    child, clone = template_pull_pair
-    body = [f"echo line-{i}" for i in range(120)]
-    _clone_add_file(clone, "scripts/big.sh", "\n".join(body) + "\n")
-    first = _diff_sha(child, clone)
-    body[89] = "echo CHANGED-line-89"
-    _clone_add_file(clone, "scripts/big.sh", "\n".join(body) + "\n")
-    assert _diff_sha(child, clone) != first
-
-
-def test_update_template_large_new_file_reviews_cleanly(template_pull_pair):
-    """D-199: a large new file must not kill the review with a SIGPIPE from
-    an abbreviated display (`git show | head` under pipefail)."""
-    child, clone = template_pull_pair
-    _clone_add_file(clone, "scripts/huge.txt", ("x" * 99 + "\n") * 3000)
-    r = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
-                 "--from", str(clone)], child)
-    assert r.returncode == 0, (r.stdout[-400:], r.stderr[-400:])
-    assert "DIFF-SHA:" in r.stdout
-    assert "more lines not shown" in r.stdout
-
-
-def test_update_template_exec_bit_change_is_a_change(template_pull_pair):
-    """D-199: a template-side exec-bit flip with identical bytes is a real
-    change: it shows in the diff, changes the DIFF-SHA, and is applied."""
-    child, clone = template_pull_pair
-    (child / "scripts" / "hello.sh").write_bytes(
-        (clone / "scripts" / "hello.sh").read_bytes())
-    (child / "scripts" / "hello.sh").chmod(0o644)
-    (child / "scripts" / ".manifest-template").write_text(
-        (clone / "scripts" / ".manifest-template").read_text())
-    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
-    subprocess.run(["git", "commit", "-qm", "fixture: same bytes, not executable"],
-                   cwd=child, check=True)
-    r = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
-                 "--from", str(clone)], child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "scripts/hello.sh" in r.stdout and "DIFF-SHA:" in r.stdout, r.stdout
-    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert os.access(child / "scripts" / "hello.sh", os.X_OK)
-
-
-def _pin_manifest_entry(clone, entry):
-    """Append a raw manifest entry to the template clone (no file needed)."""
-    m = clone / "scripts" / ".manifest-template"
-    m.write_text(m.read_text() + "0" * 64 + "  " + entry + "\n")
-    subprocess.run(["git", "add", "-A"], cwd=clone, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit",
-                    "-qm", f"pin {entry}"], cwd=clone, check=True)
-
-
-@pytest.mark.parametrize("entry", [
-    "../escape.sh", "/tmp/swbp-abs-escape.sh", "scripts/../../escape.sh",
-    ".git/hooks/pre-commit", "scripts//double.sh",
-])
-def test_update_template_refuses_unsafe_template_paths(template_pull_pair, entry):
-    """D-200: the template manifest decides where the updater writes; an
-    unsafe entry is refused before anything is diffed or written."""
-    child, clone = template_pull_pair
-    _pin_manifest_entry(clone, entry)
-    before = _head(child)
-    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    assert "unsafe template path" in r.stderr, r.stderr
-    assert _head(child) == before
-    assert "old-content" in (child / "scripts" / "hello.sh").read_text()
-    assert not (child.parent / "escape.sh").exists()
-    assert not Path("/tmp/swbp-abs-escape.sh").exists()
-
-
-def test_update_template_refuses_write_through_symlinked_dir(template_pull_pair, tmp_path):
-    """D-200: a template file whose destination parent is a symlink in the
-    child must not be written through the link to a directory outside it."""
-    child, clone = template_pull_pair
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (child / "ext").symlink_to(outside)
-    subprocess.run(["git", "add", "ext"], cwd=child, check=True)
-    subprocess.run(["git", "commit", "-qm", "fixture: symlinked dir"], cwd=child, check=True)
-    _clone_add_file(clone, "ext/evil.sh", "echo evil\n")
-    before = _head(child)
-    r = _run_ut(["bash", "scripts/update-template.sh", "--from", str(clone)], child)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    assert "unsafe template path" in r.stderr, r.stderr
-    assert not (outside / "evil.sh").exists(), "wrote through the symlink"
-    assert _head(child) == before
-
-
-def test_update_template_commit_records_diff_sha_trailer(template_pull_pair):
-    """D-193: the [template-update ...] commit must carry a
-    Template-Diff-SHA: trailer equal to the DIFF-SHA the approval bound to —
-    the byte-binding lives in history, not just on the console."""
-    child, clone = template_pull_pair
-    dry = _run_ut(["bash", "scripts/update-template.sh", "--dry-run",
-                   "--from", str(clone)], child)
-    assert dry.returncode == 0, dry.stdout
-    match = re.search(r"DIFF-SHA: ([0-9a-f]{64})", dry.stdout)
-    assert match, dry.stdout
-    r = _run_ut(["bash", "scripts/update-template.sh",
-                 "--approve", match.group(1), "--from", str(clone)], child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    full = subprocess.run(
-        ["git", "log", "-1", "--format=%B"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout
-    assert f"Template-Diff-SHA: {match.group(1)}" in full, full
-
-
-def test_update_template_interactive_flag_requires_terminal(template_pull_pair):
-    """--interactive is the opt-in eyeball path — under subprocess (no tty)
-    it must die with a message pointing back to the D-96 auto default,
-    D-61 hash-bound apply, or --review. Preserves the escape hatch without
-    silently degrading to auto when the operator asked for interactive."""
-    child, clone = template_pull_pair
-    r = _run_ut(
-        ["bash", "scripts/update-template.sh", "--interactive",
-         "--from", str(clone)],
-        child,
-    )
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    combined = r.stdout + r.stderr
-    assert "--interactive" in combined, combined
-    assert "D-96" in combined, combined
-    # No accidental apply.
-    log = subprocess.run(
-        ["git", "log", "-1", "--format=%s"],
-        cwd=child, capture_output=True, text=True, check=True,
-    )
-    assert not log.stdout.strip().startswith("[template-update "), log.stdout
-
-
-def test_update_template_applies_removal_only_update(template_pull_pair):
-    """A file retired from the upstream template must be deleted, staged, and
-    committed even when every still-listed file already matches upstream."""
-    child, clone = template_pull_pair
-    template_hello = (clone / "scripts" / "hello.sh").read_bytes()
-    (child / "scripts" / "hello.sh").write_bytes(template_hello)
-    hello_hash = subprocess.run(
-        ["sha256sum", "scripts/hello.sh"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.split()[0]
-    obsolete = child / "scripts" / "obsolete.sh"
-    obsolete.write_text("#!/bin/sh\necho obsolete\n")
-    obsolete.chmod(0o755)
-    obsolete_hash = subprocess.run(
-        ["sha256sum", "scripts/obsolete.sh"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.split()[0]
-    (child / "scripts" / ".manifest-template").write_text(
-        f"{hello_hash}  scripts/hello.sh\n"
-        f"{obsolete_hash}  scripts/obsolete.sh\n"
-    )
-    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
-    subprocess.run(
-        ["git", "commit", "-qm", "fixture: add obsolete template file"],
-        cwd=child, check=True,
-    )
-
-    r = _run_ut(
-        ["bash", "scripts/update-template.sh", "--from", str(clone)],
-        child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "scripts/obsolete.sh" in r.stdout
-    assert not obsolete.exists()
-    assert "scripts/obsolete.sh" not in \
-        (child / "scripts" / ".manifest-template").read_text()
-    tracked = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "scripts/obsolete.sh"],
-        cwd=child, capture_output=True, text=True,
-    )
-    assert tracked.returncode != 0, tracked.stdout
-    subject = subprocess.run(
-        ["git", "log", "-1", "--format=%s"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert subject.startswith("[template-update "), subject
-
-
-def test_update_template_manifest_only_drift(template_pull_pair):
-    """A template-side manifest change with NO content changes must not be
-    swallowed by the 'ref advance only' shortcut: the manifest IS the file-
-    list contract (D-34), so a re-pinned/edited .manifest-template must be
-    installed verbatim and committed as '(manifest verbatim)'. Before the
-    fix, MANIFEST_DRIFT was invisible — the update reported 'already
-    matches' and the child kept the stale file list forever."""
-    child, clone = template_pull_pair
-    template_hello = (clone / "scripts" / "hello.sh").read_bytes()
-    (child / "scripts" / "hello.sh").write_bytes(template_hello)
-    subprocess.run(
-        ["sha256sum", "scripts/hello.sh"], cwd=child,
-        capture_output=True, text=True, check=True,
-    )
-    (child / "scripts" / ".manifest-template").write_text(
-        "0" * 64 + "  scripts/hello.sh\n")
-    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
-    subprocess.run(
-        ["git", "commit", "-qm", "fixture: content matches, manifest stale"],
-        cwd=child, check=True,
-    )
-
-    r = _run_ut(
-        ["bash", "scripts/update-template.sh", "--from", str(clone)],
-        child)
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert repr(r.stdout).find("(manifest verbatim)") != -1, r.stdout
-    template_manifest = (clone / "scripts" / ".manifest-template").read_text()
-    assert (child / "scripts" / ".manifest-template").read_text() == \
-        template_manifest
-    subject = subprocess.run(
-        ["git", "log", "-1", "--format=%s"], cwd=child,
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert subject.endswith("(manifest verbatim)"), subject
-    # hello.sh content untouched by a manifest-only pull.
-    assert (child / "scripts" / "hello.sh").read_bytes() == template_hello
-
-
-def test_update_template_dry_run_reports_manifest_drift(template_pull_pair):
-    """--dry-run must surface manifest-only drift and print a DIFF-SHA for
-    the --approve path — an invisible manifest change is an unapprovable
-    one."""
-    child, clone = template_pull_pair
-    template_hello = (clone / "scripts" / "hello.sh").read_bytes()
-    (child / "scripts" / "hello.sh").write_bytes(template_hello)
-    (child / "scripts" / ".manifest-template").write_text(
-        "0" * 64 + "  scripts/hello.sh\n")
-    subprocess.run(["git", "add", "-A"], cwd=child, check=True)
-    subprocess.run(
-        ["git", "commit", "-qm", "fixture: content matches, manifest stale"],
-        cwd=child, check=True,
-    )
-    r = _run_ut(
-        ["bash", "scripts/update-template.sh", "--from", str(clone),
-         "--dry-run"],
-        child,
-    )
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert "scripts/.manifest-template" in r.stdout, r.stdout
-    assert "DIFF-SHA" in r.stdout, r.stdout
-    log = subprocess.run(
-        ["git", "log", "-1", "--format=%s"], cwd=child,
-        capture_output=True, text=True, check=True,
-    )
-    assert not log.stdout.strip().startswith("[template-update "), log.stdout
-
-
 # --- sandbox image build context --------------------------------------------
 
 
@@ -9983,9 +9286,7 @@ def housekeeping_repo(tmp_path):
 def _run_hk(cmd, repo):
     """Housekeeping runner: PATH-shadows the host-global tools with the
     fixture's stubs. Everything else (rm, find, du, df, awk...) resolves
-    normally, so the file-scoped behavior under test is the real thing.
-    (_run_ut inherits the host env on purpose — the update-template tests
-    need real git — so housekeeping gets its own runner.)"""
+    normally, so the file-scoped behavior under test is the real thing."""
     env = dict(os.environ)
     env["PATH"] = f"{repo.parent / 'stubbin'}:{env['PATH']}"
     env["STUB_LOG"] = str(repo.parent / "stub.log")
@@ -10542,70 +9843,12 @@ def test_doc_consistency_skips_historical_correction_rows(tmp_path):
     assert r.stdout.strip() == ""
 
 
-def _drift_repo(tmp_path):
-    """A git repo with both control-plane manifests whose hashes match HEAD."""
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "CONVENTIONS.md").write_text("canonical content\n")
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"],
-        cwd=tmp_path, check=True,
-    )
-    h = subprocess.check_output(
-        ["sha256sum", "CONVENTIONS.md"], cwd=tmp_path, text=True,
-    ).split()[0]
-    (tmp_path / "scripts" / ".manifest-project").write_text(
-        f"{h}  CONVENTIONS.md\n"
-    )
-    (tmp_path / "scripts" / ".manifest-template").write_text(
-        f"{h}  CONVENTIONS.md\n"
-    )
-    return tmp_path
 
 
-def test_manifest_drift_guard_warns_on_staged_control_plane(tmp_path):
-    """Staging a control-plane change without a matching manifest update
-    must warn (exit 0) and print the regen command — the advisories the
-    fail-closed gate can only give AFTER the red commit, if then."""
-    repo = _drift_repo(tmp_path)
-    (repo / "CONVENTIONS.md").write_text("canonical content\n# edited\n")
-    subprocess.run(["git", "add", "CONVENTIONS.md"], cwd=repo, check=True)
-    r = subprocess.run(
-        ["bash", "scripts/manifest-drift-guard.sh", "--root", str(repo)],
-        capture_output=True, text=True,
-    )
-    assert r.returncode == 0
-    assert "STAGED change to CONVENTIONS.md" in r.stderr
-    assert "scripts/regen-manifest.sh scripts/.manifest-project" in r.stderr
-    # template-owned class is checked too — this drift is covered once, one
-    # manifest is enough for the alert; both labels may appear depending on
-    # which manifest names the file (the guard checks both).
-    assert "manifest-drift-guard (" in r.stderr
 
 
-def test_manifest_drift_guard_silent_without_staged_change(tmp_path):
-    """A manifest-clean, unstaged tree stays silent (warning-only: no noise
-    on the happy path)."""
-    repo = _drift_repo(tmp_path)
-    r = subprocess.run(
-        ["bash", str(SCRIPTS / "manifest-drift-guard.sh"), "--root", str(repo)],
-        capture_output=True, text=True,
-    )
-    assert r.returncode == 0
-    assert r.stdout.strip() == ""
-    assert r.stderr.strip() == ""
 
 
-def test_manifest_drift_guard_missing_manifest_is_silent(tmp_path):
-    """No manifest → no comparison possible; exit 0, not a halt (the
-    fail-closed manifest gate owns existence, this scan only de-risks it)."""
-    r = subprocess.run(
-        ["bash", str(SCRIPTS / "manifest-drift-guard.sh"), "--root", str(tmp_path)],
-        capture_output=True, text=True,
-    )
-    assert r.returncode == 0
-    assert r.stdout.strip() == ""
-    assert r.stderr.strip() == ""
 
 
 METRICS_REPORT = SCRIPTS / "metrics-report.py"
@@ -11349,17 +10592,10 @@ def test_oracle_gap_group1_pins_mutated_values():
     separately in tasks/TODO.md §3b.
     Source: docs/research/2026-08-25-d161-gates-ext-mutation-report.md.
     """
-    # new-project.sh — bootstrap pre-check message (mutant dropped "or not executable")
-    src = (SCRIPTS / "new-project.sh").read_text()
-    assert 'die "scripts/bootstrap.sh missing or not executable."' in src
-
     # extract-test-functions.py — leading-comment inclusion (mutant inserted `not`)
     src = (SCRIPTS / "extract-test-functions.py").read_text()
     assert 'and lines[comment_line].lstrip().startswith("#")' in src
 
-    # check-drift.sh — BEHIND must not set rc (mutant appended `; rc=1`)
-    src = (SCRIPTS / "check-drift.sh").read_text()
-    assert "status=BEHIND; behind=1\n" in src
 
     # mutation-pass.sh — baseline keeps PYTHONDONTWRITEBYTECODE=1 (mutant dropped it)
     src = (SCRIPTS / "mutation-pass.sh").read_text()
@@ -11377,14 +10613,6 @@ def test_oracle_gap_group1_pins_mutated_values():
     # metrics-report.py — waste counting (mutant dropped `not`)
     src = (SCRIPTS / "metrics-report.py").read_text()
     assert 'if outcome not in ("ok", "accepted", "valid"):' in src
-
-    # update-template.sh — no-change detection (mutant -z -> -n)
-    # Pin the FULL no-change line, not the bare "[ -z ... ]" test: that test
-    # appears 3x in this file, so a mutant inverting one -z to -n would leave
-    # the other two for a broad substring assert to match (mutant survives).
-    # The whole line is unique, so this pins exactly the mutated line.
-    src = (SCRIPTS / "update-template.sh").read_text()
-    assert 'if [ -z "$CHANGED$REMOVED$MANIFEST_DRIFT" ]; then echo "control plane already matches template@${TARGET:0:12} \u2014 nothing to review"; exit 0; fi' in src
 
     # refreeze_delta.py — D-140 notice condition (mutant dropped `not`)
     src = (SCRIPTS / "refreeze_delta.py").read_text()

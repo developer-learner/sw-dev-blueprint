@@ -21,6 +21,18 @@
 
 ## Decisions
 
+## D-218 — 2026-10-09 — Stage F: the sync layer is retired; apps run only through the builder
+
+**Decision:** Every app is builder-targeted (D-186), so the copy/link era's machinery is removed from the builder: `scripts/link-template.sh`, `update-template.sh`, `check-drift.sh`, `manifest-drift-guard.sh`, `bootstrap.sh`, the `check-drift` workflow, the builder's own `.template-version`, and their selftests. Every code path that served a hosted or linked child goes with them: orchestrate's non-snapshot entry (`.template-version` pin, installed-plane verification, dry-run re-exec) now refuses with "orchestrate runs only through the builder"; phase-gate's `.template-link` structural pass, the pre-push linked-child materialization, CI's "Materialize linked Blueprint" steps and swbp's `.template-version` fallback are gone; the broker's plane trailer falls back to `.swbp` only. `new-project.sh` creates builder-targeted apps only (`--linked` refuses with a pointer; `--targeted` stays accepted). The builder keeps its own integrity manifests (`.manifest-template` / `.manifest-project`, `regen-manifest.sh`, `phase-gate.sh manifest`) — they guard the builder's files, not apps. Permission lists protect `.swbp` where they protected `.template-version`. `doc-consistency.sh` warns on the retired onboarding commands (and now passes tokens with `-e`, so a token may start with `--`).
+
+**Reason:** The precondition (D-186: every app completes a real milestone under `swbp`) is met — Vortex v37/v38/v43, Testchat v128, rich-adoption v1 (2026-10-08). All three apps were checked: no plane symlink, manifest, `.template-link` or `.template-version` remains. Keeping the layer meant maintaining dead modes in the three most-run scripts (orchestrate, phase-gate, pre-push) and the "keep the shared checkout on main" class of incident it existed to manage.
+
+**Evidence:** Full selftest suite green after removal (32 tests for deleted scripts removed; replaced where the behavior moved: direct orchestrate launch refused, snapshot launch passes the guard, provenance plane trailer reads `.swbp` and ignores a stray `.template-version`, new apps' seed commit goes through the broker, onboarding prints the model-seat names). The e2e simulation (D-208) ran the whole pipeline through `swbp` in the dev VM on the stage-F builder.
+
+**Not done by this decision:** central-builder done criterion 4 (flip `swbp-guard` to failing, with signed roles) stays parked with M2b (CEO 2026-10-01: signed roles deferred, buggy-not-hostile). Historical records (DECISIONS, correction log, project-trail, research reports) keep their references verbatim.
+
+**Do not suggest:** reintroducing a copied or linked plane in an app "for offline use" (the snapshot cache already runs offline at the pinned ref); a second update channel besides bumping `.swbp` between milestones.
+
 ## D-217 — 2026-10-09 — The coder's edit-mode output budget defaults to 20480 tokens
 
 **Decision:** `SWBP_CODER_EDIT_MAX_OUTPUT` defaults to 20480 (was 4096). It stays overridable per run.

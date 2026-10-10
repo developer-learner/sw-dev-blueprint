@@ -42,75 +42,16 @@ hash_file() {
   fi
 }
 
-# Official linked-plane mode: template-owned paths must be symlinks into the
-# declared Blueprint checkout, except files GitHub must read before checkout.
-# Hash verification below still pins every resolved byte to the adopted
-# `.manifest-template`; this structural pass prevents a same-byte local copy
-# from silently reintroducing per-child control-plane ownership.
 # D-186: a builder-targeted app (marked by .swbp) hosts no plane — it runs
 # from a content-addressed snapshot of the pinned builder ref, so there is
-# nothing here to link-check or hash. The frozen-spec check below still runs.
+# nothing here to hash. The frozen-spec check below still runs. (The linked-
+# child structural pass went with the sync layer at stage F, D-218.)
 APP_MODE=0
 [ -f .swbp ] && APP_MODE=1
 
-if [ "$APP_MODE" = 0 ] && [ -f .template-link ]; then
-  link_mode="$(grep '^mode=' .template-link | cut -d= -f2-)"
-  link_source="$(grep '^source=' .template-link | cut -d= -f2-)"
-  [ "$link_mode" = "linked" ] && [ -n "$link_source" ] || {
-    echo "GATE FAIL: malformed .template-link"
-    exit 1
-  }
-  case "$link_source" in /*) link_root="$link_source" ;; *) link_root="$(pwd -P)/$link_source" ;; esac
-  [ -d "$link_root/.git" ] || {
-    echo "GATE FAIL: linked Blueprint unavailable at $link_source"
-    exit 1
-  }
-  linked_pin="$(grep '^ref=' .template-version | cut -d= -f2 | tr -d '[:space:]')"
-  # The linked-ref check must query the Blueprint's own object store. In a
-  # hook environment — especially a linked worktree, where git sets GIT_DIR
-  # to the (absolute) worktree gitdir — inherited repo-local git env pins
-  # the repo to the CHILD's store and defeats `git -C`. Clear every GIT_*
-  # variable except GIT_EXEC_PATH (not repo-local) in a subshell so the
-  # gate's own repo context below is untouched.
-  (
-    for _gv in $(env | grep -o '^GIT_[A-Z_]*' | sort -u); do
-      if [ "$_gv" != "GIT_EXEC_PATH" ]; then
-        unset "$_gv"
-      fi
-    done
-    exec git -C "$link_root" cat-file -e "$linked_pin^{commit}"
-  ) 2>/dev/null || {
-    echo "GATE FAIL: linked Blueprint lacks pinned ref $linked_pin"
-    exit 1
-  }
-  while read -r expected_hash path; do
-    [ -n "$expected_hash" ] && [ -n "$path" ] || continue
-    if grep -Fxq "exception=$path" .template-link; then
-      [ -f "$path" ] && [ ! -L "$path" ] || {
-        echo "GATE FAIL: linked-plane exception must be a real child file — $path"
-        exit 1
-      }
-      continue
-    fi
-    [ -L "$path" ] || {
-      echo "GATE FAIL: linked-plane path is not a symlink — $path"
-      exit 1
-    }
-    expected_target="$(python3 - "$link_root/$path" "$(pwd -P)/$(dirname "$path")" <<'PY'
-import os, sys
-print(os.path.relpath(sys.argv[1], sys.argv[2]))
-PY
-)"
-    [ "$(readlink "$path")" = "$expected_target" ] || {
-      echo "GATE FAIL: linked-plane path targets the wrong Blueprint file — $path"
-      exit 1
-    }
-  done < scripts/.manifest-template
-fi
-
 # Control-plane hash check, split by ownership (D-33):
 #   .manifest-template — template-owned logic; drift against the template repo
-#                        is computed over exactly this list (check-drift.sh)
+#                        (the builder's own control plane)
 #   .manifest-project  — per-project adaptations (Rule 3); never drift-checked
 # Both are required and both fail closed.
 for MANIFEST in scripts/.manifest-template scripts/.manifest-project; do
@@ -222,11 +163,10 @@ case "$PHASE" in
   manifest)
     # Integrity checks above are the whole job. Plus the placeholder-
     # completeness gate (D-160): BLUEPRINT.md Step 7 mechanized. Active only
-    # when bootstrap.sh's marker exists — the template repo never runs
-    # bootstrap.sh, so its intentional skeleton rows ([PROJECT_NAME], stack
-    # examples, task templates) cannot trip the gate; a derived repo is on
-    # the enforced side from its first bootstrap, so its first commit cannot
-    # carry an unfilled placeholder. Same command + exclusions as Step 7:
+    # when a `.placeholder-gate` marker exists — written by the retired
+    # copy-seed bootstrap (stage F, D-218); the builder and builder-targeted
+    # apps do not arm it, so seeded skeleton rows cannot trip it. A repo that
+    # carries the marker stays on the enforced side. Same command + exclusions as Step 7:
     # md/json, markdown links filtered, DECISIONS.md/BLUEPRINT.md excluded
     # (intentional bracket content). A bracket directly after an identifier
     # or '.' is code, not a placeholder (`list[DiscoveredModel]`, `x[Key]`) —

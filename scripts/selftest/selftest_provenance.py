@@ -196,16 +196,19 @@ def test_human_role_ambient_author_na_run(tmp_path):
     assert t["Swbp-Run"] == "n/a"
 
 
-def test_plane_falls_back_to_template_version_then_na(tmp_path):
+def test_plane_falls_back_to_the_swbp_pin_then_na(tmp_path):
+    """Stage F (D-218): the app's .swbp pin is the only fallback; a stray
+    retired .template-version is never read."""
     repo = _mkrepo(tmp_path)
-    (repo / ".template-version").write_text("ref=abc123def456\n")
+    (repo / ".swbp").write_text("repo=x/y\nref=abc123def456\n")
+    (repo / ".template-version").write_text("ref=0000deadbeef\n")
     (repo / "f.txt").write_text("x\n")
     r = _run_broker(repo, 'swbp_commit pipeline "[success] spec v1" f.txt\n',
                     env_extra={"SWBP_RUN_ID": "20260901T000000Z-abc123"})
     assert r.returncode == 0, r.stderr
     assert _trailers(repo)["Swbp-Plane"] == "abc123def456"
-    # no .template-version, no SWBP_PLANE_SHA -> "n/a"
-    os.unlink(repo / ".template-version")
+    # no .swbp, no SWBP_PLANE_SHA -> "n/a" (the .template-version is ignored)
+    os.unlink(repo / ".swbp")
     (repo / "f2.txt").write_text("y\n")
     r = _run_broker(repo, 'swbp_commit pipeline "[success] spec v2" f2.txt\n',
                     env_extra={"SWBP_RUN_ID": "20260901T000000Z-abc123"})
@@ -233,9 +236,7 @@ def test_source_shape_all_pipeline_sites_route_through_broker():
     the source shape IS the guarantee."""
     orch = (SCRIPTS / "orchestrate.sh").read_text()
     refreeze = (SCRIPTS / "refreeze.sh").read_text()
-    update = (SCRIPTS / "update-template.sh").read_text()
-    link = (SCRIPTS / "link-template.sh").read_text()
-    bootstrap = (SCRIPTS / "bootstrap.sh").read_text()
+    new_project = (SCRIPTS / "new-project.sh").read_text()
     llm = (SCRIPTS / "llm-call.sh").read_text()
 
     # orchestrate: the three run commit sites
@@ -263,19 +264,10 @@ def test_source_shape_all_pipeline_sites_route_through_broker():
     assert 'git commit -m "[refreeze' not in refreeze
     assert 'source "$PLANE_DIR/scripts/git-provenance.sh"' in refreeze
 
-    # update-template: all four template commit sites
-    assert update.count("swbp_commit human") >= 4
-    assert 'git commit -m "[template' not in update
-    assert "source scripts/git-provenance.sh" in update
-
-    # link-template: the link commit
-    assert 'swbp_commit human "[template-link' in link
-    assert 'git commit -m "[template-link' not in link
-    assert "source scripts/git-provenance.sh" in link
-
-    # bootstrap: the first commit of a greenfield child
-    assert 'swbp_commit human "chore: bootstrap' in bootstrap
-    assert 'git commit -m "chore: bootstrap' not in bootstrap
+    # new-project: a new app's seed commit goes through the broker (swbp
+    # commit); the template-updater/link/bootstrap sites retired at stage F
+    assert '"$blueprint/scripts/swbp" commit --app "$target"' in new_project
+    assert "git commit -m" not in new_project
 
     # llm-call: the meta sidecar exists and is opt-in
     assert "SWBP_LLM_META_OUT" in llm

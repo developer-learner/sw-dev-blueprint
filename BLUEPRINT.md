@@ -90,7 +90,7 @@ The full stack this system runs on. Know every object before operating it.
 | Object | Role |
 |--------|------|
 | **git** | Version control + the LLM's undo button. Every edit is committable; any mistake is `git reset` away. Also: backup, attribution, collaboration. |
-| **GitHub** | The remote. Off-machine backup, host for `gh repo create --template`, and the fleet's drift-check CI (D-33). |
+| **GitHub** | The remote. Off-machine backup and each app's own CI (tests, coverage, `swbp-guard`). |
 | **venv** | Per-project dependency isolation. NOT a security sandbox — it stops dependency collisions, not destructive commands. |
 | **podman** | The sandbox pytest/smoke_check runs in. `scripts/sandbox-run.sh` mounts the repo read-only, disables the network, and grants `.cache/` read-write for the test report (D-30). Post-D-53 nothing agent-side runs *inside* the sandbox — the EM and coder are host-side HTTP calls, and their output is guarded by shell-owned lanes (phase-gate.sh), not by container mounts. The sandbox exists so untrusted **generated code** executes in isolation, not to contain the agents that produced it. |
 | **LM Studio** | The local inference server (`localhost:1234`) for the coder tier (and, typically, the EM tier). Most common failure point — verify the seated model passes the Rule 1 seat check (`scripts/seat-check.sh`). |
@@ -103,7 +103,7 @@ The full stack this system runs on. Know every object before operating it.
 | **The docs** | The memory layer for stateless LLMs (this file + CLAUDE.md + CONVENTIONS.md + docs/ + tasks/). |
 | **AGENTS.md** | Symlink to CLAUDE.md. OpenCode's preferred filename, kept for CEOs who use OpenCode as their conductor; symlink keeps content in sync with no duplication. |
 | **phase-gate.sh** | Mechanical lane + integrity enforcement — per-phase write whitelists, control-plane manifests, frozen-spec hashes. Fail-closed. |
-| **.template-version** | This project's link to the template it was born from (D-33). `scripts/check-drift.sh` compares against it; `scripts/update-template.sh` pulls upstream control-plane fixes. |
+| **.swbp** | An app's pin to the builder version it runs on (`ref=<sha>`, D-186). Every `scripts/swbp` step runs from a snapshot of exactly that commit; change it only between milestones. |
 
 ---
 
@@ -217,10 +217,10 @@ introducing technical debt. Cap it hard.
 
 The template defaults to **FastAPI + SQLite + pytest**. CI does NOT run
 Postgres by default. If THIS project uses Postgres, you MUST adapt these
-files BEFORE bootstrapping:
+files in the app before its first milestone:
 
 - `.gate-paths` — if your project uses directories other than `src/` and `tests/`
-- `scripts/bootstrap.sh` — add `asyncpg` to dependencies
+- `requirements.txt` (and `Containerfile` if needed) — add `asyncpg`
 - `.github/workflows/ci.yml` — uncomment the Postgres service block and
   its DATABASE_URL env in the test step
 - `CONVENTIONS.md` — framework-specific patterns
@@ -229,10 +229,10 @@ files BEFORE bootstrapping:
 For non-Postgres stacks (SQLite, no DB, etc.): the defaults are already
 correct — just skip the CI Postgres blocks.
 
-Per-project adaptations belong in `scripts/.manifest-project`; files listed in
-`scripts/.manifest-template` are template-owned — change them in the template
-and pull with `scripts/update-template.sh`, never by hand-editing the child
-(D-33/D-34).
+An app's adaptations are its own files, committed through the broker
+(`scripts/swbp commit`) so `swbp-guard` sees them; the pipeline itself lives
+only in the builder — change it there and adopt it by bumping the app's
+`.swbp` pin (D-186).
 
 ### Rule 4 — Halt-and-notify conditions (stop; do not guess)
 
@@ -476,23 +476,25 @@ CEO business intent ──► TPM (CEO-assigned seat: web chat D-38, scoped agen
 Run the Pre-Flight Check section above. Do not skip. If any check fails,
 halt and report exactly which one.
 
-### Step 1 — Create the repo from this template
+### Step 1 — Create the app next to the builder
 
-Default is **private**. If the user explicitly asked for a public repo, use
-`--public` instead.
-
-```bash
-gh repo create NAME --template developer-learner/sw-dev-blueprint --private --clone
-cd NAME
-```
-
-Verify before continuing:
+Every app is builder-targeted (D-186): it carries no control plane, and the
+pipeline runs against it from this checkout. From the builder checkout:
 
 ```bash
-gh repo view NAME --json isTemplate,visibility
+./scripts/new-project.sh NAME
 ```
 
-Expect `isTemplate: false`, visibility matching the flag you chose.
+This creates `../NAME` with the app-owned files only (product scaffolding,
+`CLAUDE.md`/`AGENTS.md`, `CONVENTIONS.md`, `docs/`, `tasks/`, its own CI and
+the `swbp-guard` workflow), a `.swbp` pin to this checkout's HEAD, and one
+seed commit made through the provenance broker. If the user wants a GitHub
+remote, default to **private** (`--public` only when asked):
+
+```bash
+gh repo create NAME --private --source ../NAME --push
+```
+
 If creation failed (name collision, auth, network), halt and tell the user.
 Do not improvise a name.
 
@@ -518,35 +520,24 @@ stack); initial notes in docs/; the Key Contacts rows in CLAUDE.md (or
 ask for their names). The PRD itself is NOT yours to write — that is the
 TPM's job, and it arrives via `scripts/refreeze.sh` (Rule 6).
 
-### Step 4 — Run bootstrap and verify the stamp
-
-`scripts/bootstrap.sh` sets up the venv, git hooks (`core.hooksPath`), and
-stamps `.template-version` with the template commit this child was born from
-(the fleet's drift baseline, D-33). Verify the stamp took:
+### Step 4 — Verify the builder pin
 
 ```bash
-grep '^ref=' .template-version   # must NOT read ref=UNSTAMPED
+cat ../NAME/.swbp    # repo= and ref=<this checkout's HEAD>
 ```
 
-If it reads `UNSTAMPED` (offline bootstrap), stamp later with
-`scripts/update-template.sh --stamp`.
-
-Leave the one-shot setup scripts in place. `scripts/bootstrap.sh` and
-`scripts/new-project.sh` are inert after setup, but they are template-owned
-(pinned in `scripts/.manifest-template`) and the integrity gate fails closed on
-any missing manifested file (`phase-gate.sh` sets `actual="MISSING"` and the
-hash compare rejects it) — so deleting them per project bricks the next commit.
-Preserve the whole control plane (`scripts/`, `.githooks/`) and the memory layer
-(`BLUEPRINT.md`, `CLAUDE.md` / `AGENTS.md`, `CONVENTIONS.md`, all of `docs/`).
-Retiring a template-owned file is a fleet-level change via
-`scripts/update-template.sh` (D-101), never a per-child `rm`.
-
-If unsure whether a file is memory-layer or scaffold, halt and ask (Rule 4).
+The pin is the app's only link to the pipeline: every step runs as
+`./scripts/swbp <step> --app ../NAME` from a snapshot of exactly that ref
+(D-168). There is nothing to copy, stamp or keep in sync — the copy/link
+tooling (`bootstrap.sh`, `update-template.sh`, `link-template.sh`,
+`check-drift.sh`) was retired at stage F (D-218).
 
 ### Step 5 — Adapt the stack
 
-Apply Rule 3. Record adaptations in `scripts/.manifest-project`
-(`bash scripts/regen-manifest.sh scripts/.manifest-project` after editing).
+Apply Rule 3 in the app: `Containerfile`, `requirements.txt`, its CI, and
+`.gate-paths` (`build=` names the source directories). These are guarded
+adaptations: commit them through the broker,
+`./scripts/swbp commit --app ../NAME -- "<subject>" <files>`.
 
 ### Step 6 — Fill every placeholder
 
@@ -584,19 +575,14 @@ can never false-positive the gate.
 placeholder brackets in its `## Template` format block; the second lists
 `[PROJECT_NAME]` and `[NAME]` as fill examples in Step 6.
 
-**Mechanical backstop (D-160):** `bootstrap.sh` creates `.placeholder-gate`
-before its baseline commit, and from then on `phase-gate.sh manifest` (which
-the pre-commit hook and the orchestrator pre-flight both run) fails any
-commit whose tree still contains a Step-7 hit on the fill surfaces — the
-gate above is no longer judgment-only. The mechanical scan applies the
-same token exclusions as the command above, plus the record/runtime
-surfaces a mature child accumulates (`project-trail/`, `.em-archive/`,
-`.pipeline-state/`, `.measurement/`, `.tpm/`, `.venv*`, `.cache/`, `data/`, `HANDOFF-*`,
-`tasks/CURRENT.md`, `tasks/BACKLOG.md`, date-led correction-log rows) —
-verbatim-history quotes like `[refreeze vN]` live there, and none of those
-surfaces exist in a fresh child, so the protected case is unchanged. The
-template repo itself never runs bootstrap.sh, so its intentional skeleton
-rows are exempt by construction.
+**Mechanical backstop (D-160):** the `.placeholder-gate` marker that made
+`phase-gate.sh manifest` enforce this scan was armed by the retired copy-seed
+bootstrap; builder-targeted apps do not carry it, so for them the command
+above is the gate. A repo that does carry the marker stays enforced: the
+scan applies the same token exclusions plus the record/runtime surfaces a
+mature app accumulates (`project-trail/`, `.em-archive/`, `.pipeline-state/`,
+`.measurement/`, `.tpm/`, `.venv*`, `.cache/`, `data/`, `HANDOFF-*`,
+`tasks/CURRENT.md`, `tasks/BACKLOG.md`, date-led correction-log rows).
 Everything else must be clean.
 
 ### Step 8 — First commit and push
@@ -604,8 +590,8 @@ Everything else must be clean.
 Only after the gate is clean and the stack matches:
 
 ```bash
-git add -A && git commit -m "Instantiate NAME from sw-dev-blueprint"
-git push -u origin main
+./scripts/swbp commit --app ../NAME -- "Instantiate NAME from sw-dev-blueprint" -A
+git -C ../NAME push -u origin main     # if it has a remote
 ```
 
 **The contract:** the user gave you a URL and a name. Everything else —
@@ -615,7 +601,8 @@ finished.
 
 **After first commit:** the project is live. The first feature starts at the
 TPM seat — the CEO names who holds it (D-139; see `docs/TPM-ROLE.md`) — freezes
-via `scripts/refreeze.sh`, and builds via `scripts/orchestrate.sh`.
+via `./scripts/swbp refreeze --app ../NAME`, and builds via
+`./scripts/swbp orchestrate --app ../NAME`.
 
 ---
 
@@ -633,30 +620,23 @@ via `scripts/refreeze.sh`, and builds via `scripts/orchestrate.sh`.
 
 ---
 
-## Staying Current with the Template (D-33/D-34)
+## Staying Current with the Builder (D-186)
 
-Children do not hand-port fixes — that is how control planes silently fork.
+Apps never hold a copy of the pipeline, so there is nothing to drift.
 
-- `.template-version` records which template commit this project was born
-  from; `bootstrap.sh` stamps it.
-- `scripts/check-drift.sh` (also a weekly CI job) three-way-compares every
-  template-owned file: child vs template-at-birth vs template-at-HEAD.
-  `BEHIND` = the template improved, pull it. `LOCALLY_MODIFIED` = someone
-  hand-edited a template-owned file in the child — either revert it or move
-  the file to `scripts/.manifest-project` as a declared adaptation.
-- `scripts/update-template.sh` pulls upstream control-plane changes the same
-  way refreeze works: one aggregate diff, applied automatically on green
-  pre-diff checks (D-96, restored by D-194 — a business owner is never asked
-  to approve a technical diff), hash re-pin, `[template-update <sha>]` commit
-  carrying a `Template-Diff-SHA:` trailer (D-193). `--dry-run` / `--review`
-  inspect without applying; `--require-approval` stops after printing the
-  diff and its DIFF-SHA; `--approve <sha>` is the D-61 hash-bound explicit
-  path, and a wrong hash refuses before any mutation in every branch
-  (D-194); `--interactive` opts into y/N. It refuses to write while
-  unrelated changes are staged, so they never ride into its commit (D-198).
-- Fixes discovered in a child get committed to the TEMPLATE first, then
-  pulled into children. (See the 2026-06-30 correction-log entry in
-  CLAUDE.md for the incident that forced this.)
+- `.swbp` (`ref=<sha>`) pins the builder version an app runs on. Every
+  `swbp` step materializes exactly that commit into a content-addressed
+  snapshot and runs from it (D-168).
+- Adopt a newer builder by changing the ref **between milestones** and
+  committing it through the broker
+  (`./scripts/swbp commit --app <app> -- "<subject>" .swbp`); `swbp` refuses
+  a version change while a milestone is in flight.
+- Fixes discovered while running an app are made in the BUILDER, then
+  adopted by bumping the app's pin. (See the 2026-06-30 correction-log entry
+  for the incident that forced "fix upstream first".)
+- The copy/link era's tooling — `.template-version`, `check-drift.sh`,
+  `update-template.sh`, `link-template.sh`, `manifest-drift-guard.sh`,
+  `bootstrap.sh` — was retired at stage F (D-218).
 
 ---
 
@@ -744,8 +724,9 @@ Always run `scripts/seat-check.sh` (Rule 1) before seating a new model.
 through `refreeze.sh`, never editing frozen files in place (the gate fails
 closed on any hash mismatch) and never "fixing" a test to match the code.
 
-**Hand-editing template-owned files in a child** — That fork is silent until
-it bites. `check-drift.sh` will flag it; the fix goes to the template first.
+**Patching the pipeline from inside an app** — An app holds no pipeline
+code; a fix found while running one is made in the builder and adopted by
+bumping the app's `.swbp` pin between milestones.
 
 **Trusting self-reported success** — Only passing tests confirm success (Rule 5).
 
@@ -761,7 +742,7 @@ still governs any human-written test: derive from the spec, not from `src/`.
 - `CLAUDE.md` correction log — LLM-updated per the correction-log rule: every LLM mistake the human corrects becomes a row; rows are added only for actual corrections
 - `tasks/BACKLOG.md` completed section — historical record; entries move here from `CURRENT.md`, not edited
 - `scripts/.approved/` and `tests/` — the frozen spec; changes ONLY via `scripts/refreeze.sh`
-- `scripts/`, `.githooks/` in a child project — template-owned; changes ONLY via `scripts/update-template.sh`
+- `.swbp` in an app — the builder pin; changes only between milestones, through `scripts/swbp commit`
 
 ---
 
