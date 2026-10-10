@@ -8822,14 +8822,32 @@ def test_group2_new_project_preflight_refuses_thinking_model_reply(tmp_path):
         "esac\n",
     )
     curl.chmod(0o755)
-    env = dict(os.environ)
+    # A throwaway builder (D-218: new-project.sh creates the app as a SIBLING
+    # of the builder) so a passing preflight could never create ~/dev/proj,
+    # and an explicit identity so the identity check — which runs first —
+    # does not stop the run before the preflight on an identity-less CI host.
+    builder = tmp_path / "builder"
+    (builder / "scripts").mkdir(parents=True)
+    (builder / "app-template").mkdir()
+    (builder / "CLAUDE.md").write_text("# CLAUDE\n")
+    swbp = builder / "scripts" / "swbp"
+    swbp.write_text("#!/usr/bin/env bash\nexit 0\n")
+    swbp.chmod(0o755)
+    ident = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=builder, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=builder, check=True)
+    subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "b"],
+                   cwd=builder, check=True, env={**os.environ, **ident})
+    env = {**os.environ, **ident}
     env["PATH"] = f"{fakebin}:{env['PATH']}"
     r = subprocess.run(
-        ["bash", str(SCRIPTS / "new-project.sh"), "proj"],
+        ["bash", str(SCRIPTS / "new-project.sh"), "proj", "--from", str(builder)],
         cwd=tmp_path, env=env, capture_output=True, text=True,
     )
     assert r.returncode != 0, (r.stdout, r.stderr)
     assert "THINKING MODEL loaded" in r.stderr, (r.stdout, r.stderr)
+    assert not (tmp_path / "proj").exists(), "a refused preflight must create nothing"
     assert "ok: local LLM responded" not in r.stdout + r.stderr, \
         (r.stdout, r.stderr)
 
