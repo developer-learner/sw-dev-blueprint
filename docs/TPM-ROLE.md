@@ -428,7 +428,15 @@ spec question for the CEO, not something a weaker tier should resolve.
   `public_id`, `ram_estimate_gb`, not "the id", "RAM". (3) When a test pins an
   exact number, format, precision or timing, check that a faithful
   implementation of the spec can pass it (rounding and "greater than zero"
-  can contradict). Vortex v45 lost three coder attempts to these three gaps.
+  can contradict). (4) The coder's output is linted with the project's own
+  ruff config — with no `select`, ruff 0.16's ~400 default rules — and the
+  coder cannot run it: write the constructs the spec implies (timestamps,
+  catch-alls, subprocess, sleeps) into a scratch file, run the project's ruff
+  on it, and state every rule that fires in the section (Vortex v45: naive
+  `datetime.now()` DTZ005, blind `except Exception` BLE001). (5) No
+  bracketed prose in staged Markdown/JSON — `[ticked ids]` reads as a
+  template placeholder and fails the freeze commit. Vortex v45 lost four
+  coder attempts and two freezes to these gaps.
   Write no implementation code into the spec or the briefs: the EM decomposes,
   the coder writes the code.
 - **Flag misbehavior to the CEO** even when already handled (a weakened
