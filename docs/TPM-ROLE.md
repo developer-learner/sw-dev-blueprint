@@ -418,6 +418,19 @@ spec question for the CEO, not something a weaker tier should resolve.
   49, which made it uneditable for five straight refreezes. Scope is a
   containment boundary; it is yours to set. Pair it with `no_edit_files`
   (D-65) — one names what changes, the other what must not.
+- **Before every freeze, tally the tests against the ERD (D-221).** The coder
+  sees only the EM's brief for its file, and the EM builds that brief from the
+  file's ERD-DELTA section, so a fact that lives in another section is lost.
+  (1) Every name, field and literal a test checks must appear in the ERD
+  section of the file that test is mapped to (a quick grep of each mapped
+  test's string literals against that section). (2) A file that consumes
+  another file's data names the exact fields in its own section —
+  `public_id`, `ram_estimate_gb`, not "the id", "RAM". (3) When a test pins an
+  exact number, format, precision or timing, check that a faithful
+  implementation of the spec can pass it (rounding and "greater than zero"
+  can contradict). Vortex v45 lost three coder attempts to these three gaps.
+  Write no implementation code into the spec or the briefs: the EM decomposes,
+  the coder writes the code.
 - **Flag misbehavior to the CEO** even when already handled (a weakened
   guardrail, an under-reported change, a silent deviation). How the tiers
   drift *is* the project's core story; the CEO is managing the project and

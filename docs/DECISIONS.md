@@ -21,6 +21,16 @@
 
 ## Decisions
 
+## D-221 — 2026-10-11 — Failure detail keeps the failed assertion; the TPM tallies tests against the ERD before freezing
+
+**Decision:** (1) `test-verdict.py` bounds a failure message by keeping its start and its end and eliding the middle (`clip`), instead of keeping only the last 240 characters (900 for the combined detail). (2) `docs/TPM-ROLE.md` gains a pre-freeze discipline: every name and literal a test checks appears in the ERD section of the file it is mapped to; a file that consumes another file's data names the exact fields in its own section; tests that pin an exact number, format or timing are checked to be passable by a faithful implementation. Specs carry behavior and interfaces, never implementation code.
+
+**Alternatives considered:** A mechanical freeze-time gate for the tally (test literals ⊆ owning file's ERD section) and a plan-time gate on the EM briefs — deferred (CEO 2026-10-11): about 200 lines of new gate code with a false-positive risk from test-data literals; it is built only if the TPM discipline lets the class through again. A blind per-file "cold read" of the spec by the local coder model — tried on v45: it cleanly caught 1 of 3 known defects (vague field names), half-caught one, missed the contradiction, and raised noise on a control file; not adopted. A full throwaway reference implementation by the TPM — rejected as routine: it roughly doubles TPM time and invites the code into the spec; only the exact-number tests are checked.
+
+**Reason:** Vortex v45 (2026-10-11, the first milestone with no verbatim coder briefs): T3 (`speed_ui.py`) failed twice because its ERD section said "the run status/message", "RAM", "the id" while the field names lived in the routes section — the EM's brief faithfully compressed the page section and the coder never saw `run_status`. The retry could not recover: pytest's crash message is `assert 'run_status' in '<page>'` followed by the page repr, and the tail-only bound kept the end of the page and cut off the assertion. T1 failed once on a TPM contradiction: `first_token_s` rounded to 2 decimals and a test requiring it above zero, against a fake server that answers in milliseconds.
+
+**Do not suggest:** bounding failure detail by its tail alone; putting implementation code in the ERD or briefs to make a local coder pass (it measures transcription, not coding).
+
 ## D-220 — 2026-10-09 — A run that passed by accepting a flake is labelled, never a plain success
 
 **Decision:** When the D-77 triage accepts a flake (D-219), the milestone still lands — the pipeline keeps moving — but it is never presented as clean: the commit subject is `[success] spec vN — WITH ACCEPTED FLAKE (k test[s])`, the run banner says "PASSED WITH ACCEPTED FLAKE — NOT a clean run", and the `## Results` entry opens with "SUCCESS WITH ACCEPTED FLAKE — not a clean run" and names the tests. The `[success] spec vN` prefix is unchanged, so every reader that keys on it (metrics windows, completion, provenance, the empty-state guard) keeps working; the label is a suffix the CEO sees at acceptance (D-44). The D-111 recurrence threshold still routes a repeating flake to the TPM.

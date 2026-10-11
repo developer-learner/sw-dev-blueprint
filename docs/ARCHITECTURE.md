@@ -185,6 +185,7 @@ DELETE /api/v1/[resource]/:id       delete
 - **D-99**: Empty task state is allowed only after a covering success commit; mid-milestone loss still halts
 - **D-100**: D-77 flake-green requires at least one isolated pass per failing carried node
 - **D-219**: ...and a green re-run of the verdict scope in the same order (evidence, not proof; red stays red); a legacy run with no result reports blank, not 0 regressions
+- **D-221**: Failure detail keeps the failed assertion (start + end, middle elided); TPM tallies tests against the ERD before freezing
 - **D-220**: A run that passed by accepting a flake lands as `[success] spec vN — WITH ACCEPTED FLAKE`, never a plain success
 - **D-103**: Frozen acceptance requires ordinary passed outcomes; skip/xfail/xpass remain red
 - **D-110**: Report-parser compatibility is exercised against the real pytest-json-report producer
