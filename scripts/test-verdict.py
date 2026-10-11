@@ -147,14 +147,21 @@ def source_frames(phases: list[dict], limit: int = 3) -> str:
     return ", ".join(frames[-limit:])
 
 
-def tail(value: object, limit: int = 240) -> str:
+def clip(value: object, limit: int = 240) -> str:
+    """Bound a failure message, keeping its START and end and eliding the
+    middle (D-221). Pytest puts the failed assertion and any custom message
+    first and the long repr of the compared values after; keeping only the
+    tail sent a retry the end of a page dump and cut off what was missing."""
     text = re.sub(r"\s+", " ", str(value)).strip()
-    return text if len(text) <= limit else "..." + text[-limit:]
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 3
+    return text[:head] + " ... " + text[-(limit - head):]
 
 
 def emit(rc: int, label: str, detail: str = "") -> int:
     print(re.sub(r"[\r\n]", " ", label))
-    print(tail(detail, 900))
+    print(clip(detail, 900))
     return rc
 
 
@@ -225,13 +232,13 @@ def verdict(r: dict, runner: int, expected: set[str]) -> int:
             if not isinstance(crash, dict):
                 raise ValueError("invalid crash record")
             if crash.get("message") or p.get("longrepr"):
-                reason = tail(crash.get("message") or p["longrepr"])
+                reason = clip(crash.get("message") or p["longrepr"])
                 break
         where = source_frames(phases)
         details.append(f"{t['nodeid']}: {reason}" + (f" [at {where}]" if where else ""))
     if failed_collectors:
         failed.append("COLLECTION_ERROR (see .cache/test-report.json)")
-        details.append("collection: " + tail(failed_collectors[0].get("longrepr", "")))
+        details.append("collection: " + clip(failed_collectors[0].get("longrepr", "")))
     if runner not in (0, 1, 2):
         return emit(3, "RUNNER_ERROR", f"pytest/sandbox exited {runner}")
     if failed:

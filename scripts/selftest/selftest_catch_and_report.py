@@ -366,6 +366,33 @@ def test_failure_detail_follows_the_build_lane_and_a_nested_rootdir(tmp_path):
     assert "other.py" not in r.stdout and "test_a.py:4" not in r.stdout
 
 
+def test_long_failure_detail_keeps_the_failed_assertion(tmp_path):
+    """D-221 (Vortex v45 T3): pytest puts the failed assertion first and the
+    long repr of the compared value after. Bounding by the tail alone sent the
+    retry the end of a page dump and cut off the missing name; the start must
+    survive, with only the middle elided."""
+    import json as _json
+    page = "<script>" + "var rows = []; " * 400 + "</script>"
+    message = (f"AssertionError: assert 'run_status' in '{page}'\n"
+               " +  where '...' = _script()")
+    report = {
+        "exitcode": 1, "summary": {"total": 1, "failed": 1}, "collectors": [],
+        "tests": [{"nodeid": "tests/test_a.py::test_a", "outcome": "failed",
+                   "setup": {"outcome": "passed"}, "teardown": {"outcome": "passed"},
+                   "call": {"outcome": "failed", "crash": {"message": message}}}],
+    }
+    (tmp_path / ".cache").mkdir()
+    (tmp_path / ".cache" / "test-report.json").write_text(_json.dumps(report))
+    (tmp_path / "scripts/.approved").mkdir(parents=True)
+    (tmp_path / "scripts/.approved/test-nodeids").write_text("tests/test_a.py::test_a\n")
+    r = subprocess.run(["python3", str(SCRIPTS / "test-verdict.py"), "1", "tests/"],
+                       cwd=tmp_path, capture_output=True, text=True)
+    detail = r.stdout.splitlines()[1]
+    assert "assert 'run_status' in" in detail, detail
+    assert "_script()" in detail, "the end of the message is kept too"
+    assert " ... " in detail and len(detail) < 1000, "the middle is elided, bounded"
+
+
 def test_failure_detail_points_at_implementation_lines_not_test_code(tmp_path):
     import json as _json
     report = {
