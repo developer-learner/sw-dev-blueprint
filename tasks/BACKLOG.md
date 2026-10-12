@@ -52,6 +52,24 @@
 **Rough size:** Small
 **Depends on:** —
 
+### Staged `contracts.json` `files` is a silent wholesale restatement
+**Priority:** P2
+**Why:** a staged freeze contract replaces `files` wholesale, so staging only the file a delta touches shrinks the milestone inventory and orphans the `no_edit_files` and `smoke_checks` entries that still name the dropped files — and `contracts-merge.py` accepts it quietly. Vortex v47 hit it: the defect surfaced only ~10 minutes later at `validate-plan.py` ("no_edit_files entries not in the ERD inventory", "smoke_checks key ... is not in contracts.files"), far from the staging mistake. Reject at the merge (a staged `files` that drops members named by `no_edit_files`/`smoke_checks`), or make the replacement explicit with a required `files_replace: true`.
+**Rough size:** Small
+**Depends on:** —
+
+### `refreeze_delta.py pin-gate` reports green when given no files to check
+**Priority:** P2
+**Why:** the gate iterates the positional file list, so `pin-gate --old-root . --new-root <staging> --erd-delta ...` with no files exits 0 having examined nothing. `refreeze.sh` always passes the list, but a hand-run pre-check that omits it looks passing while the freeze later rejects the same delta — cost a v47 freeze cycle in vortex. Require the file list (or derive it from the staging dir) and print "0 test functions gated" on an empty one so a vacuous pass is visible.
+**Rough size:** Small
+**Depends on:** —
+
+### Two parsers for `## Test-to-file mapping`, two accepted shapes
+**Priority:** P2
+**Why:** `refreeze_delta._erd_pins` needs the two-line row (`* \`node-id\`` then an indented `-> \`file\``), while `validate-plan._parse_mapping_pins` also accepts the single-line form. A delta written single-line passes the plan-side pre-check and then fails the freeze pin gate with "changed test function(s) carry no owning-file pin" — vortex v48 restage. Share one parser, or have both accept both shapes.
+**Rough size:** Small
+**Depends on:** —
+
 ---
 
 ## Parked (CEO decisions)
