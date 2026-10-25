@@ -11,6 +11,10 @@
 > orchestrator drives an EM (mid-tier) to plan and a local coder to execute, one
 > file per task. Git is the undo. The frozen tests are the truth.
 
+**Evaluating this work?** Read **[`docs/EVALUATION-CASE-STUDIES.md`](docs/EVALUATION-CASE-STUDIES.md)**:
+three short case studies on testing whether AI-agent results, tasks, and
+graders deserve to be trusted.
+
 **New here?** Start with **`QUICKSTART.md`** — it takes you from zero to this
 pipeline building a real 21-test example project on one Linux box, before any
 theory. The rest of the docs are tiered (see BLUEPRINT.md → Document Map):
